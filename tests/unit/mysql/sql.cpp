@@ -4,7 +4,7 @@
 #include "ilias/mysql/sqlquery.hpp"
 #include "ilias/mysql/sqlresult.hpp"
 
-ILIAS_SQL_USE_NAMESPACE;
+ILIAS_MYSQL_USE_NAMESPACE;
 
 struct Person {
     int                    id;
@@ -134,7 +134,16 @@ ILIAS_NAMESPACE::Task<void> test() {
     }
     auto result = std::move(ret.value());
     ILIAS_INFO("sql-test", "select size {}", result.countRows());
-    while (co_await result.next()) {
+    while (1) {
+        auto ret = co_await result.next();
+        if (!ret) {
+            ILIAS_WARN("sql-test", "error: {}", ret.error().message());
+            break;
+        }
+        if (!*ret) {
+            ILIAS_INFO("sql-test", "end of result");
+            break;
+        }
         auto        id      = result.get<int>("id").value_or(-1);
         auto        name    = result.get<std::string>("name").value_or("null");
         auto        age     = result.get<int>("age").value_or(-1);
@@ -151,17 +160,51 @@ ILIAS_NAMESPACE::Task<void> test() {
                    born.toString(), (int)val1, val2, str);
     }
 
+    auto ret2 = co_await query.execute("SELECT * FROM test_table");
+    EXPECT_TRUE(ret2.has_value());
+    if (!ret2.has_value()) {
+        co_return;
+    }
+    auto result1 = std::move(ret2.value());
+    ILIAS_INFO("sql-test", "select size {}", result1.countRows());
+    while (1) {
+        auto ret = co_await result1.next();
+        if (!ret) {
+            ILIAS_WARN("sql-test", "error: {}", ret.error().message());
+            break;
+        }
+        if (!*ret) {
+            ILIAS_INFO("sql-test", "end of result");
+            break;
+        }
+        auto        id      = result1.get<int>("id").value_or(-1);
+        auto        name    = result1.get<std::string>("name").value_or("null");
+        auto        age     = result1.get<int>("age").value_or(-1);
+        auto        born    = result1.get<SqlDate>("born").value_or(SqlDate());
+        auto        email   = result1.get<std::string>("email").value_or("null");
+        auto        promise = result1.get<std::vector<std::byte>>("promise").value();
+        auto        val1    = result1.get<char>("val1").value();
+        auto        val2    = result1.get<int>("val2").value();
+        std::string str;
+        for (auto &b : promise) {
+            str += std::to_string(static_cast<int>(b)) + ".";
+        }
+        ILIAS_INFO("sql", "id:{} name:{} age:{} email:{} born:{} val1:{} val2:{} promise:{}", id, name, age, email,
+                   born.toString(), (int)val1, val2, str);
+    }
+
     // co_await mysql.autoCommit(false);
     co_return;
 }
 
 TEST(SQL, test) {
-    ilias_wait test();
+    test().wait();
 }
 
 int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
+    ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
     return 0;

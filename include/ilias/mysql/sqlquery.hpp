@@ -25,7 +25,7 @@
 #include "sqldatabase.hpp"
 #include "sqlresult.hpp"
 
-ILIAS_SQL_NS_BEGIN
+ILIAS_MYSQL_NS_BEGIN
 
 class SqlQuery {
 public:
@@ -38,12 +38,9 @@ public:
     SqlQuery(const SqlQuery &)            = delete;
     SqlQuery &operator=(const SqlQuery &) = delete;
 
-    [[nodiscard("Don't forget to use co_await")]]
     auto execute(std::string_view query) -> IoTask<SqlResult>;
 
-    [[nodiscard("Don't forget to use co_await")]]
     auto prepare(std::string_view query) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto execute() -> IoTask<SqlResult>;
     ///> set TINYINT
     auto set(int index, signed char value) -> SqlError;
@@ -119,14 +116,14 @@ inline SqlQuery &SqlQuery::operator=(SqlQuery &&other) noexcept {
 inline auto SqlQuery::execute(std::string_view query) -> IoTask<SqlResult> {
     ILIAS_ASSERT(mMysql != nullptr);
     ILIAS_TRACE("sql", "exec query {}", query);
-    auto ret = co_await (mMysql->query(query) | ignoreCancellation);
+    auto ret = co_await (mMysql->query(query) | unstoppable());
     if (!ret) {
-        co_return Unexpected<Error>(ret.error());
+        co_return Unexpected(ret.error());
     }
     auto sqlResult = std::make_unique<detail::SqlQueryResult>(mMysql);
     auto ret1      = co_await sqlResult->getResult();
     if (!ret1) {
-        co_return Unexpected<Error>(ret1.error());
+        co_return Unexpected(ret1.error());
     }
     co_return SqlResult(std::move(sqlResult));
 }
@@ -178,15 +175,15 @@ inline auto SqlQuery::prepare(std::string_view query) -> IoTask<void> {
     auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt, queryp.data(), (unsigned long)queryp.size());
     while (status) {
         ILIAS_TRACE("sql", "stmt prepare waiting for status {}", status);
-        auto pret = co_await (mMysql->pollStatus(status) | ignoreCancellation);
+        auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
         if (!pret) {
-            co_return Unexpected<Error>(pret.error());
+            co_return Unexpected(pret.error());
         }
         status = mysql_stmt_prepare_cont(&ret, mMysqlStmt, status);
     }
     if (ret != 0) {
         ILIAS_ERROR("sql", "stmt failed, error: {}", mMysql->lastErrorMessage());
-        co_return Unexpected<Error>((SqlError::Code)ret);
+        co_return Unexpected((SqlError::Code)ret);
     }
     co_return {};
 }
@@ -426,7 +423,7 @@ inline auto SqlQuery::setView(int index, std::span<const std::byte> value) -> Sq
 
 inline auto SqlQuery::execute() -> IoTask<SqlResult> {
     if (mMysqlStmt == nullptr) {
-        co_return Unexpected<Error>(SqlError::Code::NOT_PREPARED);
+        co_return Unexpected(SqlError::Code::NOT_PREPARED);
     }
     int ret = 0;
     if (mBinds.size() > 0) {
@@ -434,28 +431,28 @@ inline auto SqlQuery::execute() -> IoTask<SqlResult> {
     }
     if (ret != 0) {
         ILIAS_ERROR("sql", "stmt bind failed. (error {}:{})", ret, mMysql->lastErrorMessage());
-        co_return Unexpected<Error>((SqlError::Code)ret);
+        co_return Unexpected((SqlError::Code)ret);
     }
     auto status = mysql_stmt_execute_start(&ret, mMysqlStmt);
     while (status) {
         ILIAS_TRACE("sql", "stmt execute waiting for status {}", status);
-        auto pret = co_await (mMysql->pollStatus(status) | ignoreCancellation);
+        auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
         if (!pret) {
             ILIAS_ERROR("sql", "stmt execute failed. (error: {})", pret.error().message());
-            co_return Unexpected<Error>(pret.error());
+            co_return Unexpected(pret.error());
         }
         status = mysql_stmt_execute_cont(&ret, mMysqlStmt, status);
     }
     if (ret != 0) {
         ILIAS_ERROR("sql", "stmt execute failed. (error {}:{})", ret, mMysql->lastErrorMessage());
-        co_return Unexpected<Error>((SqlError::Code)ret);
+        co_return Unexpected((SqlError::Code)ret);
     }
     auto sqlResult = std::make_unique<detail::SqlStmtResult>(mMysql, mMysqlStmt);
     auto ret1      = co_await sqlResult->getResult();
     clearBinds();
     mMysqlStmt = nullptr;
     if (!ret1) {
-        co_return Unexpected<Error>(ret1.error());
+        co_return Unexpected(ret1.error());
     }
     co_return SqlResult(std::move(sqlResult));
 }
@@ -467,4 +464,4 @@ inline auto SqlQuery::clearBinds() -> void {
     }
 }
 
-ILIAS_SQL_NS_END
+ILIAS_MYSQL_NS_END

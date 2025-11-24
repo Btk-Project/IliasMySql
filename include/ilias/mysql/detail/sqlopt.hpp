@@ -4,9 +4,9 @@
 #include "../sqlerror.hpp"
 
 #include <mariadb/mysql.h>
-#include <ilias/error.hpp>
+#include <ilias/io/error.hpp>
 
-ILIAS_SQL_NS_BEGIN
+ILIAS_MYSQL_NS_BEGIN
 #define MYSQL_OPTION_TABLE                                                                                             \
     MYSQL_OPTION_ROW(InitCommand, MYSQL_INIT_COMMAND, std::string)                                                     \
     MYSQL_OPTION_ROW(ConnectTimeout, MYSQL_OPT_CONNECT_TIMEOUT, unsigned int *)                                        \
@@ -211,4 +211,4 @@ MYSQL_OPTION_TABLE
 
 } // namespace sqlopt
 #undef MYSQL_OPTION_TABLE
-ILIAS_SQL_NS_END
+ILIAS_MYSQL_NS_END

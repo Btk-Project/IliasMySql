@@ -1,18 +1,20 @@
 #pragma once
 
-#include <ilias/ilias.hpp>
+#include <ilias/task.hpp>
+#include <ilias/detail/config.hpp>
+#include <ilias/defines.hpp>
 
-#ifndef ILIAS_SQL_NAMESPACE
-#define ILIAS_SQL_NAMESPACE sql
+#ifndef ILIAS_MYSQL_NAMESPACE
+#define ILIAS_MYSQL_NAMESPACE mysql
 #endif
 
-#define ILIAS_SQL_COMPLETE_NAMESPACE ILIAS_NAMESPACE::ILIAS_SQL_NAMESPACE
-#define ILIAS_SQL_USE_NAMESPACE using namespace ILIAS_SQL_COMPLETE_NAMESPACE;
+#define ILIAS_MYSQL_COMPLETE_NAMESPACE ILIAS_NAMESPACE::ILIAS_MYSQL_NAMESPACE
+#define ILIAS_MYSQL_USE_NAMESPACE using namespace ILIAS_MYSQL_COMPLETE_NAMESPACE;
 
-#define ILIAS_SQL_NS_BEGIN                                                                                             \
+#define ILIAS_MYSQL_NS_BEGIN                                                                                             \
     namespace ILIAS_NAMESPACE {                                                                                        \
-    namespace ILIAS_SQL_NAMESPACE {
+    namespace ILIAS_MYSQL_NAMESPACE {
 
-#define ILIAS_SQL_NS_END                                                                                               \
+#define ILIAS_MYSQL_NS_END                                                                                               \
     }                                                                                                                  \
     }

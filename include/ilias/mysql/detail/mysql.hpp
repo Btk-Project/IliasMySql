@@ -17,14 +17,13 @@
 #include <ilias/net/poller.hpp>
 #include <ilias/net/sockfd.hpp>
 #include <ilias/task/when_any.hpp>
-#include <ilias/task/decorator.hpp>
 #include <mariadb/mysql.h>
 
 #include "../sqlerror.hpp"
 #include "global.hpp"
 #include "sqlopt.hpp"
 
-ILIAS_SQL_NS_BEGIN
+ILIAS_MYSQL_NS_BEGIN
 namespace detail {
 
 class MySql final {
@@ -46,64 +45,40 @@ public:
     ~MySql();
 
     // connect
-    [[nodiscard("Don't forget to use co_await")]]
     auto connect(std::string_view host, std::string_view user, std::string_view passwd, std::string_view db,
                  int port = 3306, std::string_view unix_socket = "", unsigned long client_flag = 0) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto resetConnection() -> IoTask<int>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto disconnect() -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto changeUser(std::string_view user, std::string_view passwd, std::string_view db) -> IoTask<bool>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto dumpDebugInfo() -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto setServerOption(ServerOption option) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto setCharacterSet(std::string_view csname) -> IoTask<void>;
+    auto dumpDebugInfo() -> IoTask<int>;
+    auto setServerOption(ServerOption option) -> IoTask<int>;
+    auto setCharacterSet(std::string_view csname) -> IoTask<int>;
 
     // mysql database
-    [[nodiscard("Don't forget to use co_await")]]
-    auto selectDb(std::string_view db) -> IoTask<void>;
+    auto selectDb(std::string_view db) -> IoTask<int>;
 
-    [[nodiscard("Don't forget to use co_await")]]
-    auto query(std::string_view sql) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto commit() -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto autoCommit(bool autoMode) -> IoTask<void>;
+    auto query(std::string_view sql) -> IoTask<int>;
+    auto commit() -> IoTask<bool>;
+    auto autoCommit(bool autoMode) -> IoTask<bool>;
 
-    [[nodiscard("Don't forget to use co_await")]]
-    auto rollback() -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto listFields(MYSQL_RES **ret, std::string_view table, std::string_view wildcard = "*") -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto sendQuery(std::string_view sql) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto refresh(uint32_t refreshOptions) -> IoTask<void>; // FIXME: where has defines abort options?
-    [[nodiscard("Don't forget to use co_await")]]
-    auto kill(uint64_t pid) -> IoTask<void>; // FIXME: is kill self?
-    [[nodiscard("Don't forget to use co_await")]]
+    auto rollback() -> IoTask<bool>;
+    auto listFields(std::string_view table, std::string_view wildcard = "*") -> IoTask<MYSQL_RES *>;
+    auto sendQuery(std::string_view sql) -> IoTask<int>;
+    auto refresh(uint32_t refreshOptions) -> IoTask<int>; // FIXME: where has defines abort options?
+    auto kill(uint64_t pid) -> IoTask<int>; // FIXME: is kill self?
     auto ping() -> IoTask<int>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto stat() -> IoTask<const char *>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto readQueryResult() -> IoTask<void>;
+    auto readQueryResult() -> IoTask<bool>;
 
     // useResult -> fetchRow -> freeResult
-    [[nodiscard("Don't forget to use co_await")]]
     auto useResult() -> IoTask<MYSQL_RES *>;
-    [[nodiscard("Don't forget to use co_await")]]
-    auto nextResult() -> IoTask<void>;
+    auto nextResult() -> IoTask<int>;
     // store result might use too much memory in retrieving a large result set all at once.
-    [[nodiscard("Don't forget to use co_await")]]
-    auto storeResult(MYSQL_RES **result) -> IoTask<void>;
+    auto storeResult() -> IoTask<MYSQL_RES *>;
     auto fieldCount() -> std::size_t;
 
     // shutdown
-    [[nodiscard("Don't forget to use co_await")]]
     auto shutdown(ShutdownType shutdownType) -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto pollStatus(int &status, uint32_t pollEvents = 0) -> IoTask<void>;
 
     // stmt
@@ -131,7 +106,7 @@ inline MySql::MySql() {
     if (mysql_init(&mMysql) == nullptr) {
         ILIAS_ERROR("sql", "mysql init failed");
     }
-    
+
     auto ret = mysql_options(&mMysql, MYSQL_OPT_NONBLOCK, 0);
     if (ret != 0) {
         ILIAS_ERROR("sql", "mysql set option failed, {}", SqlError(static_cast<SqlError::Code>(ret)).message());
@@ -148,7 +123,7 @@ inline MySql::~MySql() {
 
 inline auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
     if (!mPoller) {
-        co_return Unexpected<Error>(Error::Unknown);
+        co_return Unexpected(IoError::Unknown);
     }
     uint64_t timeOut = 0;
     if (status & MYSQL_WAIT_TIMEOUT) {
@@ -170,22 +145,26 @@ inline auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> 
         }
     }
     ILIAS_TRACE("sql", "poll events: {}", events);
-    Result<unsigned int> ret;
+    IoResult<unsigned int> ret;
     if (timeOut == 0) {
         auto ret = co_await mPoller.poll(pollEvents);
         if (!ret) {
             ILIAS_ERROR("sql", "poll failed, {}", ret.error().message());
-            co_return Unexpected<Error>(ret.error());
+            co_return Unexpected(ret.error());
         }
     }
     else {
         auto ret = co_await (mPoller.poll(pollEvents) | setTimeout(std::chrono::milliseconds(timeOut)));
         if (!ret) {
-            if (ret.error() == Error::TimedOut) {
+            status = MYSQL_WAIT_TIMEOUT;
+            co_return Unexpected(IoError::TimedOut);
+        }
+        if (!(*ret)) {
+            if ((*ret).error() == IoError::TimedOut) {
                 status = MYSQL_WAIT_TIMEOUT;
             }
             ILIAS_ERROR("sql", "poll failed, no result in poll.");
-            co_return Unexpected<Error>(ret.error());
+            co_return Unexpected((*ret).error());
         }
     }
     status = 0;
@@ -205,18 +184,18 @@ inline auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> 
 #define SQL_PRIVATE_MAKE_POLLER                                                                                        \
     {                                                                                                                  \
         if (mCtxt == nullptr) {                                                                                        \
-            co_return Unexpected<Error>(Error::Unknown);                                                               \
+            co_return Unexpected(IoError::Unknown);                                                                    \
         }                                                                                                              \
         auto fd = mysql_get_socket(&mMysql);                                                                           \
         if (fd == (decltype(fd))MARIADB_INVALID_SOCKET) {                                                              \
             ILIAS_ERROR("sql", "get socket failed");                                                                   \
-            co_return Unexpected<Error>(Error::Unknown);                                                               \
+            co_return Unexpected(IoError::Unknown);                                                                    \
         }                                                                                                              \
         if (!mPoller || (mPoller.fd() != (fd_t)fd)) {                                                                  \
-            mPoller = Poller(*mCtxt, (fd_t)fd, IoDescriptor::Socket);                                                  \
+            mPoller = (co_await Poller::make((fd_t)fd, IoDescriptor ::Socket)).value();                                \
             if (!mPoller) {                                                                                            \
                 ILIAS_ERROR("sql", "add fd({}) to IoContext failed.", fd);                                             \
-                co_return Unexpected<Error>(Error::Unknown);                                                           \
+                co_return Unexpected(IoError::Unknown);                                                                \
             }                                                                                                          \
         }                                                                                                              \
     }
@@ -230,7 +209,7 @@ inline auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> 
             auto pret = co_await pollStatus(status);                                                                   \
             status    = MysqlFunc##_cont(&OutP, &mMysql, status);                                                      \
             if (!pret) {                                                                                               \
-                co_return Unexpected<Error>(pret.error());                                                             \
+                co_return Unexpected(pret.error());                                                                    \
             }                                                                                                          \
         }                                                                                                              \
     }                                                                                                                  \
@@ -254,11 +233,12 @@ inline auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> 
         return false;                                                                                                  \
     };                                                                                                                 \
     if (!_check(OutP)) {                                                                                               \
-        auto error   = mysql_error(&mMysql);                                                                           \
         auto errCode = mysql_errno(&mMysql);                                                                           \
-        if (errCode != 0)                                                                                              \
+        if (errCode != 0) {                                                                                            \
+            [[maybe_unused]] auto error = mysql_error(&mMysql);                                                        \
             ILIAS_ERROR("sql", "{} failed, error({}): {}", #MysqlFunc, errCode, error);                                \
-        co_return Unexpected<Error>(SqlError::Code(errCode));                                                          \
+            co_return Unexpected(SqlError::Code(errCode));                                                             \
+        }                                                                                                              \
     }
 
 inline auto MySql::connect(std::string_view host, std::string_view user, std::string_view passwd, std::string_view db,
@@ -300,50 +280,47 @@ inline auto MySql::close() -> void {
     mysql_close(&mMysql);
 }
 
-inline auto MySql::dumpDebugInfo() -> IoTask<void> {
+inline auto MySql::dumpDebugInfo() -> IoTask<int> {
     // this ret is what.
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_dump_debug_info)
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::setServerOption(ServerOption option) -> IoTask<void> {
-
+inline auto MySql::setServerOption(ServerOption option) -> IoTask<int> {
     // this ret is what.
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_set_server_option, static_cast<enum_mysql_set_option>(option))
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::setCharacterSet(std::string_view csname) -> IoTask<void> {
+inline auto MySql::setCharacterSet(std::string_view csname) -> IoTask<int> {
     // this ret is what.
     int         ret;
     std::string localCsname(csname);
     SQL_PRIVATE_SYNC_CODE(ret, mysql_set_character_set, localCsname.c_str())
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::selectDb(std::string_view db) -> IoTask<void> {
-
+inline auto MySql::selectDb(std::string_view db) -> IoTask<int> {
     // this ret is what.
     int         ret;
     std::string localDb(db);
     SQL_PRIVATE_SYNC_CODE(ret, mysql_select_db, localDb.c_str())
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::query(std::string_view sql) -> IoTask<void> {
+inline auto MySql::query(std::string_view sql) -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_real_query, sql.data(), (uint32_t)sql.size())
     // can use mysql_num_fields() to determine if a statement returned a result set.
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::commit() -> IoTask<void> {
-
+inline auto MySql::commit() -> IoTask<bool> {
     my_bool ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_commit)
-    co_return {};
+    co_return ret;
 }
 
 inline auto MySql::disconnect() -> IoTask<void> {
@@ -356,7 +333,7 @@ inline auto MySql::disconnect() -> IoTask<void> {
             auto pret = co_await pollStatus(status);
             status    = mysql_close_cont(&mMysql, status);
             if (!pret) {
-                co_return Unexpected<Error>(pret.error());
+                co_return Unexpected(pret.error());
             }
         }
     }
@@ -364,17 +341,17 @@ inline auto MySql::disconnect() -> IoTask<void> {
     co_return {};
 }
 
-inline auto MySql::autoCommit(bool autoMode) -> IoTask<void> {
+inline auto MySql::autoCommit(bool autoMode) -> IoTask<bool> {
     // TODO: need query "select @@autocommit;" and get the result.
     my_bool ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_autocommit, autoMode)
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::nextResult() -> IoTask<void> {
+inline auto MySql::nextResult() -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_next_result)
-    co_return {};
+    co_return ret;
 }
 
 inline auto MySql::fieldCount() -> std::size_t {
@@ -385,40 +362,42 @@ inline auto MySql::useResult() -> IoTask<MYSQL_RES *> {
     co_return mysql_use_result(&mMysql);
 }
 
-inline auto MySql::storeResult(MYSQL_RES **result) -> IoTask<void> {
-    SQL_PRIVATE_SYNC_CODE(*result, mysql_store_result)
-    co_return {};
+inline auto MySql::storeResult() -> IoTask<MYSQL_RES *> {
+    MYSQL_RES *result;
+    SQL_PRIVATE_SYNC_CODE(result, mysql_store_result)
+    co_return result;
 }
 
-inline auto MySql::rollback() -> IoTask<void> {
+inline auto MySql::rollback() -> IoTask<bool> {
     my_bool ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_rollback)
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::listFields(MYSQL_RES **ret, std::string_view table, std::string_view wildcard) -> IoTask<void> {
+inline auto MySql::listFields(std::string_view table, std::string_view wildcard) -> IoTask<MYSQL_RES *> {
+    MYSQL_RES  *ret;
     std::string localTable(table);
     std::string localWildcard(wildcard);
-    SQL_PRIVATE_SYNC_CODE(*ret, mysql_list_fields, localTable.c_str(), localWildcard.c_str());
-    co_return {};
+    SQL_PRIVATE_SYNC_CODE(ret, mysql_list_fields, localTable.c_str(), localWildcard.c_str());
+    co_return ret;
 }
 
-inline auto MySql::sendQuery(std::string_view sql) -> IoTask<void> {
+inline auto MySql::sendQuery(std::string_view sql) -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_real_query, sql.data(), (uint32_t)sql.size())
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::refresh(uint32_t refreshOptions) -> IoTask<void> {
+inline auto MySql::refresh(uint32_t refreshOptions) -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_refresh, refreshOptions)
-    co_return {};
+    co_return ret;
 }
 
-inline auto MySql::kill(uint64_t pid) -> IoTask<void> {
+inline auto MySql::kill(uint64_t pid) -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_kill, pid)
-    co_return {};
+    co_return ret;
 }
 
 inline auto MySql::ping() -> IoTask<int> {
@@ -428,15 +407,15 @@ inline auto MySql::ping() -> IoTask<int> {
 }
 
 inline auto MySql::stat() -> IoTask<const char *> {
-    const char *ret; // FIXME: this var's live who knows ?
+    const char *ret; // FIXME: this var's lifetime who knows ?
     SQL_PRIVATE_SYNC_CODE(ret, mysql_stat)
     co_return ret;
 }
 
-inline auto MySql::readQueryResult() -> IoTask<void> {
+inline auto MySql::readQueryResult() -> IoTask<bool> {
     my_bool ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_read_query_result)
-    co_return {};
+    co_return ret;
 }
 
 inline auto MySql::setOpt(const sqlopt::OptionBase &opt) -> int {
@@ -463,4 +442,4 @@ inline auto MySql::lastErrorMessage() -> const char * {
 #undef SQL_PRIVATE_SYNC_CODE
 #undef MYSQL_OPTION_TABLE
 } // namespace detail
-ILIAS_SQL_NS_END
+ILIAS_MYSQL_NS_END

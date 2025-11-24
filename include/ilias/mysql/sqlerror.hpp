@@ -9,13 +9,14 @@
  *
  */
 #pragma once
-#include <ilias/error.hpp>
+#include <system_error>
+#include <ilias/io/error.hpp>
 #include <mariadb/mysqld_error.h>
 #include <stdint.h>
 
 #include "detail/global.hpp"
 
-ILIAS_SQL_NS_BEGIN
+ILIAS_MYSQL_NS_BEGIN
 
 #define SQL_ERROR_TABLE                                                                                                \
     SQL_ERROR_ROW(OK, OK, 0)                                                                                           \
@@ -1292,7 +1293,7 @@ public:
         SQL_ERROR_TABLE
 #undef SQL_ERROR_ROW
     };
-    SqlError(int64_t err, const ErrorCategory &c);
+    SqlError(int64_t err, const std::error_category &c);
     SqlError(Code err, const std::string &message = "");
     SqlError(const SqlError &err);
     SqlError();
@@ -1300,27 +1301,27 @@ public:
     auto isOk() const -> bool;
     auto value() const -> int64_t;
     auto message() const -> std::string;
-    auto category() const -> const ErrorCategory &;
+    auto category() const -> const std::error_category &;
     auto toString() const -> std::string;
     auto error() const -> Code;
     auto operator=(const SqlError &) -> SqlError & = default;
 
 private:
-    int64_t              mErr      = OK;
-    const ErrorCategory *mCategory = nullptr;
-    std::string          mMessage;
+    int                        mErr      = OK;
+    const std::error_category *mCategory = nullptr;
+    std::string                mMessage;
 };
 
-class SqlErrorCategory final : public ErrorCategory {
+class SqlErrorCategory final : public std::error_category {
 public:
     SqlErrorCategory();
     ~SqlErrorCategory();
-    auto        message(int64_t value) const -> std::string override;
-    auto        name() const -> std::string_view override;
+    auto        message(int value) const -> std::string override;
+    auto        name() const noexcept -> const char        *override;
     static auto instance() -> const SqlErrorCategory &;
 };
 
-inline SqlError::SqlError(int64_t err, const ErrorCategory &c) : mErr(err), mCategory(&c) {
+inline SqlError::SqlError(int64_t err, const std::error_category &c) : mErr(err), mCategory(&c) {
 }
 inline SqlError::SqlError(Code err, const std::string &message)
     : mErr(err), mCategory(&SqlErrorCategory::instance()), mMessage(message) {
@@ -1360,7 +1361,7 @@ inline auto SqlError::message() const -> std::string {
     return std::string(rawErrorName) + "(" + std::to_string(mErr) + ")";
 }
 
-inline auto SqlError::category() const -> const ErrorCategory & {
+inline auto SqlError::category() const -> const std::error_category & {
     return *mCategory;
 }
 
@@ -1393,15 +1394,21 @@ inline auto SqlErrorCategory::instance() -> const SqlErrorCategory & {
     return c;
 }
 
-inline auto SqlErrorCategory::message(int64_t value) const -> std::string {
+inline auto SqlErrorCategory::message(int value) const -> std::string {
     return SqlError(value, *this).message();
 }
 
-inline auto SqlErrorCategory::name() const -> std::string_view {
+inline auto SqlErrorCategory::name() const noexcept -> const char * {
     return "sql";
 }
 
 ILIAS_DECLARE_ERROR(SqlError::Code, SqlErrorCategory)
 #undef SQL_ERROR_TABLE
+inline auto make_error_code(SqlError::Code t) noexcept -> std::error_code {
+    return {static_cast<int>(t), _ilias_error_category_of(t)};
+}
 
-ILIAS_SQL_NS_END
+ILIAS_MYSQL_NS_END
+
+template <>
+struct std::is_error_code_enum<ILIAS_MYSQL_COMPLETE_NAMESPACE::SqlError::Code> : std::true_type {};

@@ -24,7 +24,7 @@
 #include "detail/mysql.hpp"
 #include "detail/sqlopt.hpp"
 
-ILIAS_SQL_NS_BEGIN
+ILIAS_MYSQL_NS_BEGIN
 
 class SqlDatabase {
 public:
@@ -34,9 +34,7 @@ public:
 
     SqlDatabase &operator=(const SqlDatabase &other);
 
-    [[nodiscard("Don't forget to use co_await")]]
     auto open() -> IoTask<void>;
-    [[nodiscard("Don't forget to use co_await")]]
     auto open(std::string_view username, std::string_view password) -> IoTask<void>;
     auto close() -> IoTask<void>;
     auto setUserName(std::string_view username) -> void;
@@ -108,7 +106,7 @@ inline auto SqlDatabase::parserOptions() -> void {
 inline auto SqlDatabase::open() -> IoTask<void> {
     // mysql need a valid username and password
     if (mUserName.empty() || mPassword.empty()) {
-        co_return Unexpected<Error>(SqlError::INVALID_PARAMETER);
+        co_return Unexpected(SqlError::INVALID_PARAMETER);
     }
     co_return co_await open(mUserName, mPassword);
 }
@@ -126,7 +124,7 @@ inline auto SqlDatabase::open(std::string_view username, std::string_view passwo
 inline auto SqlDatabase::selectDb(std::string_view db) -> IoTask<void> {
     auto ret = co_await mMySql->selectDb(db);
     if (!ret) {
-        co_return Unexpected<Error>(ret.error());
+        co_return Unexpected(ret.error());
     }
     mDatabase = db;
     co_return {};
@@ -186,4 +184,4 @@ auto SqlDatabase::getOption(T &option) -> SqlError {
     return (SqlError::Code)ret;
 }
 
-ILIAS_SQL_NS_END
+ILIAS_MYSQL_NS_END
