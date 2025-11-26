@@ -1,4 +1,4 @@
-add_requires("gtest")
+add_requires("gtest", "cpptrace")
 
 -- Make all files in the unit directory into targets
 for _, file in ipairs(os.files("unit/**.cpp")) do
@@ -16,10 +16,11 @@ for _, file in ipairs(os.files("unit/**.cpp")) do
     target("test_" .. name)
         set_kind("binary")
         set_default(false)
+        add_deps("ilias_mysql")
 
         add_files(file)
         add_tests(name, {run_timeout = 10000})
-        add_packages("gtest")
+        add_packages("gtest", "cpptrace")
         add_includedirs("$(projectdir)/include")
     target_end()
 

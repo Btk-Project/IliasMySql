@@ -12,23 +12,28 @@
 #include <system_error>
 #include <stdint.h>
 
-#include "detail/global.hpp"
+#include "ilias/sql/global/global.hpp"
 
 ILIAS_SQL_NS_BEGIN
 class SqlErrorCategory;
 
 #define SQL_ERROR_TABLE                                                                                                \
     SQL_ERROR_ENTRY(OK, "OK")                                                                                          \
-    SQL_ERROR_ENTRY(DriverNotFound, "Driver not found")
+    SQL_ERROR_ENTRY(UNKNOWN_ERROR, "Unknown error")                                                                    \
+    SQL_ERROR_ENTRY(DriverNotFound, "Driver not found")                                                                \
+    SQL_ERROR_ENTRY(NO_MORE_DATA, "No more data")                                                                      \
+    SQL_ERROR_ENTRY(INVALID_INDEX, "Invalid index")                                                                    \
+    SQL_ERROR_ENTRY(NOT_PREPARED, "Statement not prepared")                                                            \
+    SQL_ERROR_ENTRY(INVALID_PARAMETER, "Invalid parameter")
 
-class SqlError {
+class ILIAS_SQL_API SqlError {
 public:
     enum Code : uint32_t {
 #define SQL_ERROR_ENTRY(code, message) code,
         SQL_ERROR_TABLE
 #undef SQL_ERROR_ENTRY
     };
-    SqlError(int64_t err, const std::error_category &c);
+    SqlError(int64_t err, std::error_category &c);
     SqlError(Code err, const std::string &message = "");
     SqlError(const SqlError &err);
     SqlError();
@@ -42,93 +47,44 @@ public:
     auto operator=(const SqlError &) -> SqlError & = default;
 
 private:
-    int                        mErr      = OK;
-    const std::error_category *mCategory = nullptr;
-    std::string                mMessage;
+    int               mErr      = OK;
+    SqlErrorCategory *mCategory = nullptr;
 };
 
-class SqlErrorCategory final : public std::error_category {
+class ILIAS_SQL_API SqlErrorCategory final : public std::error_category {
 public:
     SqlErrorCategory();
     ~SqlErrorCategory();
     auto        message(int value) const -> std::string override;
     auto        name() const noexcept -> const char        *override;
-    static auto instance() -> const SqlErrorCategory &;
+    static auto instance() -> SqlErrorCategory &;
+
+    auto registerMessage(int code, const std::string &message) -> void { mMessageTable[code] = message; }
+
+private:
+    std::unordered_map<int, std::string> mMessageTable;
 };
 
-inline SqlError::SqlError(int64_t err, const std::error_category &c) : mErr(err), mCategory(&c) {
-    switch (mErr) {
+inline auto SqlErrorCategory::message(int value) const -> std::string {
+    auto it = mMessageTable.find(value);
+    if (it != mMessageTable.end()) {
+        return it->second;
+    }
+    switch (value) {
 #define SQL_ERROR_ENTRY(code, message)                                                                                 \
-    case code:                                                                                                         \
-        mMessage = message;                                                                                            \
-        break;
+    case SqlError::code:                                                                                               \
+        return message;
         SQL_ERROR_TABLE
 #undef SQL_ERROR_ENTRY
         default:
-            mMessage = "Unknow SQL error";
-            break;
+            return "";
     }
-}
-inline SqlError::SqlError(Code err, const std::string &message)
-    : mErr(err), mCategory(&SqlErrorCategory::instance()), mMessage(message) {
-}
-inline SqlError::SqlError(const SqlError &err) : mErr(err.mErr), mCategory(err.mCategory), mMessage(err.mMessage) {
-}
-inline SqlError::SqlError() : mErr(OK), mCategory(&SqlErrorCategory::instance()) {
-}
-inline SqlError::~SqlError() {
-}
-inline auto SqlError::isOk() const -> bool {
-    return mErr == OK;
-}
-inline auto SqlError::value() const -> int64_t {
-    return mErr;
-}
-
-inline auto SqlError::error() const -> Code {
-    return (Code)mErr;
-}
-
-inline auto SqlError::message() const -> std::string {
-    if (mMessage != "") {
-        return mMessage;
-    }
-    return std::string("Unknow SQL error") + "(" + std::to_string(mErr) + ")";
-}
-
-inline auto SqlError::category() const -> const std::error_category & {
-    return *mCategory;
-}
-
-inline auto SqlError::toString() const -> std::string {
-    if (mMessage != "") {
-        return mMessage;
-    }
-    return std::string("Unknow SQL error") + "(" + std::to_string(mErr) + ")";
-}
-
-inline SqlErrorCategory::SqlErrorCategory() {
-}
-
-inline SqlErrorCategory::~SqlErrorCategory() {
-}
-
-inline auto SqlErrorCategory::instance() -> const SqlErrorCategory & {
-    static SqlErrorCategory c;
-    return c;
-}
-
-inline auto SqlErrorCategory::message(int value) const -> std::string {
-    return SqlError(value, *this).message();
-}
-
-inline auto SqlErrorCategory::name() const noexcept -> const char * {
-    return "sql";
 }
 
 inline auto make_error_code(SqlError::Code t) noexcept -> std::error_code {
     return {static_cast<int>(t), SqlErrorCategory::instance()};
 }
+
 
 ILIAS_SQL_NS_END
 #undef SQL_ERROR_TABLE

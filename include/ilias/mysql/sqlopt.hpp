@@ -1,10 +1,11 @@
 #pragma once
 
 #include "global.hpp"
-#include "../sqlerror.hpp"
 
 #include <mariadb/mysql.h>
 #include <ilias/io/error.hpp>
+
+#include "ilias/sql/sqlerror.hpp"
 
 ILIAS_MYSQL_NS_BEGIN
 #define MYSQL_OPTION_TABLE                                                                                             \
@@ -68,26 +69,113 @@ inline static const char *getMySqlOptName(mysql_option opt) {
             return "unknown";
     }
 }
+inline constexpr auto enumMySqlOptNames() {
+    std::array names = {
+#define MYSQL_OPTION_ROW(enum_name, _1, _2) #enum_name,
+        MYSQL_OPTION_TABLE
+#undef MYSQL_OPTION_ROW
+    };
+    return names;
+}
+
+inline constexpr auto enumMySqlOptValues() {
+    std::array values = {
+#define MYSQL_OPTION_ROW(_1, enum, _2) enum,
+        MYSQL_OPTION_TABLE
+#undef MYSQL_OPTION_ROW
+    };
+    return values;
+}
+
+inline static mysql_option getMySqlOptEnum(const std::string &name) {
+    auto names  = enumMySqlOptNames();
+    auto values = enumMySqlOptValues();
+    for (size_t i = 0; i < names.size(); ++i) {
+        // 忽略大小写
+#if defined(_MSC_VER)
+        if (_stricmp(name.c_str(), names[i]) == 0) {
+            return values[i];
+        }
+#else
+        if (strcasecmp(name.c_str(), names[i]) == 0) {
+            return values[i];
+        }
+#endif
+    }
+    return (mysql_option)-1;
+}
+//     MYSQL_PROTOCOL_DEFAULT, MYSQL_PROTOCOL_TCP, MYSQL_PROTOCOL_SOCKET, MYSQL_PROTOCOL_PIPE, MYSQL_PROTOCOL_MEMORY
+template <typename EnumT, class enable = void>
+struct StringToMySqlEnumHelper {
+    static_assert(sizeof(EnumT) == sizeof(int), "EnumT must be int");
+    static_assert(std::is_enum_v<EnumT>, "EnumT must be enum");
+    static_assert(!std::is_enum_v<EnumT>, "Unknown enum type");
+};
+
+template <>
+struct StringToMySqlEnumHelper<mysql_protocol_type, void> {
+    static mysql_protocol_type operator()(const std::string &name) {
+        if (name == "MYSQL_PROTOCOL_DEFAULT") {
+            return MYSQL_PROTOCOL_DEFAULT;
+        }
+        else if (name == "MYSQL_PROTOCOL_TCP") {
+            return MYSQL_PROTOCOL_TCP;
+        }
+        else if (name == "MYSQL_PROTOCOL_SOCKET") {
+            return MYSQL_PROTOCOL_SOCKET;
+        }
+        else if (name == "MYSQL_PROTOCOL_PIPE") {
+            return MYSQL_PROTOCOL_PIPE;
+        }
+        else if (name == "MYSQL_PROTOCOL_MEMORY") {
+            return MYSQL_PROTOCOL_MEMORY;
+        }
+        else {
+            return (mysql_protocol_type)-1;
+        }
+    }
+};
+
+template <>
+struct StringToMySqlEnumHelper<mysql_option> {
+    static mysql_option operator()(const std::string &name) { return getMySqlOptEnum(name); }
+};
+
 } // namespace detail
 
-class OptionBase {
+class ILIAS_SQL_API OptionBase {
 public:
+    virtual ~OptionBase()                        = default;
     virtual auto setopt(MYSQL &sql) const -> int = 0;
     virtual auto getopt(MYSQL &sql) -> int       = 0;
 };
 
 template <mysql_option Optname, typename T, class enable = void>
-class OptionT : public OptionBase {
+class ILIAS_SQL_API OptionT : public OptionBase {
 public:
     constexpr OptionT() = default;
     constexpr OptionT(T value) : mValue(value) {}
+    explicit OptionT(std::string_view value) {
+        if constexpr (std::is_arithmetic_v<T> && !std::is_enum_v<T>) {
+            auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), mValue);
+            if (ec != std::errc()) {
+                ILIAS_ERROR("sql", "option({}) set error({}).", detail::getMySqlOptName(Optname), (int)ec);
+            }
+        }
+        else if constexpr (std::is_enum_v<T>) {
+            mValue = static_cast<T>(detail::StringToMySqlEnumHelper<T>()(std::string(value)));
+        }
+        else {
+            ILIAS_ERROR("sql", "option({}) unknow.", detail::getMySqlOptName(Optname));
+        }
+    }
     auto setopt(MYSQL &sql) const -> int override {
         auto ret = mysql_optionsv(&sql, Optname, &mValue);
         if (ret != 0) {
             ILIAS_ERROR("sql", "option({}) set error({}).", detail::getMySqlOptName(Optname), ret);
         }
         else {
-            ILIAS_TRACE("sql", "option({}) set value({}).", detail::getMySqlOptName(Optname), mValue);
+            ILIAS_TRACE("sql", "option({}) set value({}).", detail::getMySqlOptName(Optname), (int)mValue);
         }
         return ret;
     }
@@ -118,10 +206,24 @@ private:
 };
 
 template <mysql_option Optname, typename T>
-class OptionT<Optname, T *, void> : public OptionBase {
+class OptionT<Optname, T *, std::enable_if_t<!std::is_function_v<T>>> : public OptionBase {
 public:
     constexpr OptionT() = default;
     constexpr OptionT(T value) : mValue(value) {}
+    explicit OptionT(std::string_view value) {
+        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
+            auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), mValue);
+            if (ec != std::errc()) {
+                ILIAS_ERROR("sql", "option({}) set error({}).", detail::getMySqlOptName(Optname), (int)ec);
+            }
+        }
+        else if constexpr (std::is_same_v<T, bool>) {
+            mValue = static_cast<T>(value == "true" || value == "1" || value == "yes" || value == "on");
+        }
+        else {
+            ILIAS_ERROR("sql", "option({}) unknow.", detail::getMySqlOptName(Optname));
+        }
+    }
     auto setopt(MYSQL &sql) const -> int override {
         auto ret = mysql_optionsv(&sql, Optname, &mValue);
         if (ret != 0) {
@@ -159,11 +261,67 @@ private:
     T mValue {};
 };
 
+template <mysql_option Optname, typename T>
+class OptionT<Optname, T *, std::enable_if_t<std::is_function_v<T>>> : public OptionBase {
+public:
+    constexpr OptionT() = default;
+    constexpr OptionT(T value) : mValue(value) {}
+    explicit OptionT(std::string_view value) {
+        if constexpr (std::is_function_v<T>) {
+            uint64_t fptr;
+            auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), fptr);
+            if (ec != std::errc()) {
+                ILIAS_ERROR("sql", "option({}) set error({}).", detail::getMySqlOptName(Optname), (int)ec);
+            }
+            mValue = reinterpret_cast<T *>(fptr);
+        }
+        else {
+            ILIAS_ERROR("sql", "option({}) unknow.", detail::getMySqlOptName(Optname));
+        }
+    }
+    auto setopt(MYSQL &sql) const -> int override {
+        auto ret = mysql_optionsv(&sql, Optname, mValue);
+        if (ret != 0) {
+            ILIAS_ERROR("sql", "option({}) set error({})", detail::getMySqlOptName(Optname), ret);
+        }
+        else {
+            ILIAS_TRACE("sql", "option({}) set value({}).", detail::getMySqlOptName(Optname), (void *)mValue);
+        }
+        return ret;
+    }
+
+    auto getopt(MYSQL &sql) -> int override {
+        auto ret = mysql_get_optionv(&sql, Optname, &mValue);
+        if (ret != 0) {
+            ILIAS_ERROR("sql", "option({}) get error({}).", detail::getMySqlOptName(Optname), ret);
+        }
+        return ret;
+    }
+
+    auto setValue(T value) -> void { mValue = value; }
+    /**
+     * @brief Get the value of the option
+     *
+     */
+    constexpr auto value() const noexcept { return mValue; }
+
+    /**
+     * @brief Directly get the value of the option
+     *
+     * @return T
+     */
+    constexpr operator T *() const noexcept { return mValue; }
+
+private:
+    T *mValue {};
+};
+
 template <mysql_option Optname>
-class OptionT<Optname, std::string, void> : public OptionBase {
+class ILIAS_SQL_API OptionT<Optname, std::string, void> : public OptionBase {
 public:
     constexpr OptionT() = default;
     constexpr OptionT(const std::string &value) : mValue(value) {}
+    constexpr OptionT(std::string_view value) : mValue(value) {}
     auto setopt(MYSQL &sql) const -> int override {
         auto ret = mysql_optionsv(&sql, Optname, mValue == "" ? nullptr : (void *)mValue.c_str());
         if (ret != 0) {
@@ -208,6 +366,18 @@ private:
 #define MYSQL_OPTION_ROW(Name, EnumValue, Type) using Name = OptionT<EnumValue, Type>;
 MYSQL_OPTION_TABLE
 #undef MYSQL_OPTION_ROW
+
+inline OptionBase *createOption(mysql_option opt, std::string_view value) {
+    switch (opt) {
+#define MYSQL_OPTION_ROW(Name, EnumValue, Type)                                                                        \
+    case EnumValue:                                                                                                    \
+        return new Name(value);
+        MYSQL_OPTION_TABLE
+#undef MYSQL_OPTION_ROW
+        default:
+            return nullptr;
+    }
+}
 
 } // namespace sqlopt
 #undef MYSQL_OPTION_TABLE

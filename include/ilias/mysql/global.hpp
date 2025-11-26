@@ -11,10 +11,10 @@
 #define ILIAS_MYSQL_COMPLETE_NAMESPACE ILIAS_NAMESPACE::ILIAS_MYSQL_NAMESPACE
 #define ILIAS_MYSQL_USE_NAMESPACE using namespace ILIAS_MYSQL_COMPLETE_NAMESPACE;
 
-#define ILIAS_MYSQL_NS_BEGIN                                                                                             \
+#define ILIAS_MYSQL_NS_BEGIN                                                                                           \
     namespace ILIAS_NAMESPACE {                                                                                        \
     namespace ILIAS_MYSQL_NAMESPACE {
 
-#define ILIAS_MYSQL_NS_END                                                                                               \
+#define ILIAS_MYSQL_NS_END                                                                                             \
     }                                                                                                                  \
     }
