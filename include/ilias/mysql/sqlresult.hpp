@@ -10,14 +10,13 @@
 ILIAS_MYSQL_NS_BEGIN
 
 class SqlQuery;
-namespace detail {
 class ILIAS_SQL_API SqlResultBase {
 public:
     using SqlValue                             = sql::SqlValue;
     SqlResultBase()                            = default;
     SqlResultBase(SqlResultBase &&)            = default;
     SqlResultBase &operator=(SqlResultBase &&) = default;
-    ~SqlResultBase()                           = default;
+    virtual ~SqlResultBase()                   = default;
 
     SqlResultBase(const SqlResultBase &)            = delete;
     SqlResultBase &operator=(const SqlResultBase &) = delete;
@@ -39,7 +38,7 @@ class ILIAS_SQL_API SqlQueryResult final : public SqlResultBase {
     using SqlError = sql::SqlError;
 
 public:
-    SqlQueryResult(std::shared_ptr<detail::MySql> sql);
+    SqlQueryResult(std::shared_ptr<MySql> sql);
     SqlQueryResult(SqlQueryResult &&);
     SqlQueryResult &operator=(SqlQueryResult &&);
     ~SqlQueryResult();
@@ -59,10 +58,10 @@ protected:
     auto freeResult() -> void;
 
 private:
-    std::shared_ptr<detail::MySql> mMysql;
-    MYSQL_RES                     *mResult     = nullptr;
-    MYSQL_ROW                      mCurrentRow = nullptr;
-    std::vector<MYSQL_FIELD *>     mFieldMetas = {};
+    std::shared_ptr<MySql>     mMysql;
+    MYSQL_RES                 *mResult     = nullptr;
+    MYSQL_ROW                  mCurrentRow = nullptr;
+    std::vector<MYSQL_FIELD *> mFieldMetas = {};
 
     friend class ::ILIAS_MYSQL_COMPLETE_NAMESPACE::SqlQuery;
 };
@@ -76,7 +75,7 @@ class ILIAS_SQL_API SqlStmtResult final : public SqlResultBase {
     };
 
 public:
-    SqlStmtResult(std::shared_ptr<detail::MySql> sql, MYSQL_STMT *stmt);
+    SqlStmtResult(std::shared_ptr<MySql> sql, MYSQL_STMT *stmt);
     SqlStmtResult(SqlStmtResult &&);
     SqlStmtResult &operator=(SqlStmtResult &&);
     ~SqlStmtResult();
@@ -104,7 +103,7 @@ private:
     auto        allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void>;
 
 private:
-    std::shared_ptr<detail::MySql>                              mMysql;
+    std::shared_ptr<MySql>                                      mMysql;
     MYSQL_STMT                                                 *mStmt       = nullptr;
     MYSQL_RES                                                  *mResult     = nullptr;
     std::vector<MYSQL_FIELD *>                                  mFieldMetas = {};
@@ -114,5 +113,4 @@ private:
 
     friend class ::ILIAS_MYSQL_COMPLETE_NAMESPACE::SqlQuery;
 };
-} // namespace detail
 ILIAS_MYSQL_NS_END

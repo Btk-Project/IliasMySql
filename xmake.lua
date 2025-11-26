@@ -39,7 +39,7 @@ end
 target("ilias_mysql")
     set_kind("shared")
     add_headerfiles("include/(ilias/sql/**.hpp)")
-    add_defines("ENABLE_MYSQL_PLUGINS")
+    add_defines("ENABLE_MYSQL_PLUGINS", "ENABLE_SQLITE_PLUGINS")
     add_files("src/**.cpp")
     -- add_headerfiles("(ilias/**.cpp)")
 target_end()

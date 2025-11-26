@@ -16,6 +16,7 @@ struct ConnectOptions {
     std::string                        user;
     std::string                        password;
     std::string                        database;
+    std::string                        filename;
     std::map<std::string, std::string> extra;
 };
 

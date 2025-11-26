@@ -29,7 +29,6 @@ class DriverManager;
 ILIAS_SQL_NS_END
 
 ILIAS_MYSQL_NS_BEGIN
-namespace detail {
 
 class ILIAS_SQL_API MySql final {
 public:
@@ -104,7 +103,6 @@ private:
     MYSQL      mMysql;
     Poller     mPoller;
 };
-} // namespace detail
 
 ILIAS_SQL_USE_NAMESPACE
 ILIAS_SQL_API void ilias_register_sql_plugin(DriverManager *manager);

@@ -16,7 +16,7 @@ DriverManager::DriverManager() {
 #endif
 
 #ifdef ENABLE_SQLITE_PLUGINS
-    sqlite::ilias_register_sql_plugin();
+    sqlite::ilias_register_sql_plugin(this);
 #endif
 }
 

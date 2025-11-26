@@ -24,7 +24,10 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(NO_MORE_DATA, "No more data")                                                                      \
     SQL_ERROR_ENTRY(INVALID_INDEX, "Invalid index")                                                                    \
     SQL_ERROR_ENTRY(NOT_PREPARED, "Statement not prepared")                                                            \
-    SQL_ERROR_ENTRY(INVALID_PARAMETER, "Invalid parameter")
+    SQL_ERROR_ENTRY(INVALID_PARAMETER, "Invalid parameter")                                                            \
+    SQL_ERROR_ENTRY(ALREADY_CONNECTED, "Already connected")                                                            \
+    SQL_ERROR_ENTRY(NOT_CONNECTED, "Not connected")                                                                    \
+    SQL_ERROR_ENTRY(UNSUPPORTED_API, "unsupported api")
 
 class ILIAS_SQL_API SqlError {
 public:
@@ -84,7 +87,6 @@ inline auto SqlErrorCategory::message(int value) const -> std::string {
 inline auto make_error_code(SqlError::Code t) noexcept -> std::error_code {
     return {static_cast<int>(t), SqlErrorCategory::instance()};
 }
-
 
 ILIAS_SQL_NS_END
 #undef SQL_ERROR_TABLE

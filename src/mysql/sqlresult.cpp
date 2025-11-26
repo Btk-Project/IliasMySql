@@ -42,7 +42,6 @@
     }
 
 ILIAS_MYSQL_NS_BEGIN
-namespace detail {
 auto SqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
     -> Result<SqlValue, std::error_code> {
     SqlValue result;
@@ -203,7 +202,7 @@ SqlQueryResult &SqlQueryResult::operator=(SqlQueryResult &&other) {
     return *this;
 }
 
-SqlQueryResult::SqlQueryResult(std::shared_ptr<detail::MySql> sql) : mMysql(sql) {
+SqlQueryResult::SqlQueryResult(std::shared_ptr<MySql> sql) : mMysql(sql) {
 }
 
 SqlQueryResult::~SqlQueryResult() {
@@ -397,7 +396,7 @@ SqlStmtResult &SqlStmtResult::operator=(SqlStmtResult &&other) {
     return *this;
 }
 
-SqlStmtResult::SqlStmtResult(std::shared_ptr<detail::MySql> sql, MYSQL_STMT *stmt) : mMysql(sql), mStmt(stmt) {
+SqlStmtResult::SqlStmtResult(std::shared_ptr<MySql> sql, MYSQL_STMT *stmt) : mMysql(sql), mStmt(stmt) {
 }
 
 SqlStmtResult::~SqlStmtResult() {
@@ -719,7 +718,6 @@ auto SqlStmtResult::reset() -> IoTask<bool> {
     SQL_PRIVATE_SYNC_CODE(ret, mysql_stmt_reset);
     co_return ret;
 }
-} // namespace detail
 
 #undef SQL_PRIVATE_SYNC_CODE
 ILIAS_MYSQL_NS_END

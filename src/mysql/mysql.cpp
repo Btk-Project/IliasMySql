@@ -6,7 +6,6 @@
 
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
-namespace detail {
 MySql::MySql() {
     mCtxt = IoContext::currentThread();
     if (mCtxt == nullptr) {
@@ -359,7 +358,6 @@ auto MySql::lastErrorMessage() -> const char * {
 
 #undef SQL_PRIVATE_MAKE_POLLER
 #undef SQL_PRIVATE_SYNC_CODE
-} // namespace detail
 
 class MysqlResultSet : public IResultSet {
 public:
@@ -367,7 +365,7 @@ public:
     MysqlResultSet(MysqlResultSet &&)                 = default;
     MysqlResultSet &operator=(const MysqlResultSet &) = delete;
     MysqlResultSet &operator=(MysqlResultSet &&)      = default;
-    MysqlResultSet(std::unique_ptr<detail::SqlResultBase> imp);
+    MysqlResultSet(std::unique_ptr<SqlResultBase> imp);
     virtual ~MysqlResultSet();
     auto next() -> IoTask<bool> override;
     auto rowCount() const -> size_t override;
@@ -378,12 +376,12 @@ public:
     auto native() -> MYSQL_RES *;
 
 private:
-    std::unique_ptr<detail::SqlResultBase> mImp;
+    std::unique_ptr<SqlResultBase> mImp;
 };
 MysqlResultSet::~MysqlResultSet() {
 }
 
-MysqlResultSet::MysqlResultSet(std::unique_ptr<detail::SqlResultBase> imp) : mImp(std::move(imp)) {
+MysqlResultSet::MysqlResultSet(std::unique_ptr<SqlResultBase> imp) : mImp(std::move(imp)) {
 }
 
 auto MysqlResultSet::next() -> IoTask<bool> {
@@ -418,7 +416,7 @@ public:
     MysqlStatement(MysqlStatement &&)                 = default;
     MysqlStatement &operator=(const MysqlStatement &) = delete;
     MysqlStatement &operator=(MysqlStatement &&)      = default;
-    MysqlStatement(std::shared_ptr<detail::MySql> mysql);
+    MysqlStatement(std::shared_ptr<MySql> mysql);
     ~MysqlStatement();
 
     auto bind(size_t index, SqlValueView value) -> Result<void, std::error_code> override;
@@ -440,15 +438,15 @@ private:
     auto makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std::error_code>;
 
 private:
-    std::shared_ptr<detail::MySql> mMysql;
-    MYSQL_STMT                    *mMysqlStmt = nullptr;
+    std::shared_ptr<MySql> mMysql;
+    MYSQL_STMT            *mMysqlStmt = nullptr;
     std::vector<std::variant<char, int32_t, int64_t, float, double, MYSQL_TIME>>
                                          mBindBuffer; // save var to continue it is life.
     std::vector<MYSQL_BIND>              mBinds;
     std::unordered_map<std::string, int> mIndexs;
 };
 
-MysqlStatement::MysqlStatement(std::shared_ptr<detail::MySql> mysql) {
+MysqlStatement::MysqlStatement(std::shared_ptr<MySql> mysql) {
     mMysql = std::move(mysql);
 }
 
@@ -629,7 +627,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
             co_return Unexpected((SqlError::Code)ret);
         }
     }
-    auto sqlResult = std::make_unique<detail::SqlStmtResult>(mMysql, mMysqlStmt);
+    auto sqlResult = std::make_unique<SqlStmtResult>(mMysql, mMysqlStmt);
     auto ret1      = co_await sqlResult->getResult();
     clearBinds();
     if (!ret1) {
@@ -757,7 +755,7 @@ auto MysqlStatement::clearBinds() -> void {
 
 class MysqlConnection : public IConnection {
 public:
-    MysqlConnection(std::shared_ptr<detail::MySql> mysql, ConnectOptions options) : mMysql(mysql), mOptions(options) {}
+    MysqlConnection(std::shared_ptr<MySql> mysql, ConnectOptions options) : mMysql(mysql), mOptions(options) {}
     auto connect() -> IoTask<void> override;
     auto disconnect() -> IoTask<void> override;
     auto selectDatabase(std::string_view name) -> IoTask<void> override;
@@ -775,14 +773,18 @@ public:
     auto lastInsertId() const -> int64_t override;
     // 连通性检测
     auto ping() -> IoTask<bool> override;
-    auto mysql() -> std::shared_ptr<detail::MySql> { return mMysql; }
+    auto mysql() -> std::shared_ptr<MySql> { return mMysql; }
 
 private:
-    std::shared_ptr<detail::MySql> mMysql;
-    ConnectOptions                 mOptions;
+    std::shared_ptr<MySql> mMysql;
+    ConnectOptions         mOptions;
+    bool                   mIsConnected = false;
 };
 
 auto MysqlConnection::connect() -> IoTask<void> {
+    if (mIsConnected) {
+        co_return Unexpected(SqlError::Code::ALREADY_CONNECTED);
+    }
     for (const auto &[key, value] : mOptions.extra) {
         if (auto type = sqlopt::detail::getMySqlOptEnum(key.c_str()); type != (mysql_option)-1) {
             sqlopt::OptionBase *option = sqlopt::createOption(type, value);
@@ -795,11 +797,13 @@ auto MysqlConnection::connect() -> IoTask<void> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
+    mIsConnected = true;
     co_return {};
 }
 
 auto MysqlConnection::disconnect() -> IoTask<void> {
-    auto ret = co_await mMysql->disconnect();
+    mIsConnected = false;
+    auto ret     = co_await mMysql->disconnect();
     if (!ret) {
         co_return Unexpected(ret.error());
     }
@@ -839,7 +843,7 @@ auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IRes
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    auto sqlResult = std::make_unique<detail::SqlQueryResult>(mMysql);
+    auto sqlResult = std::make_unique<SqlQueryResult>(mMysql);
     auto ret1      = co_await sqlResult->getResult();
     if (!ret1) {
         co_return Unexpected(ret1.error());
@@ -872,7 +876,7 @@ auto MysqlConnection::rollback() -> IoTask<bool> {
 }
 
 auto MysqlConnection::syncRollback() -> bool {
-   return mMysql->syncRollback();
+    return mMysql->syncRollback();
 }
 
 auto MysqlConnection::lastInsertId() const -> int64_t {
@@ -889,7 +893,7 @@ auto MysqlConnection::ping() -> IoTask<bool> {
 
 void ilias_register_sql_plugin(DriverManager *manager) {
     manager->registerDriver("mysql", [](const ConnectOptions &options) -> std::unique_ptr<IConnection> {
-        auto connection = std::make_unique<MysqlConnection>(std::make_shared<detail::MySql>(), options);
+        auto connection = std::make_unique<MysqlConnection>(std::make_shared<MySql>(), options);
         return connection;
     });
 }
