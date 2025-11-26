@@ -80,7 +80,7 @@ auto SqliteStmtResultSet::getValue(std::string_view name) -> IoResult<SqlValue> 
     if (index != mIndexs.end()) {
         return getValue(index->second);
     }
-    return SqlValue{SqlNull{}};
+    return SqlValue {SqlNull {}};
 }
 
 auto SqliteStmtResultSet::setPrivate(std::unique_ptr<SqliteStatement> mp) {
@@ -212,6 +212,14 @@ Sqlite::~Sqlite() {
 
 auto Sqlite::native() -> sqlite3 * {
     return mSql;
+}
+
+auto Sqlite::sqlname() -> std::string {
+    return "sqlite";
+}
+
+auto Sqlite::sqlinfo() -> std::string {
+    return sqlite3_libversion();
 }
 
 auto Sqlite::connect() -> IoTask<void> {

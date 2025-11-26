@@ -36,6 +36,7 @@ ILIAS_NAMESPACE::Task<void> test() {
     auto mysql_connection = std::move(ret.value());
     auto connect_ret      = co_await mysql_connection->connect();
     EXPECT_TRUE(connect_ret.has_value());
+    ILIAS_INFO("sql-test", "create sql {} with {}", mysql_connection->sqlname(), mysql_connection->sqlinfo());
     // create datebase test.
     auto ret1 = co_await mysql_connection->execute("CREATE DATABASE IF NOT EXISTS test");
     EXPECT_TRUE(ret1.has_value());

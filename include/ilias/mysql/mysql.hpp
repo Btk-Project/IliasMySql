@@ -95,6 +95,7 @@ public:
     auto close() -> void;
     auto lastError() -> int;
     auto lastErrorMessage() -> const char *;
+    auto info() -> std::string;
 
     bool operator==(MySql &other);
 

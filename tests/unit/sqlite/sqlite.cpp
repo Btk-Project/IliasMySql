@@ -34,7 +34,7 @@ ILIAS_NAMESPACE::Task<void> test() {
     auto mysql_connection = std::move(ret.value());
     auto connect_ret      = co_await mysql_connection->connect();
     EXPECT_TRUE(connect_ret.has_value()) << "Can't open database: " << connect_ret.error().message();
-    std::cout << "[INFO] Opened database successfully" << std::endl;
+    ILIAS_INFO("sql-test", "create sql {} with {}", mysql_connection->sqlname(), mysql_connection->sqlinfo());
     // --- B. 建表 (Create Table) ---
     // SQLite 类型映射: INT -> INTEGER, VARCHAR -> TEXT, DATETIME -> TEXT, BLOB -> BLOB
     const char *create_sql = "CREATE TABLE IF NOT EXISTS test_table ("
@@ -50,10 +50,10 @@ ILIAS_NAMESPACE::Task<void> test() {
     auto ret1 = co_await mysql_connection->execute(create_sql);
     EXPECT_TRUE(ret1);
     if (!ret1) {
-        std::cout << "[INFO] error: " << ret1.error().message();
+        ILIAS_ERROR("sql-test", "error: {}", ret1.error().message());
         co_return;
     }
-    std::cout << "[INFO] create table test_table success" << std::endl;
+    ILIAS_INFO("sql-test", "create table test_table success");
 
     // --- C. 准备数据 ---
     std::vector<Person> persons = {
@@ -100,9 +100,7 @@ ILIAS_NAMESPACE::Task<void> test() {
     EXPECT_TRUE(ret2);
     auto stmt = std::move(ret2.value());
     for (const auto &person : persons) {
-        std::cout << "id " << person.id << std::endl;
         stmt->bind("id", person.id);
-        std::cout << "name " << person.name << std::endl;
         stmt->bind("name", person.name);
         stmt->bind("age", person.age);
         stmt->bind("email", person.email);
@@ -116,8 +114,6 @@ ILIAS_NAMESPACE::Task<void> test() {
             co_return;
         }
         ILIAS_INFO("sql-test", "insert data success, effect rows: {}", ret1.value());
-
-        std::cout << "[INFO] insert data success, id: " << person.id << std::endl;
         stmt->reset();
     }
 
@@ -132,12 +128,12 @@ ILIAS_NAMESPACE::Task<void> test() {
     auto ret4 = co_await (*ret2)->query();
     EXPECT_TRUE(ret4.has_value());
     if (!ret4.has_value()) {
-        std::cout << "[ERROR] select error: " << ret4.error().value() << std::endl;
+        ILIAS_ERROR("sql-test", "select error {}", ret4.error().value());
         co_return;
     }
     auto result = std::move(ret4.value());
 
-    std::cout << "[INFO] Executing conditional query..." << std::endl;
+    ILIAS_INFO("sql-test", "Executing conditional query...");
 
     ILIAS_INFO("sql-test", "column size {}", result->columnCount());
     while (1) {

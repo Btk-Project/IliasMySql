@@ -88,7 +88,8 @@ public:
     Sqlite(const ConnectOptions &options);
     ~Sqlite();
     auto native() -> sqlite3 *;
-
+    auto sqlname() -> std::string override;
+    auto sqlinfo() -> std::string override;
     auto connect() -> IoTask<void> override;
     auto disconnect() -> IoTask<void> override;
     auto selectDatabase(std::string_view name) -> IoTask<void> override;

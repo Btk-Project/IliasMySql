@@ -355,6 +355,9 @@ auto MySql::lastError() -> int {
 auto MySql::lastErrorMessage() -> const char * {
     return mysql_error(&mMysql);
 }
+auto MySql::info() -> std::string {
+    return mysql_get_server_info(&mMysql);
+}
 
 #undef SQL_PRIVATE_MAKE_POLLER
 #undef SQL_PRIVATE_SYNC_CODE
@@ -756,6 +759,8 @@ auto MysqlStatement::clearBinds() -> void {
 class MysqlConnection : public IConnection {
 public:
     MysqlConnection(std::shared_ptr<MySql> mysql, ConnectOptions options) : mMysql(mysql), mOptions(options) {}
+    auto sqlname() -> std::string override;
+    auto sqlinfo() -> std::string override;
     auto connect() -> IoTask<void> override;
     auto disconnect() -> IoTask<void> override;
     auto selectDatabase(std::string_view name) -> IoTask<void> override;
@@ -780,6 +785,19 @@ private:
     ConnectOptions         mOptions;
     bool                   mIsConnected = false;
 };
+
+auto MysqlConnection::sqlname() -> std::string {
+    auto info = sqlinfo();
+    if (info.find("MariaDB") != std::string::npos) {
+        return "MariaDB";
+    } else {
+        return "MySQL";
+    }
+}
+
+auto MysqlConnection::sqlinfo() -> std::string {
+    return mMysql->info();
+}
 
 auto MysqlConnection::connect() -> IoTask<void> {
     if (mIsConnected) {

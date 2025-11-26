@@ -67,7 +67,8 @@ public:
 class IConnection {
 public:
     virtual ~IConnection() = default;
-
+    virtual auto sqlname() -> std::string = 0;
+    virtual auto sqlinfo() -> std::string = 0;
     virtual auto connect() -> IoTask<void>                             = 0;
     virtual auto disconnect() -> IoTask<void>                          = 0;
     virtual auto selectDatabase(std::string_view name) -> IoTask<void> = 0;
