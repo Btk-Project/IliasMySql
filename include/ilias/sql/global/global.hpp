@@ -4,6 +4,8 @@
 #include <ilias/detail/config.hpp>
 #include <ilias/defines.hpp>
 
+#include "config.h"
+
 #ifndef ILIAS_SQL_NAMESPACE
 #define ILIAS_SQL_NAMESPACE sql
 #endif

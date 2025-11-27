@@ -253,7 +253,7 @@ auto Sqlite::disconnect() -> IoTask<void> {
     co_return {};
 }
 
-auto Sqlite::selectDatabase(std::string_view name) -> IoTask<void> {
+auto Sqlite::selectDatabase([[maybe_unused]] std::string_view name) -> IoTask<void> {
     if (!mSql) {
         co_return Unexpected(SqlError::Code::NOT_CONNECTED);
     }

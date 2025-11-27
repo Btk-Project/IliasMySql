@@ -1,4 +1,5 @@
 #include "ilias/sql/driver_registry.hpp"
+#include "ilias/sql/global/config.h"
 
 #ifdef ENABLE_MYSQL_PLUGINS
 #include "ilias/mysql/mysql.hpp"

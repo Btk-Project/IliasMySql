@@ -12,11 +12,15 @@ for _, file in ipairs(os.files("unit/**.cpp")) do
         goto continue
     end
 
+    if not has_config("enable_" .. name) then 
+        goto continue
+    end
+
     -- Otherwise, create a target for this file, in most case, it should enough
     target("test_" .. name)
         set_kind("binary")
         set_default(false)
-        add_deps("ilias_mysql")
+        add_deps("ilias_sql")
 
         add_files(file)
         add_tests(name, {run_timeout = 10000})
