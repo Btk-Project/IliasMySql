@@ -22,13 +22,15 @@ public:
 public:
     SqlResult() = default;
     SqlResult(std::unique_ptr<IResultSet> imp) : mImp(std::move(imp)) {}
-    SqlResult(const SqlResult &) = delete;
-    SqlResult(SqlResult &&other) : mImp(std::move(other.mImp)) {}
+    template <typename U>
+    SqlResult(SqlResult<U> &&other) : mImp(std::move(other.mImp)) {}
+    SqlResult(const SqlResult &)            = delete;
+    SqlResult(SqlResult &&other)            = default;
     SqlResult &operator=(const SqlResult &) = delete;
-    SqlResult &operator=(SqlResult &&other) {
-        if (this != &other) {
-            mImp = std::move(other.mImp);
-        }
+    SqlResult &operator=(SqlResult &&other) = default;
+    template <typename U>
+    auto operator=(SqlResult<U> &&other) -> SqlResult & {
+        mImp = std::move(other.mImp);
         return *this;
     }
     ~SqlResult() = default;
@@ -46,14 +48,13 @@ public:
     auto operator->() const -> const IResultSet * { return mImp.get(); }
     auto operator*() -> IResultSet & { return *mImp; }
     auto operator*() const -> const IResultSet & { return *mImp; }
-    template <typename T>
-    operator SqlResult<T>() {
-        return SqlResult<T>(std::move(mImp));
-    }
 
 private:
     template <typename U>
     auto unpack(SqlValue &value, U &u) -> IoResult<void>;
+
+    template <typename U>
+    friend class SqlResult;
 
 protected:
     std::unique_ptr<IResultSet> mImp;
@@ -71,26 +72,27 @@ public:
 public:
     SqlResult() = default;
     SqlResult(std::unique_ptr<IResultSet> imp) : SqlResult<void>(std::move(imp)) {}
-    SqlResult(const SqlResult &) = delete;
-    SqlResult(SqlResult &&other) : SqlResult<void>(std::move(other.mImp)) {}
+    template <typename U>
+    SqlResult(SqlResult<U> &&other) : SqlResult<void>(std::move(other.mImp)) {}
+    SqlResult(const SqlResult &)            = delete;
+    SqlResult(SqlResult &&)                 = default;
     SqlResult &operator=(const SqlResult &) = delete;
-    SqlResult &operator=(SqlResult &&other) {
-        if (this != &other) {
-            mImp = std::move(other.mImp);
-        }
+    SqlResult &operator=(SqlResult &&other) = default;
+    template <typename U>
+    auto operator=(SqlResult<U> &&other) -> SqlResult<T> & {
+        mImp = std::move(other.mImp);
         return *this;
     }
     ~SqlResult() = default;
-    template <typename U>
-    operator SqlResult<U>() {
-        return SqlResult<U>(std::move(mImp));
-    }
 
     using SqlResult<void>::operator->;
     using SqlResult<void>::operator*;
     using SqlResult<void>::load;
     using SqlResult<void>::range;
     auto range() -> Generator<T>;
+
+    template <typename U>
+    friend class SqlResult;
 };
 
 template <typename U>
@@ -241,6 +243,9 @@ auto SqlResult<T>::range() -> Generator<T> {
             if (!rc) {
                 co_return;
             }
+            auto [id, name, age, born, email, promise, val1, val2] = value;
+            ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {}", id, name, age, email,
+                       born.toString(), (int)val1, val2);
             co_yield value;
         }
     }
@@ -249,6 +254,8 @@ auto SqlResult<T>::range() -> Generator<T> {
             if (!rc) {
                 co_return;
             }
+            ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {}", value.id, value.name,
+                       value.age, value.email, value.born.toString(), (int)value.val1, value.val2);
             co_yield value;
         }
     }

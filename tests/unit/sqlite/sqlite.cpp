@@ -16,11 +16,33 @@ struct Person {
     int                    id;
     std::string            name;
     int                    age;
+    SqlDate                born;
+    std::string            email;
+    std::vector<std::byte> promise;
+    char                   val1;
+    int                    val2;
+};
+
+struct PersonError {
+    int                    id;
+    std::string            name;
+    int                    age;
     std::string            email;
     SqlDate                born;
     std::vector<std::byte> promise;
     char                   val1;
+    int                    val3; // error field
+};
+
+struct PersonOk1 { // order of fields changed
     int                    val2;
+    int                    id;
+    int                    age;
+    SqlDate                born;
+    std::string            name;
+    std::vector<std::byte> promise;
+    char                   val1;
+    std::string            email;
 };
 
 ILIAS_NAMESPACE::Task<void> test() {
@@ -58,32 +80,32 @@ ILIAS_NAMESPACE::Task<void> test() {
         {1,
          "a test user",
          18,
-         "test@test.com",
          SqlDate(2025, 6, 20, 1, 1, 1),
+         "test@test.com",
          {std::byte {1}, std::byte {2}, std::byte {0}},
          'a',
          234},
         {2,
          "王小明",
          19,
-         "xiaoming@test.com",
          SqlDate(2025, 4, 21, 15, 23, 13),
+         "xiaoming@test.com",
          {std::byte {1}, std::byte {0}, std::byte {3}},
          'b',
          145},
         {3,
          "Alice",
          18,
-         "Alice@test.com",
          SqlDate(2025, 2, 22, 12, 23, 23),
+         "Alice@test.com",
          {std::byte {1}, std::byte {2}, std::byte {5}},
          '3',
          345},
         {4,
          "Bob",
          18,
-         "Bob@test.com",
          SqlDate(2025, 1, 20, 23, 12, 32),
+         "Bob@test.com",
          {std::byte {3}, std::byte {2}, std::byte {3}},
          '2',
          434},
@@ -92,7 +114,23 @@ ILIAS_NAMESPACE::Task<void> test() {
     // --- D. 插入数据 (Prepare & Bind) ---
     const char *insert_sql = "INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
                              "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)";
-
+    static_assert(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Person &>>, "asdfasdfsadf");
+    // auto ret21 = co_await db.query_with("INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
+    //                                     "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)",
+    //                                     persons[0]);
+    auto ret21      = co_await db.query_with("INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
+                                             "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)",
+                                        PersonOk1 {.val2    = 255,
+                                                   .id      = 5,
+                                                   .age     = 20,
+                                                   .born    = SqlDate(2020, 1, 1),
+                                                   .name    = "test",
+                                                   .promise = {std::byte {25}, std::byte {62}, std::byte {37}},
+                                                   .val1    = 'a',
+                                                   .email   = "test@neko.dev"});
+    // ret21      = co_await db.query_with("INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
+    //                                          "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)",
+    //                                     PersonError());
     auto ret2 = co_await db.prepare<Person>(insert_sql);
     EXPECT_TRUE(ret2);
     auto stmt = std::move(ret2.value());
@@ -108,15 +146,12 @@ ILIAS_NAMESPACE::Task<void> test() {
     }
 
     // --- E. 条件查询 (Select WHERE) ---
-    const char *select_where_sql = "SELECT * FROM test_table WHERE id > :id";
-    auto        ret3             = co_await db.query_with("SELECT * FROM test_table WHERE id > :id", 1);
+    auto ret3 = co_await db.query_with("SELECT * FROM test_table WHERE id > :id", 1);
     EXPECT_TRUE(ret3);
     if (!ret3) {
         co_return;
     }
     SqlResult<Person> result = std::move(ret3.value());
-
-    ILIAS_INFO("sql-test", "Executing {} query...", select_where_sql);
 
     ILIAS_INFO("sql-test", "column size {}", result->columnCount());
     ilias_for_await(auto person_result, result.range()) {

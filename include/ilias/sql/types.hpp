@@ -282,6 +282,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
     auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueView & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
+            case SqlValueType::kChar:
+                return format_to(ctx.out(), "{}", get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
             case SqlValueType::kBigInt:

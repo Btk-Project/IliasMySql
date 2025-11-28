@@ -98,7 +98,7 @@ SqliteStatement::SqliteStatement(std::shared_ptr<sqlite3> sqlite) : mSqlite(sqli
 }
 
 SqliteStatement::~SqliteStatement() {
-    reset();
+    // reset(); // 如果resultset没有关闭，reset会导致resultset失效。
     mSqliteStmt.reset();
 }
 
@@ -192,7 +192,11 @@ auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
         if (ret != SQLITE_OK) {
             return ret;
         }
-        mSqliteStmt = std::shared_ptr<sqlite3_stmt>(stmt, [](sqlite3_stmt *stmt) { sqlite3_finalize(stmt); });
+        mSqliteStmt = std::shared_ptr<sqlite3_stmt>(stmt, [](sqlite3_stmt *stmt) {
+            sqlite3_reset(stmt);
+            sqlite3_clear_bindings(stmt);
+            sqlite3_finalize(stmt);
+        });
         return ret;
     });
     if (ret != SQLITE_OK) {

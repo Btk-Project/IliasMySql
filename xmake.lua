@@ -19,7 +19,6 @@ add_requireconfs("**.neko-proto-tools", {override = true, version = "0.2.5", con
 includes("lua/hidetargets.lua")
 set_warnings("allextra")
 
-set_languages("c++latest")
 option("enable_mysql")
     set_default(true)
     set_showmenu(true)
@@ -42,6 +41,10 @@ end
 
 if has_config("enable_sqlite") then
     add_requires("sqlite3")
+end
+
+if is_plat("windows") then 
+    add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
 
 target("ilias_sql")

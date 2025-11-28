@@ -22,12 +22,12 @@ public:
 
 public:
     SqlStatement() = default;
-    SqlStatement(std::unique_ptr<IStatement> stmt) : mStmt(std::move(stmt)) {}
-    SqlStatement(const SqlStatement &)            = delete;
-    SqlStatement(SqlStatement &&)                 = default;
-    SqlStatement &operator=(const SqlStatement &) = delete;
-    SqlStatement &operator=(SqlStatement &&)      = default;
-    ~SqlStatement()                               = default;
+    explicit SqlStatement(std::unique_ptr<IStatement> stmt) : mStmt(std::move(stmt)) {}
+    SqlStatement(const SqlStatement &)                = delete;
+    SqlStatement &operator=(const SqlStatement &)     = delete;
+    SqlStatement(SqlStatement &&) noexcept            = default;
+    SqlStatement &operator=(SqlStatement &&) noexcept = default;
+    ~SqlStatement()                                   = default;
 
     auto operator->() -> IStatement * { return mStmt.get(); }
     auto operator->() const -> const IStatement * { return mStmt.get(); }
@@ -35,11 +35,11 @@ public:
     auto operator*() const -> const IStatement & { return *mStmt; }
 
     template <typename U>
-        requires(!std::is_class_v<U>) ||
-                (std::is_class_v<U> && NEKO_NAMESPACE::detail::has_values_meta<std::decay_t<U>>)
-    auto bind(U &arg) -> IoResult<void>;
+        requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
+    auto bind(U &&arg) -> IoResult<void>;
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || ((sizeof...(Args) == 1) && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
+        requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... &&
+                                          !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
     auto bind(Args &&...args) -> IoResult<void>;
     template <typename U = void>
     auto query() -> IoTask<SqlResult<U>>;
@@ -61,12 +61,14 @@ public:
 
 public:
     SqlStatement() = default;
-    SqlStatement(std::unique_ptr<IStatement> stmt) : SqlStatement<void>(std::move(stmt)) {}
-    SqlStatement(const SqlStatement &)            = delete;
-    SqlStatement(SqlStatement &&)                 = default;
-    SqlStatement &operator=(const SqlStatement &) = delete;
-    SqlStatement &operator=(SqlStatement &&)      = default;
-    ~SqlStatement()                               = default;
+    explicit SqlStatement(std::unique_ptr<IStatement> stmt) : SqlStatement<void>(std::move(stmt)) {}
+    explicit SqlStatement(SqlStatement<void> &&other) noexcept : SqlStatement<void>(std::move(other)) {}
+    SqlStatement(const SqlStatement &)                = delete;
+    SqlStatement &operator=(const SqlStatement &)     = delete;
+    SqlStatement(SqlStatement &&) noexcept            = default;
+    SqlStatement &operator=(SqlStatement &&) noexcept = default;
+
+    ~SqlStatement() = default;
 
     using SqlStatement<void>::operator->;
     using SqlStatement<void>::operator*;
@@ -79,11 +81,11 @@ public:
 };
 
 template <typename U>
-    requires(!std::is_class_v<U>) || (std::is_class_v<U> && NEKO_NAMESPACE::detail::has_values_meta<std::decay_t<U>>)
-auto SqlStatement<void>::bind(U &arg) -> IoResult<void> {
+    requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
+auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     IoResult<void> ret = {};
 
-    NEKO_NAMESPACE::Reflect<U>::forEach(std::forward<U>(arg), [&ret, this](auto &field, std::string_view name) {
+    NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::forward<U>(arg), [&ret, this](auto &field, std::string_view name) {
         // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
         ret = ret ? mStmt->bind(name, to_sql_value_view(field)) : ret;
     });
@@ -91,7 +93,8 @@ auto SqlStatement<void>::bind(U &arg) -> IoResult<void> {
 }
 
 template <typename... Args>
-    requires(sizeof...(Args) > 1) || ((sizeof...(Args) == 1) && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
+    requires(sizeof...(Args) > 1) ||
+            (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
     IoResult<void> ret = {};
     int            idx = 0;
@@ -125,10 +128,10 @@ template <typename T>
 auto SqlStatement<T>::bind(T &&arg) -> IoResult<void> {
     if constexpr (NEKO_NAMESPACE::detail::is_std_tuple_v<std::decay_t<T>>) {
         return std::apply(
-            [this](auto... args) { return SqlStatement<void>::bind(std::forward<decltype(args)>(args)...); }, arg);
+            [this](auto &&...args) { return SqlStatement<void>::bind(std::forward<decltype(args)>(args)...); }, arg);
     }
     else {
-        return SqlStatement<void>::bind(arg);
+        return SqlStatement<void>::bind(std::forward<T>(arg));
     }
 }
 ILIAS_SQL_NS_END

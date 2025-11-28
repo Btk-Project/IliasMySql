@@ -134,7 +134,7 @@ ILIAS_NAMESPACE::Task<void> test() {
         ILIAS_ERROR("sql-test", "select error {}", ret4.error().value());
         co_return;
     }
-    SqlResult<Person> result = std::move(ret4.value());
+    SqlResult<Person> result = SqlResult<Person>(std::move(ret4.value()));
 
     ILIAS_INFO("sql-test", "Executing {} query...", select_where_sql);
 

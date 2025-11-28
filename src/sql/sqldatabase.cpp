@@ -12,6 +12,7 @@ auto SqlDatabase::open(std::string_view name, ConnectOptions options) -> IoTask<
     if (!ret) {
         co_return Unexpected(ret.error());
     }
+    ILIAS_INFO("ilias-sql", "open {} with version: {}", conn->sqlname(), conn->sqlinfo());
     co_return SqlDatabase(std::move(conn));
 }
 
