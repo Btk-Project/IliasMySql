@@ -9,17 +9,16 @@
 
 ILIAS_MYSQL_NS_BEGIN
 
-class SqlQuery;
-class ILIAS_SQL_API SqlResultBase {
+class ILIAS_SQL_API MySqlResultBase {
 public:
     using SqlValue                             = sql::SqlValue;
-    SqlResultBase()                            = default;
-    SqlResultBase(SqlResultBase &&)            = default;
-    SqlResultBase &operator=(SqlResultBase &&) = default;
-    virtual ~SqlResultBase()                   = default;
+    MySqlResultBase()                            = default;
+    MySqlResultBase(MySqlResultBase &&)            = default;
+    MySqlResultBase &operator=(MySqlResultBase &&) = default;
+    virtual ~MySqlResultBase()                   = default;
 
-    SqlResultBase(const SqlResultBase &)            = delete;
-    SqlResultBase &operator=(const SqlResultBase &) = delete;
+    MySqlResultBase(const MySqlResultBase &)            = delete;
+    MySqlResultBase &operator=(const MySqlResultBase &) = delete;
 
     [[nodiscard("Don't forget to use co_await")]]
     virtual auto next() -> IoTask<bool>                           = 0;
@@ -34,7 +33,7 @@ public:
     virtual auto nativeResult() -> MYSQL_RES * = 0;
 };
 
-class ILIAS_SQL_API SqlQueryResult final : public SqlResultBase {
+class ILIAS_SQL_API SqlQueryResult final : public MySqlResultBase {
     using SqlError = sql::SqlError;
 
 public:
@@ -62,11 +61,9 @@ private:
     MYSQL_RES                 *mResult     = nullptr;
     MYSQL_ROW                  mCurrentRow = nullptr;
     std::vector<MYSQL_FIELD *> mFieldMetas = {};
-
-    friend class ::ILIAS_MYSQL_COMPLETE_NAMESPACE::SqlQuery;
 };
 
-class ILIAS_SQL_API SqlStmtResult final : public SqlResultBase {
+class ILIAS_SQL_API SqlStmtResult final : public MySqlResultBase {
     using SqlError = sql::SqlError;
     struct BindConfig {
         enum_field_types bufferType;
@@ -110,7 +107,5 @@ private:
     std::unordered_map<std::string, std::unique_ptr<uint8_t[]>> mFields;
     std::unique_ptr<MYSQL_BIND[]>                               mBinds;
     std::unique_ptr<unsigned long[]>                            mLengths;
-
-    friend class ::ILIAS_MYSQL_COMPLETE_NAMESPACE::SqlQuery;
 };
 ILIAS_MYSQL_NS_END

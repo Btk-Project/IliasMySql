@@ -11,7 +11,7 @@
 
 namespace cpptrace {
 
-inline void dump() { cpptrace::generate_trace().print(); }
+inline void dump() { cpptrace::generate_trace(2).print(); }
 
 void signal_handler(int sig) {
     // 1. 立即解除注册，防止后续代码再次触发同类型信号导致死循环

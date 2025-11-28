@@ -34,7 +34,7 @@ ILIAS_SQL_USE_NAMESPACE
 
 class ILIAS_SQL_API SqliteStatement final : public IStatement {
 public:
-    SqliteStatement(sqlite3 *sqlite);
+    SqliteStatement(std::shared_ptr<sqlite3> sqlite);
     ~SqliteStatement();
     auto bind(size_t index, SqlValueView value) -> Result<void, std::error_code> override;
     auto bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> override;
@@ -52,13 +52,13 @@ public:
     auto close() -> IoTask<void>;
 
 private:
-    sqlite3      *mSqlite     = nullptr;
-    sqlite3_stmt *mSqliteStmt = nullptr;
+    std::shared_ptr<sqlite3>      mSqlite     = nullptr;
+    std::shared_ptr<sqlite3_stmt> mSqliteStmt = nullptr;
 };
 
 class ILIAS_SQL_API SqliteStmtResultSet final : public IResultSet {
 public:
-    SqliteStmtResultSet(sqlite3 *sqlite, sqlite3_stmt *stmt);
+    SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<sqlite3_stmt> stmt);
     ~SqliteStmtResultSet();
     auto next() -> IoTask<bool> override;
 
@@ -76,8 +76,8 @@ public:
     auto setPrivate(std::unique_ptr<SqliteStatement> mp);
 
 private:
-    sqlite3                             *mSqlite     = nullptr;
-    sqlite3_stmt                        *mSqliteStmt = nullptr;
+    std::shared_ptr<sqlite3>             mSqlite     = nullptr;
+    std::shared_ptr<sqlite3_stmt>        mSqliteStmt = nullptr;
     bool                                 mIsFirst    = true;
     std::unordered_map<std::string, int> mIndexs;
     std::unique_ptr<SqliteStatement>     mPrivate;
@@ -114,8 +114,8 @@ public:
     auto ping() -> IoTask<bool> override;
 
 private:
-    sqlite3       *mSql = nullptr;
-    ConnectOptions mOptions;
+    std::shared_ptr<sqlite3> mSqlite = nullptr;
+    ConnectOptions           mOptions;
 };
 
 ILIAS_SQL_USE_NAMESPACE

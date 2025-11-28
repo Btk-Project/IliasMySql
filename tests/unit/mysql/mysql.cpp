@@ -3,6 +3,9 @@
 #include <ilias/platform.hpp>
 #include "ilias/sql/driver_registry.hpp"
 #include "ilias/sql/interfaces.hpp"
+#include "ilias/sql/sqlresult.hpp"
+#include "ilias/sql/sqlstatement.hpp"
+#include "ilias/sql/sqldatabase.hpp"
 
 #include "../backtrace.hpp"
 
@@ -25,49 +28,44 @@ ILIAS_NAMESPACE::Task<void> test() {
     options.port     = 3306;
     options.user     = "root";
     options.password = "123456";
+    options.database = "test";
     options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
     options.extra.insert(std::make_pair("ConnectTimeout", "30"));
-    auto &driver = DriverManager::instance();
-    auto  ret    = driver.createConnection("mysql", options);
-    EXPECT_TRUE(ret.has_value());
+    // --- A. 连接数据库 (Connect) ---
+    auto ret = co_await SqlDatabase::open("mysql", options); //
+    EXPECT_TRUE(ret.has_value()) << "Can't open database: " << ret.error().message();
     if (!ret.has_value()) {
         co_return;
     }
-    auto mysql_connection = std::move(ret.value());
-    auto connect_ret      = co_await mysql_connection->connect();
-    EXPECT_TRUE(connect_ret.has_value());
-    ILIAS_INFO("sql-test", "create sql {} with {}", mysql_connection->sqlname(), mysql_connection->sqlinfo());
-    // create datebase test.
-    auto ret1 = co_await mysql_connection->execute("CREATE DATABASE IF NOT EXISTS test");
-    EXPECT_TRUE(ret1.has_value());
-    if (!ret1.has_value()) {
+    auto db = std::move(ret.value());
+    ILIAS_INFO("sql-test", "create sql {} with {}", db->sqlname(), db->sqlinfo());
+    // --- B. 建表 (Create Table) ---
+    // SQLite 类型映射: INT -> INTEGER, VARCHAR -> TEXT, DATETIME -> TEXT, BLOB -> BLOB
+    const char *create_sql = "CREATE TABLE IF NOT EXISTS test_table ("
+                             "id INTEGER PRIMARY KEY, "
+                             "name TEXT NOT NULL, "
+                             "age INTEGER, "
+                             "born TEXT, " // 存 ISO8601 字符串
+                             "email TEXT UNIQUE, "
+                             "promise BLOB, "
+                             "val1 INTEGER, " // SQLite 没有 TINYINT，用 INTEGER
+                             "val2 INTEGER"
+                             ");";
+    auto ret1 = co_await db.execute(create_sql);
+    EXPECT_TRUE(ret1);
+    if (!ret1) {
+        ILIAS_ERROR("sql-test", "error: {}", ret1.error().message());
         co_return;
     }
-    ILIAS_INFO("sql-test", "create database test success, effect rows: {}", ret1.value());
-    // use database test.
-    auto ret2 = co_await mysql_connection->selectDatabase("test");
-    EXPECT_TRUE(ret2.has_value());
-    if (!ret2.has_value()) {
+    // --- 清空表防止上一次测试干扰 ---
+    auto ret7 = co_await db.execute("DELETE FROM test_table");
+    EXPECT_TRUE(ret7);
+    if (!ret7) {
         co_return;
     }
-    // delete test_table if exists
-    ret1 = co_await mysql_connection->execute("DROP TABLE IF EXISTS test_table");
-    EXPECT_TRUE(ret1.has_value());
-    if (!ret1.has_value()) {
-        co_return;
-    }
-    ILIAS_INFO("sql-test", "drop table test_table success, effect rows: {}", ret1.value());
-    // create table test. / primary key id | NOT NULL name varchar(255) | age int | born date | UNIQUE email
-    // varchar(255)
-    ret1 = co_await mysql_connection->execute(
-        "CREATE TABLE IF NOT EXISTS test_table (id INT NOT NULL PRIMARY KEY, name VARCHAR(255) NOT "
-        "NULL, age INT, born DATETIME, email VARCHAR(255) UNIQUE, promise BLOB(1000), val1 TINYINT, val2 MEDIUMINT)");
-    EXPECT_TRUE(ret1.has_value());
-    if (!ret1.has_value()) {
-        co_return;
-    }
-    ILIAS_INFO("sql-test", "create table test_table success, effect rows: {}", ret1.value());
-    // insert data
+    ILIAS_INFO("sql-test", "create table test_table success");
+
+    // --- C. 准备数据 ---
     std::vector<Person> persons = {
         {1,
          "a test user",
@@ -75,7 +73,7 @@ ILIAS_NAMESPACE::Task<void> test() {
          "test@test.com",
          SqlDate(2025, 6, 20, 1, 1, 1),
          {std::byte {1}, std::byte {2}, std::byte {0}},
-         1,
+         'a',
          234},
         {2,
          "王小明",
@@ -83,7 +81,7 @@ ILIAS_NAMESPACE::Task<void> test() {
          "xiaoming@test.com",
          SqlDate(2025, 4, 21, 15, 23, 13),
          {std::byte {1}, std::byte {0}, std::byte {3}},
-         0,
+         'b',
          145},
         {3,
          "Alice",
@@ -91,7 +89,7 @@ ILIAS_NAMESPACE::Task<void> test() {
          "Alice@test.com",
          SqlDate(2025, 2, 22, 12, 23, 23),
          {std::byte {1}, std::byte {2}, std::byte {5}},
-         3,
+         '3',
          345},
         {4,
          "Bob",
@@ -99,109 +97,86 @@ ILIAS_NAMESPACE::Task<void> test() {
          "Bob@test.com",
          SqlDate(2025, 1, 20, 23, 12, 32),
          {std::byte {3}, std::byte {2}, std::byte {3}},
-         123,
+         '2',
          434},
     };
+
+    // --- D. 插入数据 (Prepare & Bind) ---
+    const char *insert_sql = "INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
+                             "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)";
+
+    auto ret2 = co_await db.prepare<Person>(insert_sql);
+    EXPECT_TRUE(ret2);
+    auto stmt = std::move(ret2.value());
     for (auto &person : persons) {
-        auto ret = co_await mysql_connection->prepare(
-            "INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) VALUES (:id, :name, "
-            ":age, :born, :email, :promise, :val1, :val2)");
-        EXPECT_TRUE(ret.has_value());
-        if (!ret.has_value()) {
-            co_return;
-        }
-        (*ret)->bind("id", person.id);
-        (*ret)->bind("name", person.name);
-        (*ret)->bind("age", person.age);
-        (*ret)->bind("email", person.email);
-        (*ret)->bind("born", person.born);
-        (*ret)->bind("promise", person.promise);
-        (*ret)->bind("val1", person.val1);
-        (*ret)->bind("val2", person.val2);
-        auto ret1 = co_await (*ret)->execute();
+        stmt.bind(person);
+        auto ret1 = co_await stmt->execute();
         EXPECT_TRUE(ret1.has_value());
         if (!ret1.has_value()) {
             co_return;
         }
         ILIAS_INFO("sql-test", "insert data success, effect rows: {}", ret1.value());
+        stmt->reset();
     }
 
-    // select * from test_table
-    auto ret3 = co_await mysql_connection->prepare("SELECT * FROM test_table WHERE id>:id");
-    EXPECT_TRUE(ret3.has_value());
-    if (!ret3.has_value()) {
+    // --- E. 条件查询 (Select WHERE) ---
+    const char *select_where_sql = "SELECT * FROM test_table WHERE id > :id";
+    auto        ret3             = co_await db.prepare<std::tuple<int>>(select_where_sql);
+    EXPECT_TRUE(ret3);
+    if (!ret3) {
         co_return;
     }
-    (*ret3)->bind("id", 1);
-    auto ret4 = co_await (*ret3)->query();
+    auto sqlstmt1 = std::move(ret3.value());
+    sqlstmt1.bind(1);
+    auto ret4 = co_await sqlstmt1.query();
     EXPECT_TRUE(ret4.has_value());
     if (!ret4.has_value()) {
+        ILIAS_ERROR("sql-test", "select error {}", ret4.error().value());
         co_return;
     }
-    auto result = std::move(ret4.value());
+    SqlResult<Person> result = std::move(ret4.value());
+
+    ILIAS_INFO("sql-test", "Executing {} query...", select_where_sql);
+
     ILIAS_INFO("sql-test", "column size {}", result->columnCount());
-    ILIAS_INFO("sql-test", "row size {}", result->rowCount());
-    while (1) {
-        auto ret = co_await result->next();
-        if (!ret) {
-            ILIAS_WARN("sql-test", "error: {}", ret.error().message());
-            break;
-        }
-        if (!*ret) {
-            ILIAS_INFO("sql-test", "end of result");
-            break;
-        }
-        auto        id      = std::get<int>(result->getValue("id").value_or(-1));
-        auto        name    = get<std::string>(result->getValue("name").value_or("null"));
-        auto        age     = std::get<int>(result->getValue("age").value_or(-1));
-        auto        born    = std::get<SqlDate>(result->getValue("born").value_or(SqlDate()));
-        auto        email   = std::get<std::string>(result->getValue("email").value_or("null"));
-        auto        promise = std::get<std::vector<std::byte>>(result->getValue("promise").value());
-        auto        val1    = std::get<char>(result->getValue("val1").value());
-        auto        val2    = std::get<int>(result->getValue("val2").value());
+    ilias_for_await(auto person_result, result.range()) {
         std::string str;
-        for (auto &b : promise) {
+        for (auto &b : person_result.promise) {
             str += std::to_string(static_cast<int>(b)) + ".";
         }
-        ILIAS_INFO("sql", "id:{} name:{} age:{} email:{} born:{} val1:{} val2:{} promise:{}", id, name, age, email,
-                   born.toString(), (int)val1, val2, str);
+        ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {} promise: {}",
+                   person_result.id, person_result.name, person_result.age, person_result.email,
+                   person_result.born.toString(), (int)person_result.val1, person_result.val2, str);
     }
 
-    ret4 = co_await mysql_connection->query("SELECT * FROM test_table");
-    EXPECT_TRUE(ret4.has_value());
-    if (!ret4.has_value()) {
+    const char *select_all_sql = "SELECT * FROM test_table";
+    using PersonTuple = std::tuple<int, std::string, int, SqlDate, std::string, std::vector<std::byte>, char, int>;
+    auto ret5         = co_await db.prepare<PersonTuple>(select_all_sql);
+    EXPECT_TRUE(ret5);
+    if (!ret5) {
         co_return;
     }
-    auto result1 = std::move(ret4.value());
-    ILIAS_INFO("sql-test", "select size {}", result1->rowCount());
-    while (1) {
-        auto ret = co_await result1->next();
-        if (!ret) {
-            ILIAS_WARN("sql-test", "error: {}", ret.error().message());
-            break;
-        }
-        if (!*ret) {
-            ILIAS_INFO("sql-test", "end of result");
-            break;
-        }
-        auto        id      = std::get<int>(result1->getValue("id").value_or(-1));
-        auto        name    = get<std::string>(result1->getValue("name").value_or("null"));
-        auto        age     = std::get<int>(result1->getValue("age").value_or(-1));
-        auto        born    = std::get<SqlDate>(result1->getValue("born").value_or(SqlDate()));
-        auto        email   = std::get<std::string>(result1->getValue("email").value_or("null"));
-        auto        promise = std::get<std::vector<std::byte>>(result1->getValue("promise").value());
-        auto        val1    = std::get<char>(result1->getValue("val1").value());
-        auto        val2    = std::get<int>(result1->getValue("val2").value());
+    auto ret6 = co_await (*ret5).query();
+    EXPECT_TRUE(ret6.has_value());
+    if (!ret6.has_value()) {
+        ILIAS_ERROR("sql-test", "select error {}", ret6.error().value());
+        co_return;
+    }
+
+    auto result1 = std::move(ret6.value());
+
+    ILIAS_INFO("sql-test", "Executing {} query...", select_all_sql);
+
+    ILIAS_INFO("sql-test", "column size {}", result1->columnCount());
+    ilias_for_await(auto person_result, result1.range()) {
         std::string str;
+        auto [id, name, age, born, email, promise, val1, val2] = person_result;
         for (auto &b : promise) {
             str += std::to_string(static_cast<int>(b)) + ".";
         }
-        ILIAS_INFO("sql", "id:{} name:{} age:{} email:{} born:{} val1:{} val2:{} promise:{}", id, name, age, email,
-                   born.toString(), (int)val1, val2, str);
+        ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {} promise: {}", id, name,
+                   age, email, born.toString(), (int)val1, val2, str);
     }
-
-    // co_await mysql.autoCommit(false);
-    co_return;
 }
 
 TEST(SQL, test) {

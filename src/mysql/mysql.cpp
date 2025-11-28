@@ -1,8 +1,8 @@
 #include "ilias/sql/driver_registry.hpp"
 
 #include "ilias/mysql/mysql.hpp"
-#include "ilias/mysql/sqlresult.hpp"
-#include "ilias/mysql/sqlopt.hpp"
+#include "ilias/mysql/mysqlresult.hpp"
+#include "ilias/mysql/mysqlopt.hpp"
 
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
@@ -368,7 +368,7 @@ public:
     MysqlResultSet(MysqlResultSet &&)                 = default;
     MysqlResultSet &operator=(const MysqlResultSet &) = delete;
     MysqlResultSet &operator=(MysqlResultSet &&)      = default;
-    MysqlResultSet(std::unique_ptr<SqlResultBase> imp);
+    MysqlResultSet(std::unique_ptr<MySqlResultBase> imp);
     virtual ~MysqlResultSet();
     auto next() -> IoTask<bool> override;
     auto rowCount() const -> size_t override;
@@ -379,12 +379,12 @@ public:
     auto native() -> MYSQL_RES *;
 
 private:
-    std::unique_ptr<SqlResultBase> mImp;
+    std::unique_ptr<MySqlResultBase> mImp;
 };
 MysqlResultSet::~MysqlResultSet() {
 }
 
-MysqlResultSet::MysqlResultSet(std::unique_ptr<SqlResultBase> imp) : mImp(std::move(imp)) {
+MysqlResultSet::MysqlResultSet(std::unique_ptr<MySqlResultBase> imp) : mImp(std::move(imp)) {
 }
 
 auto MysqlResultSet::next() -> IoTask<bool> {
@@ -443,7 +443,9 @@ private:
 private:
     std::shared_ptr<MySql> mMysql;
     MYSQL_STMT            *mMysqlStmt = nullptr;
-    std::vector<std::variant<char, int32_t, int64_t, float, double, MYSQL_TIME>>
+    std::vector<std::variant<SqlValueTraits<SqlValueType::kChar>::type, SqlValueTraits<SqlValueType::kInt>::type,
+                             SqlValueTraits<SqlValueType::kBigInt>::type, SqlValueTraits<SqlValueType::kFloat>::type,
+                             SqlValueTraits<SqlValueType::kDouble>::type, MYSQL_TIME>>
                                          mBindBuffer; // save var to continue it is life.
     std::vector<MYSQL_BIND>              mBinds;
     std::unordered_map<std::string, int> mIndexs;
@@ -503,46 +505,46 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
             break;
         case SqlValueType::kChar:
             bind.buffer_type = MYSQL_TYPE_TINY;
-            mBindBuffer.push_back(std::get<char>(value));
-            bind.buffer        = std::get_if<char>(&mBindBuffer.back());
-            bind.buffer_length = sizeof(char);
+            mBindBuffer.push_back(get<SqlValueType::kChar>(value));
+            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kChar>::type>(&mBindBuffer.back());
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kChar>::type);
             break;
         case SqlValueType::kInt:
             bind.buffer_type = MYSQL_TYPE_LONG;
-            mBindBuffer.push_back(std::get<int32_t>(value));
-            bind.buffer        = std::get_if<int32_t>(&mBindBuffer.back());
-            bind.buffer_length = sizeof(int32_t);
+            mBindBuffer.push_back(get<SqlValueType::kInt>(value));
+            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kInt>::type>(&mBindBuffer.back());
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kInt>::type);
             break;
         case SqlValueType::kBigInt:
             bind.buffer_type = MYSQL_TYPE_LONGLONG;
-            mBindBuffer.push_back(std::get<int64_t>(value));
-            bind.buffer        = std::get_if<int64_t>(&mBindBuffer.back());
-            bind.buffer_length = sizeof(int64_t);
+            mBindBuffer.push_back(get<SqlValueType::kBigInt>(value));
+            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kBigInt>::type>(&mBindBuffer.back());
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kBigInt>::type);
             break;
         case SqlValueType::kFloat:
             bind.buffer_type = MYSQL_TYPE_FLOAT;
-            mBindBuffer.push_back(std::get<float>(value));
-            bind.buffer        = std::get_if<float>(&mBindBuffer.back());
-            bind.buffer_length = sizeof(float);
+            mBindBuffer.push_back(get<SqlValueType::kFloat>(value));
+            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kFloat>::type>(&mBindBuffer.back());
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kFloat>::type);
             break;
         case SqlValueType::kDouble:
             bind.buffer_type = MYSQL_TYPE_DOUBLE;
-            mBindBuffer.push_back(std::get<double>(value));
-            bind.buffer        = std::get_if<double>(&mBindBuffer.back());
-            bind.buffer_length = sizeof(double);
+            mBindBuffer.push_back(get<SqlValueType::kDouble>(value));
+            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kDouble>::type>(&mBindBuffer.back());
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kDouble>::type);
             break;
         case SqlValueType::kText:
             bind.buffer_type   = MYSQL_TYPE_STRING;
-            bind.buffer        = const_cast<char *>(std::get_if<std::string_view>(&value)->data());
-            bind.buffer_length = std::get_if<std::string_view>(&value)->size();
+            bind.buffer        = const_cast<char *>(get<SqlValueType::kText>(value).data());
+            bind.buffer_length = get<SqlValueType::kText>(value).size();
             break;
         case SqlValueType::kBlob:
             bind.buffer_type   = MYSQL_TYPE_BLOB;
-            bind.buffer        = const_cast<std::byte *>(std::get_if<SqlBlobView>(&value)->data());
-            bind.buffer_length = std::get_if<SqlBlobView>(&value)->size();
+            bind.buffer        = const_cast<std::byte *>(get<SqlValueType::kBlob>(value).data());
+            bind.buffer_length = get<SqlValueType::kBlob>(value).size();
             break;
         case SqlValueType::kDate:
-            mBindBuffer.push_back(toMysqlTime(std::get<SqlDate>(value)));
+            mBindBuffer.push_back(toMysqlTime(get<SqlValueType::kDate>(value)));
             switch (std::get<MYSQL_TIME>(mBindBuffer.back()).time_type) {
                 case MYSQL_TIMESTAMP_DATE:
                     bind.buffer_type = MYSQL_TYPE_DATE;
@@ -554,38 +556,40 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
                     bind.buffer_type = MYSQL_TYPE_TIME;
                     break;
                 default:
-                    return Unexpected(SqlError::INVALID_PARAMETER);
+                    return Unexpected(std::make_error_code(std::errc::invalid_argument));
             }
             bind.buffer        = std::get_if<MYSQL_TIME>(&mBindBuffer.back());
             bind.buffer_length = sizeof(MYSQL_TIME);
             break;
         default:
-            return Unexpected(SqlError::INVALID_PARAMETER);
+            return Unexpected(std::make_error_code(std::errc::invalid_argument));
     }
     return bind;
 }
 
 auto MysqlStatement::bind(size_t index, SqlValueView value) -> Result<void, std::error_code> {
+    ILIAS_INFO("ilias-mysql", "bind {} with {}", index, value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NOT_PREPARED);
     }
-    if (index >= mBinds.size()) {
+    if (index - 1 >= mBinds.size()) {
         return Unexpected(SqlError::INVALID_INDEX);
     }
     auto data = makeBindData(value);
     if (!data) {
         return Unexpected(data.error());
     }
-    mBinds[index] = data.value();
+    mBinds[index - 1] = data.value();
     return {};
 }
 
 auto MysqlStatement::bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> {
+    // ILIAS_INFO("ilias-mysql", "bind {} = {}", name, value);
     auto index = mIndexs.find(std::string(name));
     if (index == mIndexs.end()) {
         return Unexpected(SqlError::INVALID_INDEX);
     }
-    return bind(index->second, value);
+    return bind(index->second + 1, value);
 }
 
 auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
@@ -790,7 +794,8 @@ auto MysqlConnection::sqlname() -> std::string {
     auto info = sqlinfo();
     if (info.find("MariaDB") != std::string::npos) {
         return "MariaDB";
-    } else {
+    }
+    else {
         return "MySQL";
     }
 }

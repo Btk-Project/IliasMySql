@@ -1,4 +1,4 @@
-#include "ilias/mysql/sqlresult.hpp"
+#include "ilias/mysql/mysqlresult.hpp"
 
 #include <charconv>
 
@@ -42,7 +42,7 @@
     }
 
 ILIAS_MYSQL_NS_BEGIN
-auto SqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
+auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
     -> Result<SqlValue, std::error_code> {
     SqlValue result;
     switch (field->type) {
@@ -98,7 +98,8 @@ auto SqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t buff
     return result;
 }
 
-auto SqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> Result<SqlValue, std::error_code> {
+auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize)
+    -> Result<SqlValue, std::error_code> {
     SqlValue result;
     switch (field->type) {
         case MYSQL_TYPE_TINY: { // char
@@ -221,6 +222,7 @@ auto SqlQueryResult::getResult() -> IoTask<void> {
         co_return Unexpected(ret.error());
     }
     mResult = ret.value();
+    ILIAS_INFO("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
 
@@ -414,6 +416,7 @@ auto SqlStmtResult::getResult() -> IoTask<void> {
         co_return Unexpected(ret.error());
     }
     mResult = ret.value();
+    ILIAS_INFO("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
 

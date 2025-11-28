@@ -5,13 +5,13 @@ auto SqlDate::toString() const -> std::string {
     switch (type) {
         case kDateTime:
             return std::to_string(year) + "-" + std::to_string(month) + "-" + std::to_string(day) + " " +
-                   std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) + "." +
-                   std::to_string(microsecond);
+                   std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) +
+                   (microsecond > 0 ? "." + std::to_string(microsecond) : "");
         case kDate:
             return std::to_string(year) + "-" + std::to_string(month) + "-" + std::to_string(day);
         case kTime:
-            return std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) + "." +
-                   std::to_string(microsecond);
+            return std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) +
+                   (microsecond > 0 ? "." + std::to_string(microsecond) : "");
         default:
             return "error time";
     }

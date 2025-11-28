@@ -20,7 +20,7 @@
 #include <mariadb/mysql.h>
 
 #include "global.hpp"
-#include "sqlopt.hpp"
+#include "mysqlopt.hpp"
 #include "ilias/sql/types.hpp"
 #include "ilias/sql/driver_registry.hpp"
 

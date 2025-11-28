@@ -24,7 +24,6 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(NO_MORE_DATA, "No more data")                                                                      \
     SQL_ERROR_ENTRY(INVALID_INDEX, "Invalid index")                                                                    \
     SQL_ERROR_ENTRY(NOT_PREPARED, "Statement not prepared")                                                            \
-    SQL_ERROR_ENTRY(INVALID_PARAMETER, "Invalid parameter")                                                            \
     SQL_ERROR_ENTRY(ALREADY_CONNECTED, "Already connected")                                                            \
     SQL_ERROR_ENTRY(NOT_CONNECTED, "Not connected")                                                                    \
     SQL_ERROR_ENTRY(UNSUPPORTED_API, "unsupported api")
