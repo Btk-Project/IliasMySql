@@ -49,7 +49,6 @@ public:
 
     virtual auto bind(size_t index, SqlValueView value) -> Result<void, std::error_code>          = 0;
     virtual auto bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> = 0;
-
     // 执行查询 (SELECT)，返回结果集
     virtual auto query() -> IoTask<std::unique_ptr<IResultSet>> = 0;
 
@@ -66,9 +65,9 @@ public:
  */
 class IConnection {
 public:
-    virtual ~IConnection() = default;
-    virtual auto sqlname() -> std::string = 0;
-    virtual auto sqlinfo() -> std::string = 0;
+    virtual ~IConnection()                                             = default;
+    virtual auto sqlname() -> std::string                              = 0;
+    virtual auto sqlinfo() -> std::string                              = 0;
     virtual auto connect() -> IoTask<void>                             = 0;
     virtual auto disconnect() -> IoTask<void>                          = 0;
     virtual auto selectDatabase(std::string_view name) -> IoTask<void> = 0;

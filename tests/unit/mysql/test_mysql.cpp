@@ -113,6 +113,7 @@ ILIAS_NAMESPACE::Task<void> test() {
         auto ret1 = co_await stmt->execute();
         EXPECT_TRUE(ret1.has_value());
         if (!ret1.has_value()) {
+            ILIAS_ERROR("sql-test", "insert data failed: {}", ret1.error().message());
             co_return;
         }
         ILIAS_INFO("sql-test", "insert data success, effect rows: {}", ret1.value());
@@ -190,5 +191,4 @@ int main(int argc, char **argv) {
     ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
-    return 0;
 }

@@ -145,6 +145,7 @@ public:
             co_await stmt.execute();
         }
         co_await tx.commit();
+        stmt.clearKeepAlives();
 
         // 分页查询: 按 score 升序 (小分在前)，取第 11 到 20 条 (Limit 10 Offset 10)
         // Score 应该是: 51, 52, ..., 60 (对应 ID 49, 48... )

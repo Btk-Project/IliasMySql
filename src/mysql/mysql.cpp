@@ -635,11 +635,6 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
         }
     }
     auto sqlResult = std::make_unique<SqlStmtResult>(mMysql, mMysqlStmt);
-    auto ret1      = co_await sqlResult->getResult();
-    clearBinds();
-    if (!ret1) {
-        co_return Unexpected(ret1.error());
-    }
     co_return std::make_unique<MysqlResultSet>(std::move(sqlResult));
 }
 
@@ -653,6 +648,7 @@ auto MysqlStatement::execute() -> IoTask<size_t> {
 }
 
 auto MysqlStatement::reset() -> void {
+    clearBinds();
     if (mMysqlStmt != nullptr) {
         mysql_stmt_reset(mMysqlStmt);
     }
@@ -867,10 +863,6 @@ auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IRes
         co_return Unexpected(ret.error());
     }
     auto sqlResult = std::make_unique<SqlQueryResult>(mMysql);
-    auto ret1      = co_await sqlResult->getResult();
-    if (!ret1) {
-        co_return Unexpected(ret1.error());
-    }
     co_return std::make_unique<MysqlResultSet>(std::move(sqlResult));
 }
 

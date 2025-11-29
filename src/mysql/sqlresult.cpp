@@ -415,7 +415,6 @@ auto SqlStmtResult::getResult() -> IoTask<void> {
         co_return Unexpected(ret.error());
     }
     mResult = ret.value();
-    ILIAS_INFO("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
 

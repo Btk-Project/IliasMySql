@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
+#include "ilias/sql/global/type_traits.hpp"
 #include "ilias/sql/interfaces.hpp"
 #include "ilias/sql/sqlresult.hpp"
 
@@ -45,9 +46,13 @@ public:
     auto query() -> IoTask<SqlResult<U>>;
     auto execute() -> IoTask<size_t>;
     auto reset() -> void;
+    auto clearKeepAlives() -> void;
 
 private:
-    std::unique_ptr<IStatement> mStmt;
+    using DeleterFunc = void (*)(void *);
+
+    std::unique_ptr<IStatement>                     mStmt;
+    std::vector<std::unique_ptr<void, DeleterFunc>> mKeepAlive; // to keep the rvalue objects alive
 };
 
 template <typename T>
@@ -84,11 +89,17 @@ template <typename U>
     requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
 auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     IoResult<void> ret = {};
-
-    NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::forward<U>(arg), [&ret, this](auto &field, std::string_view name) {
-        // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
-        ret = ret ? mStmt->bind(name, to_sql_value_view(field)) : ret;
-    });
+    using KeepAliveT   = std::tuple<StorageType_t<U>>;
+    auto keepAlive     = new KeepAliveT(std::forward<U>(arg));
+    // clang-format off
+    NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
+        [&ret, this](auto &field, std::string_view name) {
+            // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
+            ret = ret ? mStmt->bind(name, to_sql_value_view(field)) : ret;
+        });
+    // clang-format on
+    mKeepAlive.emplace_back(
+        std::unique_ptr<void, DeleterFunc>(keepAlive, [](void *ptr) { delete static_cast<KeepAliveT *>(ptr); }));
     return ret;
 }
 
@@ -96,9 +107,17 @@ template <typename... Args>
     requires(sizeof...(Args) > 1) ||
             (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
-    IoResult<void> ret = {};
-    int            idx = 0;
-    ((ret = ret ? mStmt->bind(++idx, to_sql_value_view(std::forward<Args>(args))) : ret), ...);
+    using KeepAliveTuple = std::tuple<StorageType_t<Args>...>;
+    // 2. 在堆上创建 Tuple，并进行完美转发 (Move 右值, Copy 引用)
+    //    使用 make_shared 是为了方便类型擦除，并能自动管理生命周期
+    auto           keepAlive = new KeepAliveTuple(std::forward<Args>(args)...);
+    IoResult<void> ret       = {};
+    [this, &ret, keepAlive]<size_t... I>(std::index_sequence<I...>) {
+        int idx = 0;
+        ((ret = ret ? mStmt->bind(++idx, to_sql_value_view(std::get<I>(*keepAlive))) : ret), ...);
+    }(std::make_index_sequence<sizeof...(Args)>());
+    mKeepAlive.emplace_back(
+        std::unique_ptr<void, DeleterFunc>(keepAlive, [](void *ptr) { delete static_cast<KeepAliveTuple *>(ptr); }));
     return ret;
 }
 
@@ -122,6 +141,10 @@ inline auto SqlStatement<void>::execute() -> IoTask<size_t> {
 
 inline auto SqlStatement<void>::reset() -> void {
     mStmt->reset();
+}
+
+inline auto SqlStatement<void>::clearKeepAlives() -> void {
+    mKeepAlive.clear();
 }
 
 template <typename T>

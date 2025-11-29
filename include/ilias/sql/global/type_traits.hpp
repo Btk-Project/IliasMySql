@@ -150,4 +150,17 @@ struct SqlCheck {
     std::string_view sql;
 };
 
+template <typename T>
+struct StorageSelector {
+    using type = std::remove_reference_t<T>;
+};
+
+template <typename T>
+struct StorageSelector<T&> {
+    using type = T&;
+};
+
+template <typename T>
+using StorageType_t = typename StorageSelector<T>::type;
+
 ILIAS_SQL_NS_END
