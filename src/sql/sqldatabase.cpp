@@ -28,19 +28,11 @@ SqlDatabase::~SqlDatabase() {
 }
 
 auto SqlDatabase::close() -> IoTask<void> {
-    auto ret = co_await mConnection->disconnect();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    co_return {};
+    return mConnection->disconnect();
 }
 
 auto SqlDatabase::execute(std::string_view query) -> IoTask<size_t> {
-    auto ret = co_await mConnection->execute(query);
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    co_return ret.value();
+    return mConnection->execute(query);
 }
 
 auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
@@ -53,7 +45,7 @@ auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
 }
 
 SqlTransaction::~SqlTransaction() {
-    if (mState == State::kCommitted) {
+    if (mState == State::kBeginned) {
         mDatabase->syncRollback();
     }
 }
@@ -87,22 +79,6 @@ auto SqlTransaction::execute(std::string_view query) -> IoTask<size_t> {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
     co_return co_await mDatabase.execute(query);
-}
-
-template <typename T>
-auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<T>> {
-    if (mState != State::kBeginned) {
-        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
-    }
-    co_return co_await mDatabase.query(query);
-}
-
-template <typename T>
-auto SqlTransaction::prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
-    if (mState != State::kBeginned) {
-        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
-    }
-    co_return co_await mDatabase.prepare<T>(query);
 }
 
 auto SqlTransaction::begin() -> IoTask<void> {

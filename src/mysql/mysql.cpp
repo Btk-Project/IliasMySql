@@ -570,10 +570,10 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
 auto MysqlStatement::bind(size_t index, SqlValueView value) -> Result<void, std::error_code> {
     ILIAS_INFO("ilias-mysql", "bind {} with {}", index, value);
     if (mMysqlStmt == nullptr) {
-        return Unexpected(SqlError::NOT_PREPARED);
+        return Unexpected(SqlError::NotPrepared);
     }
     if (index - 1 >= mBinds.size()) {
-        return Unexpected(SqlError::INVALID_INDEX);
+        return Unexpected(SqlError::InvalidIndex);
     }
     auto data = makeBindData(value);
     if (!data) {
@@ -587,14 +587,14 @@ auto MysqlStatement::bind(std::string_view name, SqlValueView value) -> Result<v
     // ILIAS_INFO("ilias-mysql", "bind {} = {}", name, value);
     auto index = mIndexs.find(std::string(name));
     if (index == mIndexs.end()) {
-        return Unexpected(SqlError::INVALID_INDEX);
+        return Unexpected(SqlError::InvalidIndex);
     }
     return bind(index->second + 1, value);
 }
 
 auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     if (mMysqlStmt == nullptr) {
-        co_return Unexpected(SqlError::Code::NOT_PREPARED);
+        co_return Unexpected(SqlError::Code::NotPrepared);
     }
     int ret = 0;
     if (mBinds.size() > 0) {
@@ -806,7 +806,7 @@ auto MysqlConnection::sqlinfo() -> std::string {
 
 auto MysqlConnection::connect() -> IoTask<void> {
     if (mIsConnected) {
-        co_return Unexpected(SqlError::Code::ALREADY_CONNECTED);
+        co_return Unexpected(SqlError::Code::AlreadyConnected);
     }
     for (const auto &[key, value] : mOptions.extra) {
         if (auto type = sqlopt::detail::getMySqlOptEnum(key.c_str()); type != (mysql_option)-1) {
@@ -875,7 +875,7 @@ auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IRes
 }
 
 auto MysqlConnection::beginTransaction() -> IoTask<bool> {
-    auto ret = co_await mMysql->autoCommit(false);
+    auto ret = co_await mMysql->query("START TRANSACTION");
     if (!ret) {
         co_return Unexpected(ret.error());
     }

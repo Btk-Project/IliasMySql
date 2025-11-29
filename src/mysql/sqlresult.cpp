@@ -93,7 +93,7 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
                                         reinterpret_cast<std::byte *>((char *)buffer) + bufferSize});
             break;
         default:
-            return Unexpected(sql::SqlError::Code::UNKNOWN_ERROR);
+            return Unexpected(sql::SqlError::Code::UnknownError);
     }
     return result;
 }
@@ -106,7 +106,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             int res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UNKNOWN_ERROR);
+                return Unexpected(sql::SqlError::UnknownError);
             }
             result.emplace<char>(res);
             break;
@@ -117,7 +117,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             int32_t res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UNKNOWN_ERROR);
+                return Unexpected(sql::SqlError::UnknownError);
             }
             result.emplace<int32_t>(res);
             break;
@@ -126,7 +126,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             float res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UNKNOWN_ERROR);
+                return Unexpected(sql::SqlError::UnknownError);
             }
             result.emplace<float>(res);
             break;
@@ -135,7 +135,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             double res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UNKNOWN_ERROR);
+                return Unexpected(sql::SqlError::UnknownError);
             }
             result.emplace<double>(res);
             break;
@@ -172,7 +172,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
                 reinterpret_cast<std::byte *>(buffer), reinterpret_cast<std::byte *>(buffer) + bufferSize});
             break;
         default:
-            return Unexpected(sql::SqlError::Code::UNKNOWN_ERROR);
+            return Unexpected(sql::SqlError::Code::UnknownError);
     }
     return result;
 }
@@ -276,7 +276,7 @@ auto SqlQueryResult::next() -> IoTask<bool> {
 
 auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
     if (mCurrentRow == nullptr) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     if (mFieldMetas.empty()) {
         mFieldMetas.resize(mysql_num_fields(mResult));
@@ -286,9 +286,8 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
         }
     }
     if (index >= mFieldMetas.size()) {
-        return Unexpected(SqlError::Code::INVALID_INDEX);
+        return Unexpected(SqlError::Code::InvalidIndex);
     }
-    // ILIAS_TRACE("sql", "index({})({}) raw data {}", index, (int)mFieldMetas[index]->type, mCurrentRow[index]);
     auto lengths = mysql_fetch_lengths(mResult);
     auto result  = toValue(mFieldMetas[index], mCurrentRow[index], lengths[index]);
     return result;
@@ -297,7 +296,7 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
 // TODO: optimize
 auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
     if (mResult == nullptr || mCurrentRow == nullptr) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     if (mFieldMetas.empty()) {
         mFieldMetas.resize(mysql_num_fields(mResult));
@@ -307,7 +306,7 @@ auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
         }
     }
     if (mFieldMetas.empty()) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     std::size_t index = -1;
     for (size_t i = 0; i < mysql_num_fields(mResult); ++i) {
@@ -317,7 +316,7 @@ auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
         }
     }
     if (index == (std::size_t)-1) {
-        return Unexpected(SqlError::Code::INVALID_INDEX);
+        return Unexpected(SqlError::Code::InvalidIndex);
     }
     return get(index);
 }
@@ -481,10 +480,10 @@ auto SqlStmtResult::next() -> IoTask<bool> {
 
 auto SqlStmtResult::get(size_t index) -> IoResult<SqlValue> {
     if (mFields.empty() || mFieldMetas.empty()) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     if (index >= mFieldMetas.size()) {
-        return Unexpected(SqlError::Code::INVALID_INDEX);
+        return Unexpected(SqlError::Code::InvalidIndex);
     }
     auto &currentRow = mFields[mFieldMetas[index]->name];
     // ILIAS_TRACE("sql", "{}({}) raw data {}: {}",
@@ -497,10 +496,10 @@ auto SqlStmtResult::get(size_t index) -> IoResult<SqlValue> {
 // TODO: optimize
 auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValue> {
     if (mResult == nullptr || mFieldMetas.empty()) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     if (mFieldMetas.empty()) {
-        return Unexpected(SqlError::Code::NO_MORE_DATA);
+        return Unexpected(SqlError::Code::NoMoreData);
     }
     auto index = -1;
     for (size_t i = 0; i < mysql_num_fields(mResult); ++i) {
@@ -510,7 +509,7 @@ auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValue> {
         }
     }
     if (index == -1) {
-        return Unexpected(SqlError::Code::INVALID_INDEX);
+        return Unexpected(SqlError::Code::InvalidIndex);
     }
     return get(index);
 }
@@ -614,7 +613,7 @@ auto SqlStmtResult::getBindConfig(const MYSQL_FIELD *field) -> IoResult<BindConf
             break;
 
         default:
-            return Unexpected(SqlError::Code::UNKNOWN_ERROR);
+            return Unexpected(SqlError::Code::UnknownError);
     }
     return config;
 }

@@ -19,18 +19,19 @@ class SqlErrorCategory;
 
 #define SQL_ERROR_TABLE                                                                                                \
     SQL_ERROR_ENTRY(OK, "OK")                                                                                          \
-    SQL_ERROR_ENTRY(UNKNOWN_ERROR, "Unknown error")                                                                    \
+    SQL_ERROR_ENTRY(UnknownError, "Unknown error")                                                                     \
     SQL_ERROR_ENTRY(DriverNotFound, "Driver not found")                                                                \
-    SQL_ERROR_ENTRY(NO_MORE_DATA, "No more data")                                                                      \
-    SQL_ERROR_ENTRY(INVALID_INDEX, "Invalid index")                                                                    \
-    SQL_ERROR_ENTRY(NOT_PREPARED, "Statement not prepared")                                                            \
-    SQL_ERROR_ENTRY(ALREADY_CONNECTED, "Already connected")                                                            \
-    SQL_ERROR_ENTRY(NOT_CONNECTED, "Not connected")                                                                    \
-    SQL_ERROR_ENTRY(UNSUPPORTED_API, "unsupported api")
+    SQL_ERROR_ENTRY(NoMoreData, "No more data")                                                                        \
+    SQL_ERROR_ENTRY(InvalidIndex, "Invalid index")                                                                     \
+    SQL_ERROR_ENTRY(NotPrepared, "Statement not prepared")                                                             \
+    SQL_ERROR_ENTRY(AlreadyConnected, "Already connected")                                                             \
+    SQL_ERROR_ENTRY(NotConnected, "Not connected")                                                                     \
+    SQL_ERROR_ENTRY(UnsupportedApi, "unsupported api")
 
 class ILIAS_SQL_API SqlError {
 public:
     enum Code : uint32_t {
+        CustomStart = 5 << 10,
 #define SQL_ERROR_ENTRY(code, message) code,
         SQL_ERROR_TABLE
 #undef SQL_ERROR_ENTRY
@@ -79,7 +80,7 @@ inline auto SqlErrorCategory::message(int value) const -> std::string {
         SQL_ERROR_TABLE
 #undef SQL_ERROR_ENTRY
         default:
-            return "";
+            return "error(" + std::to_string(value) + ")";
     }
 }
 

@@ -14,7 +14,7 @@
 ILIAS_SQL_NS_BEGIN
 
 class SqlTransaction;
-class SqlDatabase {
+class ILIAS_SQL_API SqlDatabase {
 public:
     static auto open(std::string_view name, ConnectOptions options) -> IoTask<SqlDatabase>;
 #ifdef ENABLE_SQLITE_PLUGINS
@@ -66,7 +66,7 @@ private:
     std::unique_ptr<IConnection> mConnection;
 };
 
-class SqlTransaction {
+class ILIAS_SQL_API SqlTransaction {
     enum class State {
         kUnused = 0,
         kBeginned,
@@ -76,6 +76,12 @@ class SqlTransaction {
 
 public:
     SqlTransaction(SqlDatabase &db) : mDatabase(db) {}
+    SqlTransaction(const SqlTransaction &)            = delete;
+    SqlTransaction &operator=(const SqlTransaction &) = delete;
+    SqlTransaction(SqlTransaction &&othre) : mDatabase(othre.mDatabase), mState(othre.mState) {
+        othre.mState = State::kUnused;
+    }
+    SqlTransaction &operator=(SqlTransaction &&) = delete;
     ~SqlTransaction();
 
     auto commit() -> IoTask<void>;
@@ -200,6 +206,22 @@ auto SqlDatabase::execute_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -
         ILIAS_INFO("ilias-sql", "Failed to execute query {}", query.sql);
     }
     co_return ret1.value();
+}
+
+template <typename T>
+auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<T>> {
+    if (mState != State::kBeginned) {
+        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+    }
+    co_return co_await mDatabase.query(query);
+}
+
+template <typename T>
+auto SqlTransaction::prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
+    if (mState != State::kBeginned) {
+        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+    }
+    co_return co_await mDatabase.prepare<T>(query);
 }
 
 ILIAS_SQL_NS_END

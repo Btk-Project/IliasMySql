@@ -18,7 +18,7 @@ SqliteStmtResultSet::~SqliteStmtResultSet() {
 
 auto SqliteStmtResultSet::next() -> IoTask<bool> {
     if (!mSqlite || !mSqliteStmt) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     if (mIsFirst) {
         mIsFirst = false;
@@ -55,10 +55,10 @@ auto SqliteStmtResultSet::columnName(size_t index) const -> std::string_view {
 
 auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValue> {
     if (!mSqlite || !mSqliteStmt) {
-        return Unexpected(SqlError::Code::NOT_CONNECTED);
+        return Unexpected(SqlError::Code::NotConnected);
     }
     if (index >= columnCount()) {
-        return Unexpected(std::make_error_code(std::errc::invalid_argument));
+        return Unexpected(std::make_error_code(std::errc::result_out_of_range));
     }
     int      type_code = sqlite3_column_type(mSqliteStmt.get(), index);
     SqlValue value;
@@ -103,9 +103,9 @@ SqliteStatement::~SqliteStatement() {
 }
 
 auto SqliteStatement::bind(size_t index, SqlValueView value) -> Result<void, std::error_code> {
-    ILIAS_INFO("ilias-sqlite", "bind index: {}, value: {}", index, value);
+    ILIAS_TRACE("ilias-sqlite", "bind index: {}, value: {}", index, value);
     if (!mSqlite || !mSqliteStmt) {
-        return Unexpected(SqlError::Code::NOT_CONNECTED);
+        return Unexpected(SqlError::Code::NotConnected);
     }
     switch ((SqlValueType)value.index()) {
         case SqlValueType::kNull:
@@ -146,7 +146,7 @@ auto SqliteStatement::bind(size_t index, SqlValueView value) -> Result<void, std
 
 auto SqliteStatement::bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> {
     if (!mSqlite || !mSqliteStmt) {
-        return Unexpected(SqlError::Code::NOT_CONNECTED);
+        return Unexpected(SqlError::Code::NotConnected);
     }
     std::string key   = ":" + std::string(name);
     auto        index = sqlite3_bind_parameter_index(mSqliteStmt.get(), key.c_str());
@@ -155,10 +155,15 @@ auto SqliteStatement::bind(std::string_view name, SqlValueView value) -> Result<
 
 auto SqliteStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     if (!mSqlite || !mSqliteStmt) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
-    auto ret = co_await blocking([this]() -> int { return sqlite3_step(mSqliteStmt.get()); });
+    auto ret = co_await blocking([this]() -> int {
+        auto ret = sqlite3_step(mSqliteStmt.get());
+        ILIAS_INFO("ilias-sqlite", "sqlite({}) Executing query, ret={}", (void *)mSqlite.get(), ret);
+        return ret;
+    });
     if (ret != SQLITE_DONE && ret != SQLITE_ROW) {
+        SqlErrorCategory::instance().registerMessage(ret, sqlite3_errmsg(mSqlite.get()));
         co_return Unexpected((SqlError::Code)ret);
     }
     co_return std::make_unique<SqliteStmtResultSet>(mSqlite, mSqliteStmt);
@@ -184,11 +189,12 @@ auto SqliteStatement::reset() -> void {
 
 auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     auto ret = co_await blocking([this, sql = sql]() -> int {
         sqlite3_stmt *stmt;
         auto          ret = sqlite3_prepare_v2(mSqlite.get(), sql.data(), sql.size(), &stmt, nullptr);
+        ILIAS_INFO("ilias-sqlite", "sqlite({}) Executing prepare: {}", (void *)mSqlite.get(), sql);
         if (ret != SQLITE_OK) {
             return ret;
         }
@@ -200,6 +206,7 @@ auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
         return ret;
     });
     if (ret != SQLITE_OK) {
+        SqlErrorCategory::instance().registerMessage(ret, sqlite3_errmsg(mSqlite.get()));
         co_return Unexpected((SqlError::Code)ret);
     }
     co_return {};
@@ -214,7 +221,7 @@ auto SqliteStatement::clearBinds() -> void {
 
 auto SqliteStatement::close() -> IoTask<void> {
     if (!mSqlite || !mSqliteStmt) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     auto ret    = co_await blocking([this]() -> int {
         sqlite3_reset(mSqliteStmt.get());
@@ -251,7 +258,7 @@ auto Sqlite::sqlinfo() -> std::string {
 
 auto Sqlite::connect() -> IoTask<void> {
     if (mSqlite) {
-        co_return Unexpected(SqlError::Code::ALREADY_CONNECTED);
+        co_return Unexpected(SqlError::Code::AlreadyConnected);
     }
     auto ret = co_await blocking([this]() -> int {
         auto filename = mOptions.filename;
@@ -275,7 +282,7 @@ auto Sqlite::connect() -> IoTask<void> {
 
 auto Sqlite::disconnect() -> IoTask<void> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     auto ret = co_await blocking([this]() -> int {
         mSqlite.reset();
@@ -290,9 +297,9 @@ auto Sqlite::disconnect() -> IoTask<void> {
 
 auto Sqlite::selectDatabase([[maybe_unused]] std::string_view name) -> IoTask<void> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
-    co_return Unexpected(SqlError::Code::UNSUPPORTED_API);
+    co_return Unexpected(SqlError::Code::UnsupportedApi);
 }
 
 auto Sqlite::prepare(std::string_view sql) -> IoTask<std::unique_ptr<sql::IStatement>> {
@@ -306,7 +313,7 @@ auto Sqlite::prepare(std::string_view sql) -> IoTask<std::unique_ptr<sql::IState
 
 auto Sqlite::query(std::string_view sql) -> IoTask<std::unique_ptr<sql::IResultSet>> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     auto stmt = std::make_unique<SqliteStatement>(mSqlite);
     auto ret  = co_await stmt->prepare(sql);
@@ -315,7 +322,7 @@ auto Sqlite::query(std::string_view sql) -> IoTask<std::unique_ptr<sql::IResultS
     }
     auto ret1 = co_await stmt->query();
     if (!ret1) {
-        co_return Unexpected(ret.error());
+        co_return Unexpected(ret1.error());
     }
     auto sqlresult = dynamic_cast<SqliteStmtResultSet *>(ret1.value().get());
     if (sqlresult) {
@@ -336,14 +343,16 @@ auto Sqlite::execute(std::string_view sql) -> IoTask<size_t> {
 
 auto Sqlite::beginTransaction() -> IoTask<bool> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
-        ILIAS_INFO("sqlite", "begin transaction");
-        return sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err);
+        auto ret = sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err);
+        ILIAS_INFO("ilias-sqlite", "sqlite({}) begin transaction ret={}", (void *)mSqlite.get(), ret);
+        return ret;
     });
     if (ret != SQLITE_OK) {
+        SqlErrorCategory::instance().registerMessage(ret, err);
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);
     }
@@ -352,14 +361,15 @@ auto Sqlite::beginTransaction() -> IoTask<bool> {
 
 auto Sqlite::commit() -> IoTask<bool> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
-        ILIAS_INFO("sqlite", "commit transaction");
+        ILIAS_INFO("ilias-sqlite", "commit transaction");
         return sqlite3_exec(mSqlite.get(), "COMMIT", nullptr, nullptr, &err);
     });
     if (ret != SQLITE_OK) {
+        SqlErrorCategory::instance().registerMessage(ret, err);
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);
     }
@@ -368,14 +378,16 @@ auto Sqlite::commit() -> IoTask<bool> {
 
 auto Sqlite::rollback() -> IoTask<bool> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
-        ILIAS_INFO("sqlite", "rollback transaction");
-        return sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
+        auto ret = sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
+        ILIAS_INFO("ilias-sqlite", "sqlite({}) rollback transaction ret={}", (void *)mSqlite.get(), ret);
+        return ret;
     });
     if (ret != SQLITE_OK) {
+        SqlErrorCategory::instance().registerMessage(ret, err);
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);
     }
@@ -383,9 +395,13 @@ auto Sqlite::rollback() -> IoTask<bool> {
 }
 
 auto Sqlite::syncRollback() -> bool {
+    if (!mSqlite) {
+        return false;
+    }
     char *err;
     int   rc = sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
     if (rc != SQLITE_OK) {
+        ILIAS_WARN("ilias-sqlite", "sqlite({}) rollback transaction ret={}", (void *)mSqlite.get(), rc);
         sqlite3_free(err); // 记得释放错误消息内存
         return false;
     }
@@ -398,7 +414,7 @@ auto Sqlite::lastInsertId() const -> int64_t {
 
 auto Sqlite::ping() -> IoTask<bool> {
     if (!mSqlite) {
-        co_return Unexpected(SqlError::Code::NOT_CONNECTED);
+        co_return Unexpected(SqlError::Code::NotConnected);
     }
     co_return true;
 }

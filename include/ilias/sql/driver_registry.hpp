@@ -23,7 +23,7 @@ struct ConnectOptions {
 // 驱动创建函数原型
 using DriverFactoryFn = std::function<std::unique_ptr<IConnection>(const ConnectOptions &)>;
 
-class DriverManager {
+class ILIAS_SQL_API DriverManager {
 public:
     static auto instance() -> DriverManager &;
     void        registerDriver(std::string_view name, DriverFactoryFn factory);
