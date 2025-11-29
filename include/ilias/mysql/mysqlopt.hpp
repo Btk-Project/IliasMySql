@@ -114,7 +114,7 @@ struct StringToMySqlEnumHelper {
 
 template <>
 struct StringToMySqlEnumHelper<mysql_protocol_type, void> {
-    static mysql_protocol_type operator()(const std::string &name) {
+    mysql_protocol_type operator()(const std::string &name) {
         if (name == "MYSQL_PROTOCOL_DEFAULT") {
             return MYSQL_PROTOCOL_DEFAULT;
         }
@@ -138,7 +138,7 @@ struct StringToMySqlEnumHelper<mysql_protocol_type, void> {
 
 template <>
 struct StringToMySqlEnumHelper<mysql_option> {
-    static mysql_option operator()(const std::string &name) { return getMySqlOptEnum(name); }
+    mysql_option operator()(const std::string &name) { return getMySqlOptEnum(name); }
 };
 
 } // namespace detail

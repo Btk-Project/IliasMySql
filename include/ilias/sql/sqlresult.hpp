@@ -243,9 +243,6 @@ auto SqlResult<T>::range() -> Generator<T> {
             if (!rc) {
                 co_return;
             }
-            auto [id, name, age, born, email, promise, val1, val2] = value;
-            ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {}", id, name, age, email,
-                       born.toString(), (int)val1, val2);
             co_yield value;
         }
     }
@@ -254,8 +251,6 @@ auto SqlResult<T>::range() -> Generator<T> {
             if (!rc) {
                 co_return;
             }
-            ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {}", value.id, value.name,
-                       value.age, value.email, value.born.toString(), (int)value.val1, value.val2);
             co_yield value;
         }
     }

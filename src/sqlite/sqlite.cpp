@@ -339,8 +339,10 @@ auto Sqlite::beginTransaction() -> IoTask<bool> {
         co_return Unexpected(SqlError::Code::NOT_CONNECTED);
     }
     char *err;
-    auto  ret = co_await blocking(
-        [this, &err]() -> int { return sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err); });
+    auto  ret = co_await blocking([this, &err]() -> int {
+        ILIAS_INFO("sqlite", "begin transaction");
+        return sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err);
+    });
     if (ret != SQLITE_OK) {
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);
@@ -353,8 +355,10 @@ auto Sqlite::commit() -> IoTask<bool> {
         co_return Unexpected(SqlError::Code::NOT_CONNECTED);
     }
     char *err;
-    auto  ret = co_await blocking(
-        [this, &err]() -> int { return sqlite3_exec(mSqlite.get(), "COMMIT", nullptr, nullptr, &err); });
+    auto  ret = co_await blocking([this, &err]() -> int {
+        ILIAS_INFO("sqlite", "commit transaction");
+        return sqlite3_exec(mSqlite.get(), "COMMIT", nullptr, nullptr, &err);
+    });
     if (ret != SQLITE_OK) {
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);
@@ -367,8 +371,10 @@ auto Sqlite::rollback() -> IoTask<bool> {
         co_return Unexpected(SqlError::Code::NOT_CONNECTED);
     }
     char *err;
-    auto  ret = co_await blocking(
-        [this, &err]() -> int { return sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err); });
+    auto  ret = co_await blocking([this, &err]() -> int {
+        ILIAS_INFO("sqlite", "rollback transaction");
+        return sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
+    });
     if (ret != SQLITE_OK) {
         sqlite3_free(err); // 记得释放错误消息内存
         co_return Unexpected((SqlError::Code)ret);

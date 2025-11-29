@@ -53,16 +53,16 @@ auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
 }
 
 SqlTransaction::~SqlTransaction() {
-    if (mActive) {
+    if (mState == State::kCommitted) {
         mDatabase->syncRollback();
     }
 }
 
 auto SqlTransaction::commit() -> IoTask<void> {
-    if (mActive) {
+    if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
-    mActive  = true;
+    mState   = State::kCommitted;
     auto ret = co_await mDatabase->commit();
     if (!ret) {
         co_return Unexpected(ret.error());
@@ -71,10 +71,10 @@ auto SqlTransaction::commit() -> IoTask<void> {
 }
 
 auto SqlTransaction::rollback() -> IoTask<void> {
-    if (!mActive) {
+    if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
-    mActive  = false;
+    mState   = State::kRolledBack;
     auto ret = co_await mDatabase->rollback();
     if (!ret) {
         co_return Unexpected(ret.error());
@@ -83,7 +83,7 @@ auto SqlTransaction::rollback() -> IoTask<void> {
 }
 
 auto SqlTransaction::execute(std::string_view query) -> IoTask<size_t> {
-    if (mActive) {
+    if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
     co_return co_await mDatabase.execute(query);
@@ -91,7 +91,7 @@ auto SqlTransaction::execute(std::string_view query) -> IoTask<size_t> {
 
 template <typename T>
 auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<T>> {
-    if (mActive) {
+    if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
     co_return co_await mDatabase.query(query);
@@ -99,21 +99,21 @@ auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<T>> {
 
 template <typename T>
 auto SqlTransaction::prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
-    if (mActive) {
+    if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
     co_return co_await mDatabase.prepare<T>(query);
 }
 
 auto SqlTransaction::begin() -> IoTask<void> {
-    if (!mActive) {
+    if (mState != State::kUnused && mState != State::kRolledBack) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
     auto ret = co_await mDatabase->beginTransaction();
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    mActive = false;
+    mState = State::kBeginned;
     co_return {};
 }
 

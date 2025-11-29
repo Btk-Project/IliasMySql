@@ -40,12 +40,12 @@ public:
     auto prepare(std::string_view query) -> IoTask<SqlStatement<T>>;
 
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ...)
+        requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
     auto prepare_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
         -> IoTask<SqlStatement<std::tuple<Args...>>>;
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
-    auto prepare_with(SqlStructCheck<U> query, U &&arg) -> IoTask<SqlStatement<U>>;
+    auto prepare_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlStatement<std::decay_t<U>>>;
     template <typename... Args>
         requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
     auto query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
@@ -67,6 +67,13 @@ private:
 };
 
 class SqlTransaction {
+    enum class State {
+        kUnused = 0,
+        kBeginned,
+        kCommitted,
+        kRolledBack,
+    };
+
 public:
     SqlTransaction(SqlDatabase &db) : mDatabase(db) {}
     ~SqlTransaction();
@@ -87,7 +94,7 @@ protected:
 
 private:
     SqlDatabase &mDatabase;
-    bool         mActive = false;
+    State        mState = State::kUnused;
 };
 
 template <typename T>
@@ -109,20 +116,21 @@ auto SqlDatabase::prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
 }
 
 template <typename... Args>
-    requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ...)
+    requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
 auto SqlDatabase::prepare_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
     -> IoTask<SqlStatement<std::tuple<Args...>>> {
-    auto ret = co_await prepare<std::tuple<std::decay_t<Args>...>>(query.sql);
+    auto ret = co_await prepare(query.sql);
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    ret.value().bind(std::forward_as_tuple(args...));
+    ret.value().bind(std::forward<Args>(args)...);
     co_return std::move(ret.value());
 }
 
 template <typename U>
     requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
-auto SqlDatabase::prepare_with(SqlStructCheck<U> query, U &&arg) -> IoTask<SqlStatement<U>> {
+auto SqlDatabase::prepare_with(SqlStructCheck<std::decay_t<U>> query, U &&arg)
+    -> IoTask<SqlStatement<std::decay_t<U>>> {
     auto ret = co_await prepare<std::decay_t<U>>(query.sql);
     if (!ret) {
         co_return Unexpected(ret.error());
@@ -136,7 +144,7 @@ template <typename... Args>
 auto SqlDatabase::query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
     -> IoTask<SqlResult<void>> {
     ILIAS_INFO("ilias-sql", "Executing query {} with args", query.sql);
-    auto ret = co_await prepare_with(query, std::forward<Args>(args)...);
+    auto ret = co_await prepare_with<Args...>(query, std::forward<Args>(args)...);
     if (!ret) {
         ILIAS_INFO("ilias-sql", "Failed to prepare query {} with args", query.sql);
         co_return Unexpected(ret.error());
@@ -152,7 +160,7 @@ auto SqlDatabase::query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>>
 template <typename U>
     requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
 auto SqlDatabase::query_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlResult<void>> {
-    auto ret = co_await prepare_with(query, std::forward<U>(arg));
+    auto ret = co_await prepare_with<U>(query, std::forward<U>(arg));
     if (!ret) {
         co_return Unexpected(ret.error());
     }

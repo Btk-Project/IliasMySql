@@ -1,4 +1,4 @@
-add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage")
+add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage", "mode.asan")
 
 set_languages("c++20")
 add_includedirs("./include")
