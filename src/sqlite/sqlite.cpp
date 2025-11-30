@@ -1,6 +1,7 @@
 #include "ilias/sqlite/sqlite.hpp"
 
 #include "ilias/sql/sqlerror.hpp"
+#include "ilias/sqlite/sqliteopt.hpp"
 
 ILIAS_SQLITE_NS_BEGIN
 
@@ -265,16 +266,50 @@ auto Sqlite::connect() -> IoTask<void> {
         if (filename.empty()) {
             filename = ":memory:";
         }
+        int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+        if (auto it = mOptions.extra.find("flags"); it != mOptions.extra.end()) {
+            int userFlags = sqlopt::parseOpenFlags(it->second);
+            if (userFlags != 0) {
+                flags = userFlags;
+            }
+        }
+        const char *vfsName = nullptr;
+        if (auto it = mOptions.extra.find("vfs"); it != mOptions.extra.end()) {
+            vfsName = it->second.c_str();
+        }
         sqlite3 *sql;
-        auto     ret = sqlite3_open(filename.c_str(), &sql);
+        auto     ret = sqlite3_open_v2(filename.c_str(), &sql, flags, vfsName);
         if (ret != SQLITE_OK) {
+            if (sql) {
+                sqlite3_close(sql);
+            }
             return ret;
+        }
+        for (const auto &[key, value] : mOptions.extra) {
+            // 跳过已处理的特殊 key
+            if (key == "flags" || key == "vfs")
+                continue;
+
+            // 查找对应的 Enum ID
+            int optEnum = sqlopt::detail::getMySqlOptEnum(key);
+            if (optEnum != -1) {
+                // 创建并执行 Option
+                // 注意：createOption 返回 raw pointer，需要手动管理生命周期
+                std::unique_ptr<sqlopt::OptionBase> opt(sqlopt::createOption(optEnum, value));
+                if (opt) {
+                    int optRet = opt->setopt(*sql);
+                    if (optRet != SQLITE_OK) {
+                        ILIAS_WARN("sql", "Failed to set option {}: {}", key, optRet);
+                    }
+                }
+            }
         }
         mSqlite = std::shared_ptr<sqlite3>(sql, [](sqlite3 *sql) { sqlite3_close(sql); });
         return ret;
     });
     if (ret != SQLITE_OK) {
-        SqlErrorCategory::instance().registerMessage(ret, sqlite3_errmsg(mSqlite.get()));
+        const char* errMsg = mSqlite ? sqlite3_errmsg(mSqlite.get()) : sqlite3_errstr(ret);
+        SqlErrorCategory::instance().registerMessage(ret, errMsg);
         co_return Unexpected(SqlError::Code(ret));
     }
     co_return {};
