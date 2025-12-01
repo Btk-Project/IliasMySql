@@ -24,11 +24,23 @@ struct Person {
 
 ILIAS_NAMESPACE::Task<void> test() {
     ConnectOptions options;
-    options.host     = "127.0.0.1";
-    options.port     = 3306;
-    options.user     = "root";
-    options.password = "123456";
-    options.database = "test";
+    
+    // 辅助 lambda：获取环境变量或默认值
+    auto get_env = [](const char* name, const char* default_val) -> std::string {
+        const char* val = std::getenv(name);
+        return val ? std::string(val) : std::string(default_val);
+    };
+
+    auto get_env_int = [](const char* name, int default_val) -> int {
+        const char* val = std::getenv(name);
+        return val ? std::atoi(val) : default_val;
+    };
+
+    options.host     = get_env("DB_HOST", "127.0.0.1");
+    options.port     = get_env_int("DB_PORT", 3306);
+    options.user     = get_env("DB_USER", "root");
+    options.password = get_env("DB_PASS", "123456"); // 本地开发默认值
+    options.database = get_env("DB_NAME", "test");   // 本地开发默认值
     options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
     options.extra.insert(std::make_pair("ConnectTimeout", "30"));
     // --- A. 连接数据库 (Connect) ---
