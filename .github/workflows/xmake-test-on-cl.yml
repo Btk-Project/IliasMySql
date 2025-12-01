@@ -25,16 +25,20 @@ jobs:
     # 2. 创建测试数据库
     - name: Create Database
       run: |
-        # 1. 等待服务完全就绪 (Windows 机器比较慢)
         Start-Sleep -Seconds 10
         
-        # 2. 修改 root 用户密码认证方式为 mysql_native_password (兼容性更好)
+        # 1. 修改 localhost (覆盖 Socket/Pipe 连接)
         mysql -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root';"
         
-        # 3. 刷新权限
-        mysql -u root -proot -e "FLUSH PRIVILEGES;"
+        # 2. 【关键】修改 127.0.0.1 (覆盖 TCP 连接)
+        # 很多 MySQL 安装默认不包含这个条目，或者包含但配置不同，强制创建/修改它以防万一
+        mysql -u root -proot -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY 'root';"
+        mysql -u root -proot -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY 'root';"
         
-        # 4. 创建数据库
+        # 3. 授予权限 (防止新建的 127.0.0.1 用户没权限)
+        mysql -u root -proot -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
+        
+        mysql -u root -proot -e "FLUSH PRIVILEGES;"
         mysql -u root -proot -e "CREATE DATABASE test_db;"
 
     # 3. 安装 XMake
