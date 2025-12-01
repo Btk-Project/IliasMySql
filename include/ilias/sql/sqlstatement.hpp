@@ -53,6 +53,9 @@ private:
 
     std::unique_ptr<IStatement>                     mStmt;
     std::vector<std::unique_ptr<void, DeleterFunc>> mKeepAlive; // to keep the rvalue objects alive
+
+    template <typename T>
+    friend class SqlStatement;
 };
 
 template <typename T>
@@ -67,7 +70,11 @@ public:
 public:
     SqlStatement() = default;
     explicit SqlStatement(std::unique_ptr<IStatement> stmt) : SqlStatement<void>(std::move(stmt)) {}
-    explicit SqlStatement(SqlStatement<void> &&other) noexcept : SqlStatement<void>(std::move(other)) {}
+    template <typename U>
+    explicit SqlStatement(SqlStatement<U> &&other) noexcept {
+        mStmt      = std::move(other.mStmt);
+        mKeepAlive = std::move(other.mKeepAlive);
+    }
     SqlStatement(const SqlStatement &)                = delete;
     SqlStatement &operator=(const SqlStatement &)     = delete;
     SqlStatement(SqlStatement &&) noexcept            = default;
@@ -83,6 +90,9 @@ public:
     using SqlStatement<void>::reset;
     auto query() -> IoTask<SqlResult<T>> { return SqlStatement<void>::template query<T>(); }
     auto bind(T &&arg) -> IoResult<void>;
+
+    template <typename U>
+    friend class SqlStatement;
 };
 
 template <typename U>

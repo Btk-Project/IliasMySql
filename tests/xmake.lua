@@ -1,5 +1,10 @@
 add_requires("gtest", "cpptrace")
 
+if is_host("linux") then
+    add_cxflags("-ftemplate-backtrace-limit=0") -- 0 表示不限制深度
+    add_cxflags("-fno-elide-type")              -- 显示完整的类型名称，不简写
+end
+
 -- Make all files in the unit directory into targets
 for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
     local name = path.basename(file)

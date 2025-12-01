@@ -41,8 +41,7 @@ public:
     template <typename... Args>
     auto range(Args &...args) -> Generator<IoResult<void>>;
     template <typename U>
-        requires(!std::is_class_v<U>) ||
-                (std::is_class_v<U> && NEKO_NAMESPACE::detail::has_values_meta<std::decay_t<U>>)
+        requires(std::is_class_v<U> && NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>)
     auto range(U &value) -> Generator<IoResult<void>>;
     auto operator->() -> IResultSet * { return mImp.get(); }
     auto operator->() const -> const IResultSet * { return mImp.get(); }
@@ -207,15 +206,17 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
         if (!*rc) {
             break;
         }
-        int            idx = 0;
         IoResult<void> ret = {};
-        ((ret = ret ? load(idx++, args) : ret) && ...);
+        if constexpr (sizeof...(Args) > 0) {
+            int idx = 0;
+            ((ret = ret ? load(idx++, args) : ret) && ...);
+        }
         co_yield ret;
     }
 }
 
 template <typename U>
-    requires(!std::is_class_v<U>) || (std::is_class_v<U> && NEKO_NAMESPACE::detail::has_values_meta<std::decay_t<U>>)
+    requires(std::is_class_v<U> && NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>)
 auto SqlResult<void>::range(U &value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();

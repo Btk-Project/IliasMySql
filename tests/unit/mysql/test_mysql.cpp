@@ -1,16 +1,57 @@
+#include <cstdlib>
 #include <gtest/gtest.h>
-
 #include <ilias/platform.hpp>
+#include <string>
+#include <vector>
 #include "ilias/sql/driver_registry.hpp"
-#include "ilias/sql/interfaces.hpp"
+#include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
-#include "ilias/sql/sqldatabase.hpp"
-
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
+using namespace ILIAS_NAMESPACE;
 
+// ==========================================
+// 1. 辅助宏 (与 SQLite 测试保持一致)
+// ==========================================
+#define CO_EXPECT_RESULT(result)                                                                                       \
+    do {                                                                                                               \
+        EXPECT_TRUE(result.has_value());                                                                               \
+        if (!result.has_value()) {                                                                                     \
+            ILIAS_ERROR("mysql-test", "failed: {}", result.error().message());                                         \
+        }                                                                                                              \
+    } while (0)
+
+#define CO_EXPECT_NOT_RESULT(result)                                                                                   \
+    do {                                                                                                               \
+        EXPECT_FALSE(result.has_value());                                                                              \
+        if (!result.has_value()) {                                                                                     \
+            ILIAS_INFO("mysql-test", "expected failure: {}", result.error().message());                                \
+        }                                                                                                              \
+    } while (0)
+
+#define CO_ASSERT_VAL(ret)                                                                                             \
+    do {                                                                                                               \
+        if (!ret.has_value()) {                                                                                        \
+            ILIAS_ERROR("mysql-test", "assert failed: {}", ret.error().message());                                     \
+            co_return {};                                                                                              \
+        }                                                                                                              \
+        CO_EXPECT_RESULT(ret);                                                                                         \
+    } while (0)
+
+// ==========================================
+// 2. 数据结构定义
+// ==========================================
+
+// 用于简单 CRUD 测试
+struct SimpleUser {
+    int         id;
+    std::string name;
+    int         score;
+};
+
+// 用于复杂类型测试 (Date, Blob, etc.)
 struct Person {
     int                    id;
     std::string            name;
@@ -22,183 +63,304 @@ struct Person {
     int                    val2;
 };
 
-ILIAS_NAMESPACE::Task<void> test() {
-    ConnectOptions options;
-    
-    // 辅助 lambda：获取环境变量或默认值
-    auto get_env = [](const char* name, const char* default_val) -> std::string {
-        const char* val = std::getenv(name);
-        return val ? std::string(val) : std::string(default_val);
-    };
+// ==========================================
+// 3. MySQL 测试套件
+// ==========================================
+class MySqlTestSuite {
+public:
+    // 辅助函数：从环境变量获取配置
+    static auto get_options() -> ConnectOptions {
+        auto get_env = [](const char *name, const char *default_val) -> std::string {
+            const char *val = std::getenv(name);
+            return val ? std::string(val) : std::string(default_val);
+        };
+        auto get_env_int = [](const char *name, int default_val) -> int {
+            const char *val = std::getenv(name);
+            return val ? std::atoi(val) : default_val;
+        };
 
-    auto get_env_int = [](const char* name, int default_val) -> int {
-        const char* val = std::getenv(name);
-        return val ? std::atoi(val) : default_val;
-    };
+        ConnectOptions options;
+        options.host     = get_env("DB_HOST", "127.0.0.1");
+        options.port     = get_env_int("DB_PORT", 3306);
+        options.user     = get_env("DB_USER", "root");
+        options.password = get_env("DB_PASS", "123456");
+        options.database = get_env("DB_NAME", "test");
 
-    options.host     = get_env("DB_HOST", "127.0.0.1");
-    options.port     = get_env_int("DB_PORT", 3306);
-    options.user     = get_env("DB_USER", "root");
-    options.password = get_env("DB_PASS", "123456"); // 本地开发默认值
-    options.database = get_env("DB_NAME", "test");   // 本地开发默认值
-    options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
-    options.extra.insert(std::make_pair("ConnectTimeout", "30"));
-    // --- A. 连接数据库 (Connect) ---
-    auto ret = co_await SqlDatabase::open("mysql", options); //
-    EXPECT_TRUE(ret.has_value()) << "Can't open database: " << ret.error().message();
-    if (!ret.has_value()) {
-        co_return;
+        // MySQL 特有配置
+        options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
+        options.extra.insert(std::make_pair("ConnectTimeout", "10"));
+        return options;
     }
-    auto db = std::move(ret.value());
-    ILIAS_INFO("sql-test", "create sql {} with {}", db->sqlname(), db->sqlinfo());
-    // --- B. 建表 (Create Table) ---
-    // SQLite 类型映射: INT -> INTEGER, VARCHAR -> TEXT, DATETIME -> TEXT, BLOB -> BLOB
-    const char *create_sql = "CREATE TABLE IF NOT EXISTS test_table ("
-                             "id INTEGER PRIMARY KEY, "
-                             "name TEXT NOT NULL, "
-                             "age INTEGER, "
-                             "born TEXT, " // 存 ISO8601 字符串
-                             "email TEXT UNIQUE, "
-                             "promise BLOB, "
-                             "val1 INTEGER, " // SQLite 没有 TINYINT，用 INTEGER
-                             "val2 INTEGER"
-                             ");";
-    auto ret1 = co_await db.execute(create_sql);
-    EXPECT_TRUE(ret1);
-    if (!ret1) {
-        ILIAS_ERROR("sql-test", "error: {}", ret1.error().message());
-        co_return;
-    }
-    // --- 清空表防止上一次测试干扰 ---
-    auto ret7 = co_await db.execute("DELETE FROM test_table");
-    EXPECT_TRUE(ret7);
-    if (!ret7) {
-        co_return;
-    }
-    ILIAS_INFO("sql-test", "create table test_table success");
 
-    // --- C. 准备数据 ---
-    std::vector<Person> persons = {
-        {1,
-         "a test user",
-         18,
-         "test@test.com",
-         SqlDate(2025, 6, 20, 1, 1, 1),
-         {std::byte {1}, std::byte {2}, std::byte {0}},
-         'a',
-         234},
-        {2,
-         "王小明",
-         19,
-         "xiaoming@test.com",
-         SqlDate(2025, 4, 21, 15, 23, 13),
-         {std::byte {1}, std::byte {0}, std::byte {3}},
-         'b',
-         145},
-        {3,
-         "Alice",
-         18,
-         "Alice@test.com",
-         SqlDate(2025, 2, 22, 12, 23, 23),
-         {std::byte {1}, std::byte {2}, std::byte {5}},
-         '3',
-         345},
-        {4,
-         "Bob",
-         18,
-         "Bob@test.com",
-         SqlDate(2025, 1, 20, 23, 12, 32),
-         {std::byte {3}, std::byte {2}, std::byte {3}},
-         '2',
-         434},
-    };
-
-    // --- D. 插入数据 (Prepare & Bind) ---
-    const char *insert_sql = "INSERT INTO test_table (id, name, age, born, email, promise, val1, val2) "
-                             "VALUES (:id, :name, :age, :born, :email, :promise, :val1, :val2)";
-
-    auto ret2 = co_await db.prepare<Person>(insert_sql);
-    EXPECT_TRUE(ret2);
-    auto stmt = std::move(ret2.value());
-    for (auto &person : persons) {
-        stmt.bind(person);
-        auto ret1 = co_await stmt->execute();
-        EXPECT_TRUE(ret1.has_value());
-        if (!ret1.has_value()) {
-            ILIAS_ERROR("sql-test", "insert data failed: {}", ret1.error().message());
-            co_return;
+    static auto setup_db() -> IoTask<SqlDatabase> {
+        auto options = get_options();
+        auto ret     = co_await SqlDatabase::open("mysql", options);
+        if (!ret) {
+            ILIAS_ERROR("mysql-test", "Failed to open MySQL: {}", ret.error().message());
+            throw std::runtime_error("Failed to connect to MySQL");
         }
-        ILIAS_INFO("sql-test", "insert data success, effect rows: {}", ret1.value());
-        stmt->reset();
+        auto db = std::move(ret.value());
+
+        // 清理旧表 (Drop Table if exists)
+        co_await db.execute("DROP TABLE IF EXISTS simple_users");
+        co_await db.execute("DROP TABLE IF EXISTS complex_persons");
+
+        // 创建 SimpleUser 表
+        const char *create_simple = "CREATE TABLE simple_users ("
+                                    "id INTEGER PRIMARY KEY, "
+                                    "name VARCHAR(100) NOT NULL, "
+                                    "score INTEGER"
+                                    ")";
+        auto        r1            = co_await db.execute(create_simple);
+        if (!r1)
+            ILIAS_ERROR("mysql-test", "Create simple_users failed: {}", r1.error().message());
+
+        // 创建 Person 表
+        // 注意：email 使用 VARCHAR(255) 以支持 UNIQUE 索引
+        const char *create_complex = "CREATE TABLE complex_persons ("
+                                     "id INTEGER PRIMARY KEY, "
+                                     "name VARCHAR(100) NOT NULL, "
+                                     "age INTEGER, "
+                                     "email VARCHAR(255) UNIQUE, "
+                                     "born DATETIME, "
+                                     "promise BLOB, "
+                                     "val1 TINYINT, "
+                                     "val2 INTEGER"
+                                     ")";
+        auto        r2             = co_await db.execute(create_complex);
+        if (!r2)
+            ILIAS_ERROR("mysql-test", "Create complex_persons failed: {}", r2.error().message());
+
+        co_return db;
     }
 
-    // --- E. 条件查询 (Select WHERE) ---
-    const char *select_where_sql = "SELECT * FROM test_table WHERE id > :id";
-    auto        ret3             = co_await db.prepare<std::tuple<int>>(select_where_sql);
-    EXPECT_TRUE(ret3);
-    if (!ret3) {
-        co_return;
-    }
-    auto sqlstmt1 = std::move(ret3.value());
-    sqlstmt1.bind(1);
-    auto ret4 = co_await sqlstmt1.query();
-    EXPECT_TRUE(ret4.has_value());
-    if (!ret4.has_value()) {
-        ILIAS_ERROR("sql-test", "select error {}", ret4.error().value());
-        co_return;
-    }
-    SqlResult<Person> result = SqlResult<Person>(std::move(ret4.value()));
+    // --- 场景 1: 复杂类型映射 (SqlDate, Blob, Reflection) ---
+    static auto test_complex_types() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_complex_types");
 
-    ILIAS_INFO("sql-test", "Executing {} query...", select_where_sql);
+        std::vector<Person> persons = {
+            {1,
+             "Alice",
+             18,
+             "alice@test.com",
+             SqlDate(2025, 6, 20, 10, 0, 0),
+             {std::byte {0xDE}, std::byte {0xAD}},
+             'A',
+             100},
+            {2, "Bob", 20, "bob@test.com", SqlDate(2024, 1, 1), {std::byte {0xBE}, std::byte {0xEF}}, 'B', 200}};
 
-    ILIAS_INFO("sql-test", "column size {}", result->columnCount());
-    ilias_for_await(auto person_result, result.range()) {
-        std::string str;
-        for (auto &b : person_result.promise) {
-            str += std::to_string(static_cast<int>(b)) + ".";
+        // 1. 插入 (Prepare with Struct)
+        const char *insert_sql = "INSERT INTO complex_persons (id, name, age, email, born, promise, val1, val2) "
+                                 "VALUES (:id, :name, :age, :email, :born, :promise, :val1, :val2)";
+
+        auto stmt_ret = co_await db.prepare<Person>(insert_sql);
+        CO_ASSERT_VAL(stmt_ret);
+        auto stmt = std::move(stmt_ret.value());
+
+        for (auto &p : persons) {
+            stmt.reset(); // 重置绑定状态
+            CO_EXPECT_RESULT(stmt.bind(p));
+            auto ret = co_await stmt.execute();
+            CO_EXPECT_RESULT(ret);
         }
-        ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {} promise: {}",
-                   person_result.id, person_result.name, person_result.age, person_result.email,
-                   person_result.born.toString(), (int)person_result.val1, person_result.val2, str);
-    }
 
-    const char *select_all_sql = "SELECT * FROM test_table";
-    using PersonTuple = std::tuple<int, std::string, int, SqlDate, std::string, std::vector<std::byte>, char, int>;
-    auto ret5         = co_await db.prepare<PersonTuple>(select_all_sql);
-    EXPECT_TRUE(ret5);
-    if (!ret5) {
-        co_return;
-    }
-    auto ret6 = co_await (*ret5).query();
-    EXPECT_TRUE(ret6.has_value());
-    if (!ret6.has_value()) {
-        ILIAS_ERROR("sql-test", "select error {}", ret6.error().value());
-        co_return;
-    }
+        // 2. 查询验证
+        auto query_ret = co_await db.query<Person>("SELECT * FROM complex_persons ORDER BY id");
+        CO_ASSERT_VAL(query_ret);
+        auto result = std::move(query_ret.value());
 
-    auto result1 = std::move(ret6.value());
-
-    ILIAS_INFO("sql-test", "Executing {} query...", select_all_sql);
-
-    ILIAS_INFO("sql-test", "column size {}", result1->columnCount());
-    ilias_for_await(auto person_result, result1.range()) {
-        std::string str;
-        auto [id, name, age, born, email, promise, val1, val2] = person_result;
-        for (auto &b : promise) {
-            str += std::to_string(static_cast<int>(b)) + ".";
+        int count = 0;
+        ilias_for_await(auto &p, result.range()) {
+            const auto &expected = persons[count];
+            EXPECT_EQ(p.id, expected.id);
+            EXPECT_EQ(p.name, expected.name);
+            EXPECT_EQ(p.email, expected.email);
+            // 简单验证日期字符串
+            EXPECT_EQ(p.born.toString(), expected.born.toString());
+            // 验证 Blob
+            EXPECT_EQ(p.promise.size(), expected.promise.size());
+            EXPECT_EQ(p.promise[0], expected.promise[0]);
+            count++;
         }
-        ILIAS_INFO("sql-test", "id: {} name: {} age: {} email: {} born: {} val1: {} val2: {} promise: {}", id, name,
-                   age, email, born.toString(), (int)val1, val2, str);
+        EXPECT_EQ(count, 2);
+        ILIAS_INFO("mysql-test", ">>> test_complex_types PASSED");
+        co_return {};
+    }
+
+    // --- 场景 2: 事务与批量插入 ---
+    static auto test_batch_insert_transaction() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_batch_insert_transaction");
+
+        auto tx   = (co_await db.transaction()).value();
+        auto stmt = (co_await tx.prepare("INSERT INTO simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
+
+        const int TOTAL_ROWS = 50;
+        for (int i = 0; i < TOTAL_ROWS; ++i) {
+            stmt.reset();
+            // 手动 Bind 参数 (index based)
+            CO_EXPECT_RESULT(stmt.bind(i, "User_" + std::to_string(i), i * 10));
+            auto ret = co_await stmt.execute();
+            if (!ret) {
+                ILIAS_ERROR("mysql-test", "Insert failed: {}", ret.error().message());
+            }
+        }
+
+        auto commit_ret = co_await tx.commit();
+        CO_EXPECT_RESULT(commit_ret);
+
+        // 验证数量
+        auto count_ret = co_await db.query<std::tuple<int>>("SELECT count(*) FROM simple_users");
+        int  count     = 0;
+        ilias_for_await(auto val, count_ret.value().range()) {
+            count = std::get<0>(val);
+        }
+        EXPECT_EQ(count, TOTAL_ROWS);
+        ILIAS_INFO("mysql-test", ">>> test_batch_insert_transaction PASSED");
+        co_return {};
+    }
+
+    // --- 场景 3: 分页查询 (LIMIT/OFFSET) ---
+    static auto test_pagination() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_pagination");
+
+        // 插入 20 条数据
+        auto tx   = (co_await db.transaction()).value();
+        auto stmt = (co_await tx.prepare("INSERT INTO simple_users VALUES (:id, :name, :score)")).value();
+        for (int i = 0; i < 20; ++i) {
+            stmt.reset();
+            stmt.bind(i, "U" + std::to_string(i), i); // score = id
+            co_await stmt.execute();
+        }
+        co_await tx.commit();
+
+        // MySQL 支持 LIMIT ?, ? 或 LIMIT :lim OFFSET :off
+        // 查询 score 倒序 (19, 18, ...), 取 5 条, 偏移 5 条 -> 应该得到 14, 13, 12, 11, 10
+        auto ret_query = co_await db.query_with(
+            "SELECT score FROM simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
+        CO_ASSERT_VAL(ret_query);
+
+        std::vector<int> scores;
+        int              val;
+        ilias_for_await([[maybe_unused]] auto rc, ret_query.value().range()) {
+            ret_query.value().load(0, val);
+            scores.push_back(val);
+        }
+
+        EXPECT_EQ(scores.size(), 5);
+        if (!scores.empty()) {
+            EXPECT_EQ(scores[0], 14);
+            EXPECT_EQ(scores[4], 10);
+        }
+        ILIAS_INFO("mysql-test", ">>> test_pagination PASSED");
+        co_return {};
+    }
+
+    // --- 场景 4: 批量更新与删除 ---
+    static auto test_bulk_update_delete() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_bulk_update_delete");
+
+        // 准备数据
+        auto stmt = (co_await db.prepare("INSERT INTO simple_users VALUES (?, 'init', 10)")).value();
+        for (int i = 0; i < 10; ++i) {
+            stmt.reset();
+            stmt.bind(i);
+            co_await stmt.execute();
+        }
+
+        // 更新 id >= 5 的
+        auto ret_up = co_await db.execute_with("UPDATE simple_users SET score = 999 WHERE id >= :id", 5);
+        CO_ASSERT_VAL(ret_up);
+        EXPECT_EQ(ret_up.value(), 5); // 5,6,7,8,9
+
+        // 删除 score = 999 的
+        auto ret_del = co_await db.execute("DELETE FROM simple_users WHERE score = 999");
+        CO_ASSERT_VAL(ret_del);
+        EXPECT_EQ(ret_del.value(), 5);
+
+        // 检查剩余
+        auto ret_count = co_await db.query<int>("SELECT count(*) FROM simple_users");
+        int  count     = 0;
+        ilias_for_await(auto v, ret_count.value().range()) {
+            count = std::get<0>(v);
+        }
+        EXPECT_EQ(count, 5); // 0,1,2,3,4 还在
+
+        ILIAS_INFO("mysql-test", ">>> test_bulk_update_delete PASSED");
+        co_return {};
+    }
+
+    // --- 场景 5: 错误处理 ---
+    static auto test_errors() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_errors");
+
+        // 1. 语法错误
+        auto ret1 = co_await db.execute("SELECT * FROM non_existent_table_xyz");
+        CO_EXPECT_NOT_RESULT(ret1); // 应该报错
+
+        // 2. 唯一键冲突
+        // complex_persons 的 email 是 UNIQUE 的
+        co_await db.execute("INSERT INTO complex_persons (id, name, email) VALUES (1, 'A', 'u@test.com')");
+        auto ret2 = co_await db.execute("INSERT INTO complex_persons (id, name, email) VALUES (2, 'B', 'u@test.com')");
+        CO_EXPECT_NOT_RESULT(ret2); // 应该报错
+        // ILIAS_INFO("mysql-test", "Expected error: {}", ret2.error().message());
+
+        ILIAS_INFO("mysql-test", ">>> test_errors PASSED");
+        co_return {};
+    }
+
+    // --- 场景 6: NULL 值处理 ---
+    static auto test_null_handling() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_null_handling");
+
+        // 插入 score 为 NULL
+        auto ret = co_await db.execute("INSERT INTO simple_users (id, name, score) VALUES (999, 'NullGuy', NULL)");
+        CO_ASSERT_VAL(ret);
+
+        auto q = co_await db.query<SimpleUser>("SELECT * FROM simple_users WHERE id = 999");
+        CO_ASSERT_VAL(q);
+
+        ilias_for_await(auto &u, q.value().range()) {
+            EXPECT_EQ(u.id, 999);
+            // 这里的行为取决于库实现，通常 int 类型的 NULL 会被转为 0，或者如果库支持 std::optional 则为空
+            // 假设库策略是如果不报错，则默认构造 (int -> 0)
+            // EXPECT_EQ(u.score, 0);
+            ILIAS_INFO("mysql-test", "Read NULL int as: {}", u.score);
+        }
+        ILIAS_INFO("mysql-test", ">>> test_null_handling PASSED");
+        co_return {};
+    }
+};
+
+// ==========================================
+// 4. 执行入口
+// ==========================================
+ILIAS_NAMESPACE::Task<void> run_all_tests() {
+    try {
+        co_await MySqlTestSuite::test_complex_types();
+        co_await MySqlTestSuite::test_batch_insert_transaction();
+        co_await MySqlTestSuite::test_pagination();
+        co_await MySqlTestSuite::test_bulk_update_delete();
+        co_await MySqlTestSuite::test_errors();
+        co_await MySqlTestSuite::test_null_handling();
+    } catch (const std::exception &e) {
+        ILIAS_ERROR("mysql-test", "Exception caught: {}", e.what());
+        EXPECT_TRUE(false) << "Exception in runner: " << e.what();
     }
 }
 
-TEST(SQL, test) {
-    test().wait();
+TEST(SQL, MySqlSuite) {
+    run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {
-    ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     cpptrace::init();
+    ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);

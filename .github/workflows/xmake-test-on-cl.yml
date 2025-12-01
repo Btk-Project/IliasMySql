@@ -1,0 +1,55 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 1. 在 Windows 上安装并启动 MySQL 服务
+    - name: Setup MySQL
+      uses: shogo82148/actions-setup-mysql@v1
+      with:
+        mysql-version: '8.0'
+        auto-start: true
+        root-password: 'root'
+
+    # 2. 创建测试数据库
+    - name: Create Database
+      run: |
+        mysql -u root -proot -e "CREATE DATABASE test_db;"
+
+    # 3. 安装 XMake
+    - name: Setup XMake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+        actions-cache-folder: '.xmake-cache'
+
+    # 4. 配置构建 (使用 MSVC 编译器)
+    # 这里的 -y 自动确认包安装 (如果有 add_requires 的话)
+    - name: Configure XMake
+      run: xmake f -p windows -a x64 -m asan -y
+
+    # 5. 构建项目
+    - name: Build
+      run: xmake -y
+
+    # 6. 运行测试
+    # Windows 上 localhost 解析有时会有 ipv6 问题，如果连不上，代码里优先读取环境变量
+    - name: Run Tests
+      env:
+        DB_HOST: 127.0.0.1
+        DB_USER: root
+        DB_PASS: root
+        DB_NAME: test_db
+        DB_PORT: 3306
+      run: xmake test -v

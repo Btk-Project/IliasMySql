@@ -29,7 +29,7 @@ using namespace ILIAS_NAMESPACE;
     do {                                                                                                               \
         EXPECT_FALSE(result.has_value());                                                                              \
         if (!result.has_value()) {                                                                                     \
-            ILIAS_INFO("sql-test", "expected failure: {}", result.error().message());                                    \
+            ILIAS_INFO("sql-test", "expected failure: {}", result.error().message());                                  \
         }                                                                                                              \
     } while (0)
 
@@ -152,13 +152,14 @@ public:
         // SQL: SELECT score FROM users ORDER BY score ASC LIMIT 10 OFFSET 10
 
         auto ret_query =
-            co_await db.query_with<int>("SELECT score FROM users ORDER BY score ASC LIMIT :lim OFFSET :off", 10, 10);
+            co_await db.query_with("SELECT score FROM users ORDER BY score ASC LIMIT :lim OFFSET :off", 10, 10);
         CO_ASSERT_VAL(ret_query);
         auto result = std::move(ret_query.value());
 
         std::vector<int> scores;
         int              val;
         ilias_for_await(auto r, result.range()) {
+            CO_ASSERT_VAL(r);
             CO_EXPECT_RESULT(result.load(0, val));
             scores.push_back(val);
         }

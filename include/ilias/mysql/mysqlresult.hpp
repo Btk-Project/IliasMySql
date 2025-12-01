@@ -11,11 +11,11 @@ ILIAS_MYSQL_NS_BEGIN
 
 class ILIAS_SQL_API MySqlResultBase {
 public:
-    using SqlValue                             = sql::SqlValue;
-    MySqlResultBase()                            = default;
+    using SqlValue                                 = sql::SqlValue;
+    MySqlResultBase()                              = default;
     MySqlResultBase(MySqlResultBase &&)            = default;
     MySqlResultBase &operator=(MySqlResultBase &&) = default;
-    virtual ~MySqlResultBase()                   = default;
+    virtual ~MySqlResultBase()                     = default;
 
     MySqlResultBase(const MySqlResultBase &)            = delete;
     MySqlResultBase &operator=(const MySqlResultBase &) = delete;
@@ -57,10 +57,10 @@ protected:
     auto freeResult() -> void;
 
 private:
-    std::shared_ptr<MySql>     mMysql;
-    MYSQL_RES                 *mResult     = nullptr;
-    MYSQL_ROW                  mCurrentRow = nullptr;
-    std::vector<MYSQL_FIELD *> mFieldMetas = {};
+    std::shared_ptr<MySql>                                       mMysql;
+    std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>> mResult     = nullptr;
+    MYSQL_ROW                                                    mCurrentRow = nullptr;
+    std::vector<MYSQL_FIELD *>                                   mFieldMetas = {};
 };
 
 class ILIAS_SQL_API SqlStmtResult final : public MySqlResultBase {
@@ -72,7 +72,7 @@ class ILIAS_SQL_API SqlStmtResult final : public MySqlResultBase {
     };
 
 public:
-    SqlStmtResult(std::shared_ptr<MySql> sql, MYSQL_STMT *stmt);
+    SqlStmtResult(std::shared_ptr<MySql> sql, std::shared_ptr<MYSQL_STMT> stmt);
     SqlStmtResult(SqlStmtResult &&);
     SqlStmtResult &operator=(SqlStmtResult &&);
     ~SqlStmtResult();
@@ -100,12 +100,12 @@ private:
     auto        allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void>;
 
 private:
-    std::shared_ptr<MySql>                                      mMysql;
-    MYSQL_STMT                                                 *mStmt       = nullptr;
-    MYSQL_RES                                                  *mResult     = nullptr;
-    std::vector<MYSQL_FIELD *>                                  mFieldMetas = {};
-    std::unordered_map<std::string, std::unique_ptr<uint8_t[]>> mFields;
-    std::unique_ptr<MYSQL_BIND[]>                               mBinds;
-    std::unique_ptr<unsigned long[]>                            mLengths;
+    std::shared_ptr<MySql>                                       mMysql;
+    std::shared_ptr<MYSQL_STMT>                                  mStmt       = nullptr;
+    std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>> mResult     = nullptr;
+    std::vector<MYSQL_FIELD *>                                   mFieldMetas = {};
+    std::unordered_map<std::string, std::unique_ptr<uint8_t[]>>  mFields;
+    std::unique_ptr<MYSQL_BIND[]>                                mBinds;
+    std::unique_ptr<unsigned long[]>                             mLengths;
 };
 ILIAS_MYSQL_NS_END

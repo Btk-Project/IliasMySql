@@ -441,8 +441,8 @@ private:
     auto makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std::error_code>;
 
 private:
-    std::shared_ptr<MySql> mMysql;
-    MYSQL_STMT            *mMysqlStmt = nullptr;
+    std::shared_ptr<MySql>      mMysql;
+    std::shared_ptr<MYSQL_STMT> mMysqlStmt = nullptr;
     std::vector<std::variant<SqlValueTraits<SqlValueType::kChar>::type, SqlValueTraits<SqlValueType::kInt>::type,
                              SqlValueTraits<SqlValueType::kBigInt>::type, SqlValueTraits<SqlValueType::kFloat>::type,
                              SqlValueTraits<SqlValueType::kDouble>::type, MYSQL_TIME>>
@@ -456,9 +456,6 @@ MysqlStatement::MysqlStatement(std::shared_ptr<MySql> mysql) {
 }
 
 MysqlStatement::~MysqlStatement() {
-    if (mMysqlStmt) {
-        mysql_stmt_close(mMysqlStmt);
-    }
 }
 
 MYSQL_TIME toMysqlTime(const SqlDate &dt) {
@@ -598,7 +595,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     }
     int ret = 0;
     if (mBinds.size() > 0) {
-        ret = mysql_stmt_bind_param(mMysqlStmt, mBinds.data());
+        ret = mysql_stmt_bind_param(mMysqlStmt.get(), mBinds.data());
     }
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
@@ -612,7 +609,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
             co_return Unexpected((SqlError::Code)ret);
         }
     }
-    auto status = mysql_stmt_execute_start(&ret, mMysqlStmt);
+    auto status = mysql_stmt_execute_start(&ret, mMysqlStmt.get());
     while (status) {
         ILIAS_TRACE("sql", "stmt execute waiting for status {}", status);
         auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
@@ -620,7 +617,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
             ILIAS_ERROR("sql", "stmt execute failed. (error: {})", pret.error().message());
             co_return Unexpected(pret.error());
         }
-        status = mysql_stmt_execute_cont(&ret, mMysqlStmt, status);
+        status = mysql_stmt_execute_cont(&ret, mMysqlStmt.get(), status);
     }
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
@@ -643,14 +640,14 @@ auto MysqlStatement::execute() -> IoTask<size_t> {
     if (!result) {
         co_return Unexpected(result.error());
     }
-    auto rows = mysql_stmt_affected_rows(mMysqlStmt);
+    auto rows = mysql_stmt_affected_rows(mMysqlStmt.get());
     co_return rows;
 }
 
 auto MysqlStatement::reset() -> void {
     clearBinds();
     if (mMysqlStmt != nullptr) {
-        mysql_stmt_reset(mMysqlStmt);
+        mysql_stmt_reset(mMysqlStmt.get());
     }
 }
 
@@ -658,18 +655,18 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
     if (mMysqlStmt != nullptr) {
         co_await close();
     }
-    mMysqlStmt = mMysql->stmtInit();
+    mMysqlStmt = std::shared_ptr<MYSQL_STMT>(mMysql->stmtInit(), [](MYSQL_STMT *stmt) { mysql_stmt_close(stmt); });
     int  ret;
     auto queryp = parser(sql);
     ILIAS_TRACE("sql", "prepare :{}", queryp);
-    auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt, queryp.data(), (unsigned long)queryp.size());
+    auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt.get(), queryp.data(), (unsigned long)queryp.size());
     while (status) {
         ILIAS_TRACE("sql", "stmt prepare waiting for status {}", status);
         auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
         if (!pret) {
             co_return Unexpected(pret.error());
         }
-        status = mysql_stmt_prepare_cont(&ret, mMysqlStmt, status);
+        status = mysql_stmt_prepare_cont(&ret, mMysqlStmt.get(), status);
     }
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
@@ -689,14 +686,14 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
 auto MysqlStatement::close() -> IoTask<void> {
     if (mMysqlStmt != nullptr) {
         my_bool ret    = 0;
-        auto    status = mysql_stmt_close_start(&ret, mMysqlStmt);
+        auto    status = mysql_stmt_close_start(&ret, mMysqlStmt.get());
         while (status) {
             ILIAS_TRACE("sql", "stmt close waiting for status {}", status);
             auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
             if (!pret) {
                 co_return Unexpected(pret.error());
             }
-            status = mysql_stmt_close_cont(&ret, mMysqlStmt, status);
+            status = mysql_stmt_close_cont(&ret, mMysqlStmt.get(), status);
         }
         if (ret != 0) {
             auto lastererror = mMysql->lastError();
@@ -717,35 +714,119 @@ auto MysqlStatement::close() -> IoTask<void> {
 
 auto MysqlStatement::parser(std::string_view sql) -> std::string {
     mIndexs.clear();
-    mBindBuffer.clear();
-    mBinds.clear();
+
     std::string ret;
-    auto        start = sql.find_first_of(':');
-    if (start != std::string::npos) {
-        ret = sql.substr(0, start);
+    ret.reserve(sql.size());
+    int param_counter = 0;
+
+    bool in_string  = false;
+    char quote_char = 0;
+    for (size_t i = 0; i < sql.size(); ++i) {
+        char c = sql[i];
+
+        // 1. 处理字符串字面量 (例如 'time: 12:00' 或 "name")
+        if (in_string) {
+            ret += c;
+            if (c == quote_char) {
+                // 处理转义字符，如 'It''s' 或 'It\'s' (取决于 SQL 模式，这里做简单处理)
+                if (i + 1 < sql.size() && sql[i + 1] == quote_char) {
+                    ret += sql[i + 1];
+                    i++;
+                }
+                else {
+                    in_string = false;
+                }
+            }
+            continue;
+        }
+
+        // 进入字符串模式
+        if (c == '\'' || c == '"' || c == '`') {
+            in_string  = true;
+            quote_char = c;
+            ret += c;
+            continue;
+        }
+
+        // 2. 处理位置参数 ?
+        if (c == '?') {
+            ret += '?';
+            param_counter++; // 占据一个索引位
+            continue;
+        }
+
+        // 3. 处理命名参数 :name
+        if (c == ':') {
+            // 处理双冒号 :: (通常用于类型转换，如 postgres，虽然这是 mysql 驱动，但在 sql 字符串中最好做兼容)
+            if (i + 1 < sql.size() && sql[i + 1] == ':') {
+                ret += "::";
+                i++;
+                continue;
+            }
+
+            // 检查冒号后面是否有合法的参数名字符
+            size_t j = i + 1;
+            if (j >= sql.size()) {
+                // SQL 以 : 结尾，非法但保留原样
+                ret += c;
+                continue;
+            }
+
+            // 如果冒号后面不是字母、下划线，则视为普通冒号 (例如 12:30)
+            // 你可以根据需求调整这里的判定，比如必须以字母开头
+            if (!std::isalnum(static_cast<unsigned char>(sql[j])) && sql[j] != '_') {
+                ret += c;
+                continue;
+            }
+
+            // 提取参数名
+            while (j < sql.size()) {
+                char next_c = sql[j];
+                // 允许的参数名字符: 字母, 数字, 下划线
+                if (std::isalnum(static_cast<unsigned char>(next_c)) || next_c == '_') {
+                    j++;
+                }
+                else {
+                    break;
+                }
+            }
+
+            std::string_view name_view = sql.substr(i + 1, j - (i + 1));
+            std::string      name(name_view);
+
+            // 记录映射关系：名字 -> 当前的全局索引
+            mIndexs[name] = param_counter;
+
+            // 替换为 ?
+            ret += '?';
+            param_counter++;
+
+            // 移动主循环索引
+            i = j - 1;
+            continue;
+        }
+
+        // 普通字符
+        ret += c;
+    }
+
+    // 4. 根据总参数量重新分配 Binds 数组
+    // 这里的 param_counter 包含了所有的 ? 和 :name
+    mBinds.resize(param_counter);
+    mBindBuffer.resize(param_counter); // 如果你需要 buffer 也对应 resize
+
+    // 初始化 MYSQL_BIND 内存
+    if (param_counter > 0) {
+        std::memset(mBinds.data(), 0, sizeof(MYSQL_BIND) * mBinds.size());
+        for (int i = 0; i < (int)mBinds.size(); ++i) {
+            mBinds[i].buffer_type = MYSQL_TYPE_NULL;
+        }
     }
     else {
-        return std::string(sql);
+        mBinds.clear();
+        mBindBuffer.clear();
     }
-    auto end = start;
-    while (start != std::string::npos) {
-        end = start;
-        while (end < sql.size() && sql[end] != ' ' && sql[end] != ',' && sql[end] != '\t' && sql[end] != '\n' &&
-               sql[end] != '\r' && sql[end] != ')' && sql[end] != '(' && sql[end] != '"') {
-            end++;
-        }
-        auto name = sql.substr(start + 1, end - start - 1);
-        mIndexs.emplace(name, mIndexs.size());
-        ret += '?';
-        start = sql.find_first_of(':', end);
-        ret += sql.substr(end, start - end);
-    }
-    mBinds.resize(mIndexs.size());
-    memset(mBinds.data(), 0, sizeof(MYSQL_BIND) * mBinds.size());
-    for (int i = 0; i < (int)mBinds.size(); ++i) {
-        mBinds[i].buffer_type = MYSQL_TYPE_NULL;
-    }
-    mBindBuffer.resize(mIndexs.size());
+
     return ret;
 }
 

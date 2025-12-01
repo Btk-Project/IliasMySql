@@ -1,5 +1,15 @@
 # IliasSql
 
+<!-- CI Status Badges -->
+[![Linux CI](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-linux.yml/badge.svg)](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-linux.yml)
+[![Windows CI](https://github.com/Btk-Project/IliasMySql/actions/workflows/windows.yml/badge.svg)](https://github.com/Btk-Project/IliasMySql/actions/workflows/windows.yml)
+
+<!-- Project Info Badges -->
+[![License](https://img.shields.io/github/license/Btk-Project/IliasMySql)](LICENSE)
+[![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
+[![Build System](https://img.shields.io/badge/build-xmake-green)](https://xmake.io)
+[![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey)](https://github.com/Btk-Project/IliasMySql)
+
 **IliasSql** 是一个基于 C++20 协程 (Coroutines) 的高性能异步 SQL 客户端库，作为 `Ilias` 框架的一部分。它提供了统一的接口来访问 SQLite 和 MySQL/MariaDB，支持非阻塞 I/O、类型安全的参数绑定、结构体反射映射以及流式结果集处理。
 
 ## 核心特性

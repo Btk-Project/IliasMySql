@@ -3,11 +3,11 @@
 #include <charconv>
 
 #define SQL_PRIVATE_SYNC_CODE(OutP, MysqlFunc, ...)                                                                    \
-    auto status = MysqlFunc##_start(&OutP, mStmt, ##__VA_ARGS__);                                                      \
+    auto status = MysqlFunc##_start(&OutP, mStmt.get(), ##__VA_ARGS__);                                                \
     while (status) {                                                                                                   \
         ILIAS_TRACE("sql", "{} waiting for status {}", #MysqlFunc, status);                                            \
         auto pret = co_await mMysql->pollStatus(status);                                                               \
-        status    = MysqlFunc##_cont(&OutP, mStmt, status);                                                            \
+        status    = MysqlFunc##_cont(&OutP, mStmt.get(), status);                                                      \
         if (!pret) {                                                                                                   \
             co_return Unexpected(pret.error());                                                                        \
         }                                                                                                              \
@@ -179,7 +179,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
 
 SqlQueryResult::SqlQueryResult(SqlQueryResult &&other) {
     mMysql            = std::move(other.mMysql);
-    mResult           = other.mResult;
+    mResult           = std::move(other.mResult);
     mCurrentRow       = other.mCurrentRow;
     mFieldMetas       = std::move(other.mFieldMetas);
     other.mResult     = nullptr;
@@ -193,7 +193,7 @@ SqlQueryResult &SqlQueryResult::operator=(SqlQueryResult &&other) {
     }
     if (this != &other) {
         mMysql            = std::move(other.mMysql);
-        mResult           = other.mResult;
+        mResult           = std::move(other.mResult);
         mCurrentRow       = other.mCurrentRow;
         mFieldMetas       = std::move(other.mFieldMetas);
         other.mResult     = nullptr;
@@ -213,7 +213,7 @@ SqlQueryResult::~SqlQueryResult() {
 }
 
 auto SqlQueryResult::nativeResult() -> MYSQL_RES * {
-    return mResult;
+    return mResult.get();
 }
 
 auto SqlQueryResult::getResult() -> IoTask<void> {
@@ -221,7 +221,8 @@ auto SqlQueryResult::getResult() -> IoTask<void> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    mResult = ret.value();
+    mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
+        ret.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
     ILIAS_INFO("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
@@ -235,7 +236,8 @@ auto SqlQueryResult::next() -> IoTask<bool> {
             if (!resRet)
                 co_return Unexpected(resRet.error()); // 真正的网络/数据库错误
 
-            mResult = resRet.value();
+            mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
+                resRet.value(), [](MYSQL_RES *ptr) { mysql_free_result(ptr); });
             if (!mResult) {
                 goto CHECK_NEXT;
             }
@@ -278,9 +280,12 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
     if (mCurrentRow == nullptr) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
+    if (mResult == nullptr) {
+        return Unexpected(SqlError::Code::NoMoreData);
+    }
     if (mFieldMetas.empty()) {
-        mFieldMetas.resize(mysql_num_fields(mResult));
-        auto fieldMetas = mysql_fetch_fields(mResult);
+        mFieldMetas.resize(mysql_num_fields(mResult.get()));
+        auto fieldMetas = mysql_fetch_fields(mResult.get());
         for (size_t i = 0; i < mFieldMetas.size(); ++i) {
             mFieldMetas[i] = &fieldMetas[i];
         }
@@ -288,7 +293,7 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
     if (index >= mFieldMetas.size()) {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
-    auto lengths = mysql_fetch_lengths(mResult);
+    auto lengths = mysql_fetch_lengths(mResult.get());
     auto result  = toValue(mFieldMetas[index], mCurrentRow[index], lengths[index]);
     return result;
 }
@@ -299,8 +304,8 @@ auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
         return Unexpected(SqlError::Code::NoMoreData);
     }
     if (mFieldMetas.empty()) {
-        mFieldMetas.resize(mysql_num_fields(mResult));
-        auto fieldMetas = mysql_fetch_fields(mResult);
+        mFieldMetas.resize(mysql_num_fields(mResult.get()));
+        auto fieldMetas = mysql_fetch_fields(mResult.get());
         for (size_t i = 0; i < mFieldMetas.size(); ++i) {
             mFieldMetas[i] = &fieldMetas[i];
         }
@@ -309,7 +314,7 @@ auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
         return Unexpected(SqlError::Code::NoMoreData);
     }
     std::size_t index = -1;
-    for (size_t i = 0; i < mysql_num_fields(mResult); ++i) {
+    for (size_t i = 0; i < mysql_num_fields(mResult.get()); ++i) {
         if (mFieldMetas[i]->name == name) {
             index = i;
             break;
@@ -325,20 +330,20 @@ auto SqlQueryResult::countRows() -> size_t {
     if (mResult == nullptr) {
         return 0;
     }
-    return mysql_num_rows(mResult);
+    return mysql_num_rows(mResult.get());
 }
 
 auto SqlQueryResult::countFields() -> size_t {
     if (mResult == nullptr) {
         return 0;
     }
-    return mysql_num_fields(mResult);
+    return mysql_num_fields(mResult.get());
 }
 
 auto SqlQueryResult::fieldName(size_t index) -> std::string_view {
     if (mFieldMetas.empty() && mResult != nullptr) {
-        mFieldMetas.resize(mysql_num_fields(mResult));
-        auto fieldMetas = mysql_fetch_fields(mResult);
+        mFieldMetas.resize(mysql_num_fields(mResult.get()));
+        auto fieldMetas = mysql_fetch_fields(mResult.get());
         for (size_t i = 0; i < mFieldMetas.size(); ++i) {
             mFieldMetas[i] = &fieldMetas[i];
         }
@@ -352,12 +357,12 @@ auto SqlQueryResult::fieldName(size_t index) -> std::string_view {
 auto SqlQueryResult::fetchRow() -> IoTask<MYSQL_ROW> {
     ILIAS_ASSERT(mResult != nullptr);
     MYSQL_ROW row;
-    auto      status = mysql_fetch_row_start(&row, mResult);
+    auto      status = mysql_fetch_row_start(&row, mResult.get());
     if (status) {
         while (status) {
             ILIAS_TRACE("sql", "disconnect mysql waiting for status {}", status);
             auto pret = co_await mMysql->pollStatus(status);
-            status    = mysql_fetch_row_cont(&row, mResult, status);
+            status    = mysql_fetch_row_cont(&row, mResult.get(), status);
             if (!pret) {
                 co_return Unexpected(pret.error());
             }
@@ -368,19 +373,16 @@ auto SqlQueryResult::fetchRow() -> IoTask<MYSQL_ROW> {
 
 auto SqlQueryResult::freeResult() -> void {
     if (mResult != nullptr) {
-        mysql_free_result(mResult);
-        mResult     = nullptr;
+        mResult.reset();
         mCurrentRow = nullptr;
         mFieldMetas.clear();
     }
 }
 
 SqlStmtResult::SqlStmtResult(SqlStmtResult &&other) {
-    mMysql        = std::move(other.mMysql);
-    mStmt         = other.mStmt;
-    mResult       = other.mResult;
-    other.mStmt   = nullptr;
-    other.mResult = nullptr;
+    mMysql  = std::move(other.mMysql);
+    mStmt   = std::move(other.mStmt);
+    mResult = std::move(other.mResult);
 }
 
 SqlStmtResult &SqlStmtResult::operator=(SqlStmtResult &&other) {
@@ -388,25 +390,21 @@ SqlStmtResult &SqlStmtResult::operator=(SqlStmtResult &&other) {
         close().wait();
     }
     if (this != &other) {
-        mMysql        = std::move(other.mMysql);
-        mStmt         = other.mStmt;
-        mResult       = other.mResult;
-        other.mStmt   = nullptr;
-        other.mResult = nullptr;
+        mMysql  = std::move(other.mMysql);
+        mStmt   = std::move(other.mStmt);
+        mResult = std::move(other.mResult);
     }
     return *this;
 }
 
-SqlStmtResult::SqlStmtResult(std::shared_ptr<MySql> sql, MYSQL_STMT *stmt) : mMysql(sql), mStmt(stmt) {
+SqlStmtResult::SqlStmtResult(std::shared_ptr<MySql> sql, std::shared_ptr<MYSQL_STMT> stmt) : mMysql(sql), mStmt(stmt) {
 }
 
 SqlStmtResult::~SqlStmtResult() {
-    if (mResult)
-        mysql_free_result(mResult);
 }
 
 auto SqlStmtResult::nativeResult() -> MYSQL_RES * {
-    return mResult;
+    return mResult.get();
 }
 
 auto SqlStmtResult::getResult() -> IoTask<void> {
@@ -414,7 +412,8 @@ auto SqlStmtResult::getResult() -> IoTask<void> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    mResult = ret.value();
+    mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
+        ret.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
     co_return {};
 }
 
@@ -428,7 +427,8 @@ auto SqlStmtResult::next() -> IoTask<bool> {
                 co_return Unexpected(resRet.error());
             }
 
-            mResult = resRet.value();
+            mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
+                resRet.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
             if (mResult == nullptr) {
                 goto CHECK_NEXT_RESULT;
             }
@@ -501,7 +501,7 @@ auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValue> {
         return Unexpected(SqlError::Code::NoMoreData);
     }
     auto index = -1;
-    for (size_t i = 0; i < mysql_num_fields(mResult); ++i) {
+    for (size_t i = 0; i < mysql_num_fields(mResult.get()); ++i) {
         if (mFieldMetas[i]->name == name) {
             index = i;
             break;
@@ -514,11 +514,11 @@ auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValue> {
 }
 
 auto SqlStmtResult::countRows() -> size_t {
-    return mysql_stmt_num_rows(mStmt);
+    return mysql_stmt_num_rows(mStmt.get());
 }
 
 auto SqlStmtResult::countFields() -> size_t {
-    return mysql_stmt_field_count(mStmt);
+    return mysql_stmt_field_count(mStmt.get());
 }
 
 auto SqlStmtResult::fieldName(size_t index) -> std::string_view {
@@ -538,15 +538,7 @@ auto SqlStmtResult::fetchRow() -> IoTask<int> {
 
 auto SqlStmtResult::freeResult() -> void {
     ILIAS_INFO("sql", "stmt free result");
-    if (mResult) {
-        mysql_free_result(mResult);
-        mResult = nullptr;
-    }
-
-    if (mStmt) {
-        mysql_stmt_free_result(mStmt);
-    }
-
+    mResult.reset();
     // 清理绑定缓冲区
     mBinds.reset();
     mLengths.reset();
@@ -677,7 +669,7 @@ auto SqlStmtResult::storeResult() -> IoTask<MYSQL_RES *> {
         co_return Unexpected((SqlError::Code)mMysql->lastError());
     }
     // 2. 获取元数据
-    MYSQL_RES *res = mysql_stmt_result_metadata(mStmt);
+    MYSQL_RES *res = mysql_stmt_result_metadata(mStmt.get());
     if (res == nullptr) {
         if (mMysql->lastError() == SqlError::Code::OK) {
             co_return nullptr; // 无结果集 (INSERT/UPDATE)
@@ -691,7 +683,7 @@ auto SqlStmtResult::storeResult() -> IoTask<MYSQL_RES *> {
         co_return Unexpected(allocRet.error());
     }
     // 4. 绑定
-    if (mysql_stmt_bind_result(mStmt, mBinds.get()) != 0) {
+    if (mysql_stmt_bind_result(mStmt.get(), mBinds.get()) != 0) {
         mysql_free_result(res);
         co_return Unexpected((SqlError::Code)mMysql->lastError());
     }
