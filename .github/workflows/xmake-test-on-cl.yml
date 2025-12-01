@@ -25,21 +25,24 @@ jobs:
     # 2. 创建测试数据库
     - name: Create Database
       run: |
+        # 等待服务就绪
         Start-Sleep -Seconds 10
         
-        # 1. 修改 localhost (覆盖 Socket/Pipe 连接)
-        mysql -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root';"
+        # 关键修改：添加 -h localhost 强制使用 Named Pipe 连接到有权限的 root@localhost
         
-        # 2. 【关键】修改 127.0.0.1 (覆盖 TCP 连接)
-        # 很多 MySQL 安装默认不包含这个条目，或者包含但配置不同，强制创建/修改它以防万一
-        mysql -u root -proot -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY 'root';"
-        mysql -u root -proot -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY 'root';"
+        # 1. 先创建 'root'@'127.0.0.1' 供 C++ TCP 客户端使用
+        #    注意：必须先创建用户，再授权
+        mysql -h localhost -u root -proot -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY 'root';"
         
-        # 3. 授予权限 (防止新建的 127.0.0.1 用户没权限)
-        mysql -u root -proot -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
+        # 2. 授予所有权限
+        mysql -h localhost -u root -proot -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
         
-        mysql -u root -proot -e "FLUSH PRIVILEGES;"
-        mysql -u root -proot -e "CREATE DATABASE test_db;"
+        # 3. 顺便把 localhost 的 root 也降级为 native_password (虽然 C++ 强制走 TCP 用不到它，但为了保险)
+        mysql -h localhost -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root';"
+        
+        # 4. 刷新权限并建库
+        mysql -h localhost -u root -proot -e "FLUSH PRIVILEGES;"
+        mysql -h localhost -u root -proot -e "CREATE DATABASE test_db;"
 
     # 3. 安装 XMake
     - name: Setup XMake
