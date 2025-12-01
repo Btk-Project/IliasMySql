@@ -193,8 +193,9 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_batch_insert_transaction");
 
-        auto tx   = (co_await db.transaction()).value();
-        auto stmt = (co_await tx.prepare("INSERT INTO simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
+        auto tx = (co_await db.transaction()).value();
+        auto stmt =
+            (co_await tx.prepare("INSERT INTO simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
 
         const int TOTAL_ROWS = 50;
         for (int i = 0; i < TOTAL_ROWS; ++i) {
@@ -238,8 +239,8 @@ public:
 
         // MySQL 支持 LIMIT ?, ? 或 LIMIT :lim OFFSET :off
         // 查询 score 倒序 (19, 18, ...), 取 5 条, 偏移 5 条 -> 应该得到 14, 13, 12, 11, 10
-        auto ret_query = co_await db.query_with(
-            "SELECT score FROM simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
+        auto ret_query =
+            co_await db.query_with("SELECT score FROM simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
         CO_ASSERT_VAL(ret_query);
 
         std::vector<int> scores;
@@ -335,6 +336,87 @@ public:
         ILIAS_INFO("mysql-test", ">>> test_null_handling PASSED");
         co_return {};
     }
+
+    // --- 场景 7: 事务回滚测试 ---
+    static auto test_transaction_rollback() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_transaction_rollback");
+
+        // 1. 开启事务
+        auto tx = (co_await db.transaction()).value();
+
+        // 2. 在事务中插入一条“脏数据”
+        // 使用 ID 8888 标记这条应该被回滚的数据
+        auto exec_ret =
+            co_await tx.execute("INSERT INTO simple_users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
+        CO_ASSERT_VAL(exec_ret);
+
+        // (可选验证) 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
+        // 但我们要验证的是回滚后的最终一致性
+        auto query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 8888");
+        CO_ASSERT_VAL(query_ret);
+
+        int count = -1;
+        ilias_for_await(auto val, query_ret.value().range()) {
+            count = std::get<0>(val);
+        }
+        // 期望数量为 1，说明插入成功
+        EXPECT_EQ(count, 1);
+
+        // 3. 执行回滚
+        auto rb_ret = co_await tx.rollback();
+        EXPECT_TRUE(rb_ret);
+
+        // 4. 验证数据确实不存在了
+        query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 8888");
+        CO_ASSERT_VAL(query_ret);
+
+        count = -1;
+        ilias_for_await(auto val, query_ret.value().range()) {
+            count = std::get<0>(val);
+        }
+
+        // 期望数量为 0，说明插入被撤销了
+        EXPECT_EQ(count, 0);
+
+        ILIAS_INFO("mysql-test", ">>> test_transaction_rollback PASSED");
+        co_return {};
+    }
+
+    // --- 场景 8: 析构自动回滚测试 ---
+    static auto test_raii_rollback() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_raii_rollback");
+
+        {
+            // 作用域开始
+            auto tx = (co_await db.transaction()).value();
+            co_await tx.execute("INSERT INTO simple_users (id, name, score) VALUES (7777, 'RAII_Test', 0)");
+            // 注意：这里故意不调用 tx.commit()，直接离开作用域
+
+            auto query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 7777");
+            CO_ASSERT_VAL(query_ret);
+
+            int count = -1;
+            ilias_for_await(auto val, query_ret.value().range()) {
+                count = std::get<0>(val);
+            }
+            // 期望数量为 1，说明插入成功
+            EXPECT_EQ(count, 1);
+        }
+        // 此时 tx 被析构，应该触发 syncRollback 或类似的机制
+
+        // 验证数据不存在
+        auto q     = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 7777");
+        int  count = 0;
+        ilias_for_await(auto val, q.value().range()) {
+            count = std::get<0>(val);
+        }
+        EXPECT_EQ(count, 0);
+
+        ILIAS_INFO("mysql-test", ">>> test_raii_rollback PASSED");
+        co_return {};
+    }
 };
 
 // ==========================================
@@ -348,6 +430,8 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await MySqlTestSuite::test_bulk_update_delete();
         co_await MySqlTestSuite::test_errors();
         co_await MySqlTestSuite::test_null_handling();
+        co_await MySqlTestSuite::test_transaction_rollback();
+        co_await MySqlTestSuite::test_raii_rollback();
     } catch (const std::exception &e) {
         ILIAS_ERROR("mysql-test", "Exception caught: {}", e.what());
         EXPECT_TRUE(false) << "Exception in runner: " << e.what();
