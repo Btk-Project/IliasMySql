@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    # Service container to run MySQL for integration tests
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup XMake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+        actions-cache-folder: '.xmake-cache'
+
+    - name: Update XMake Repository
+      run: xmake repo -u
+
+    - name: Install System Dependencies
+      # Sometimes required if XMake doesn't pull the system libmysqlclient automatically
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libmysqlclient-dev
+
+    - name: Configure XMake
+      # We configure for Release (or Debug) and ensure we check for dependencies
+      run: xmake f -m asan -y
+
+    - name: Build
+      run: xmake -y
+
+    - name: Run Tests
+      # Assumes the test target in xmake.lua is named 'tests' or similar.
+      # We pass environment variables for the test code to connect to the service.
+      env:
+        DB_HOST: 127.0.0.1
+        DB_USER: root
+        DB_PASS: root
+        DB_NAME: test_db
+        DB_PORT: 3306
+      run: xmake test -v
