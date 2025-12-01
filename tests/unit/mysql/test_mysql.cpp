@@ -89,6 +89,11 @@ public:
         // MySQL 特有配置
         options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
         options.extra.insert(std::make_pair("ConnectTimeout", "10"));
+        // 1. 使用 TCP 协议 (默认是 Socket)
+        options.extra.insert(std::make_pair("Protocol", "MYSQL_PROTOCOL_TCP"));
+        
+        // 2. 禁用 SSL 强制校验 (防止握手阶段因证书问题断开)
+        options.extra.insert(std::make_pair("SslEnforce", "false"));
         return options;
     }
 

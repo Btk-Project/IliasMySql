@@ -25,6 +25,16 @@ jobs:
     # 2. 创建测试数据库
     - name: Create Database
       run: |
+        # 1. 等待服务完全就绪 (Windows 机器比较慢)
+        Start-Sleep -Seconds 10
+        
+        # 2. 修改 root 用户密码认证方式为 mysql_native_password (兼容性更好)
+        mysql -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root';"
+        
+        # 3. 刷新权限
+        mysql -u root -proot -e "FLUSH PRIVILEGES;"
+        
+        # 4. 创建数据库
         mysql -u root -proot -e "CREATE DATABASE test_db;"
 
     # 3. 安装 XMake
