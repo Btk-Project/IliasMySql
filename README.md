@@ -2,7 +2,7 @@
 
 <!-- CI Status Badges -->
 [![Linux CI](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-linux.yml/badge.svg)](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-linux.yml)
-[![Windows CI](https://github.com/Btk-Project/IliasMySql/actions/workflows/windows.yml/badge.svg)](https://github.com/Btk-Project/IliasMySql/actions/workflows/windows.yml)
+[![Windows CI](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-cl.yml/badge.svg)](https://github.com/Btk-Project/IliasMySql/actions/workflows/xmake-test-on-cl.yml)
 
 <!-- Project Info Badges -->
 [![License](https://img.shields.io/github/license/Btk-Project/IliasMySql)](LICENSE)
