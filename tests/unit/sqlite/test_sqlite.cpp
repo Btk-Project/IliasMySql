@@ -7,13 +7,15 @@
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
 #include "ilias/sql/sqldatabase.hpp"
+#include "ilias/sqlite/form.hpp"
 
 // 假设这些在你的项目中存在
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
+ILIAS_SQLITE_USE_NAMESPACE
 using namespace ILIAS_NAMESPACE;
-
+NEKO_USE_NAMESPACE
 // ==========================================
 // 1. 协程测试辅助宏 (保持不变)
 // ==========================================
@@ -46,10 +48,21 @@ using namespace ILIAS_NAMESPACE;
 // 2. 测试用的数据结构
 // ==========================================
 struct SimpleUser {
-    int         id;
-    std::string name;
-    int         score;
+    int         id    = 0;
+    std::string name  = "";
+    int         score = 0;
 };
+
+NEKO_BEGIN_NAMESPACE
+template <>
+struct Meta<SimpleUser, void> {
+    constexpr static auto value = // NOLINT
+        Object("id",
+               make_tags<sqlite::SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
+               "name", make_tags<sqlite::SqlTags {.not_null = true}>(&SimpleUser::name), "score",
+               make_tags<sqlite::SqlTags {.not_null = true}>(&SimpleUser::score));
+};
+NEKO_END_NAMESPACE
 
 // ==========================================
 // 3. 测试套件
@@ -93,7 +106,8 @@ public:
             stmt.reset();
             std::string name = "User_" + std::to_string(i);
             // score 设为 id * 10，方便后续校验
-            CO_EXPECT_RESULT(stmt.bind(i, name, i * 10));
+            auto bind_ret = stmt.bind(i, name, i * 10);
+            CO_EXPECT_RESULT(bind_ret);
             auto ret = co_await stmt.execute();
             if (!ret) {
                 ILIAS_ERROR("test", "Insert failed at index {}", i);
@@ -151,8 +165,7 @@ public:
         // Score 应该是: 51, 52, ..., 60 (对应 ID 49, 48... )
         // SQL: SELECT score FROM users ORDER BY score ASC LIMIT 10 OFFSET 10
 
-        auto ret_query =
-            co_await db.query_with("SELECT score FROM users ORDER BY score ASC LIMIT :lim OFFSET :off", 10, 10);
+        auto ret_query = co_await db.query_with("SELECT score FROM users ORDER BY score ASC LIMIT ? OFFSET ?", 10, 10);
         CO_ASSERT_VAL(ret_query);
         auto result = std::move(ret_query.value());
 
@@ -189,7 +202,7 @@ public:
         }
 
         // 1. 批量更新: 将 id >= 10 的 score 改为 999
-        auto ret_up = co_await db.execute_with("UPDATE users SET score = :s WHERE id >= :id", 999, 10);
+        auto ret_up = co_await db.execute_with("UPDATE users SET score = ? WHERE id >= ?", 999, 10);
         CO_ASSERT_VAL(ret_up);
         EXPECT_EQ(ret_up.value(), 10); // 应该影响 10 行 (10-19)
 
@@ -279,8 +292,7 @@ public:
 
         // 2. 在事务中插入一条“脏数据”
         // 使用 ID 8888 标记这条应该被回滚的数据
-        auto exec_ret =
-            co_await tx.execute("INSERT INTO users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
+        auto exec_ret = co_await tx.execute("INSERT INTO users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
         CO_ASSERT_VAL(exec_ret);
 
         // (可选验证) 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
@@ -349,6 +361,126 @@ public:
         ILIAS_INFO("mysql-test", ">>> test_raii_rollback PASSED");
         co_return {};
     }
+
+    static auto test_form_interface() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_form_full_coverage");
+
+        // 1. 创建表 (Create)
+        auto users_ret = co_await sqlite::Form<SimpleUser>::create(db, "users_full_test");
+        CO_ASSERT_VAL(users_ret);
+        auto users = std::move(users_ret.value());
+
+        for (int i = 0; i < 100; ++i) {
+            auto insert_ret = co_await users.insert(i, fmtlib::format("User{}", i), i * 10 + 1);
+            CO_ASSERT_VAL(insert_ret);
+        }
+        ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
+
+        {
+            auto ret = co_await users.select("count(*)").where("score"_sql > 500 && "id"_sql < 60).execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 10);
+        }
+
+        {
+            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 10);
+        }
+
+        {
+            auto ret = co_await users.select("id").where("name"_sql == "User50").execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int id = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, id);
+            }
+            EXPECT_EQ(id, 50);
+        }
+
+        {
+            auto ret = co_await users.select("id, score")
+                           .orderBy("score", true) // true for DESC
+                           .offset(1)
+                           .limit(2)
+                           .execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            std::vector<int> ids;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                int id, score;
+                res.load(0, id);
+                res.load(1, score);
+                ids.push_back(id);
+            }
+
+            EXPECT_EQ(ids.size(), 2);
+            if (ids.size() == 2) {
+                EXPECT_EQ(ids[0], 98);
+                EXPECT_EQ(ids[1], 97);
+            }
+        }
+
+        {
+            // 将 ID=10 的用户分数修改为 9999
+            SimpleUser u10 {10, "User10_Modified", 9999};
+
+            // 注意：Update 依赖 Form 能够正确识别 Primary Key
+            auto update_ret = co_await users.update(u10);
+            CO_ASSERT_VAL(update_ret);
+            EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
+
+            // 验证修改
+            auto ret = co_await users.select("score, name").where("id"_sql == 10).execute();
+            auto res = std::move(ret.value());
+
+            int         score = 0;
+            std::string name;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, score);
+                res.load(1, name);
+            }
+            EXPECT_EQ(score, 9999);
+            EXPECT_EQ(name, "User10_Modified");
+        }
+
+        {
+            // 删除 ID=20 的用户
+            SimpleUser u20 {20, "", 0};
+
+            auto remove_ret = co_await users.remove(u20);
+            CO_ASSERT_VAL(remove_ret);
+            EXPECT_EQ(remove_ret.value(), 1);
+
+            // 验证不存在
+            auto ret   = co_await users.select("count(*)").where("id"_sql == 20).execute();
+            auto res   = std::move(ret.value());
+            int  count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 0);
+        }
+
+        ILIAS_INFO("mysql-test", ">>> test_form_full_coverage PASSED");
+        co_return {};
+    }
 };
 
 // ==========================================
@@ -367,6 +499,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await SqlTestSuite::test_null_handling();
         co_await SqlTestSuite::test_transaction_rollback();
         co_await SqlTestSuite::test_raii_rollback();
+        co_await SqlTestSuite::test_form_interface();
     } catch (const std::exception &e) {
         ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
         EXPECT_TRUE(false) << "Exception in test runner: " << e.what();

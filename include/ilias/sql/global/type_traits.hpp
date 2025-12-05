@@ -15,23 +15,33 @@
 ILIAS_SQL_NS_BEGIN
 
 /**
- * @brief 编译期计算SQL中的命名占位符数量
+ * @brief 编译期计算SQL中的参数数量（支持 :name 和 ?）
  */
 constexpr size_t count_sql_params(std::string_view sql) {
     size_t count = 0;
     for (size_t i = 0; i < sql.size(); ++i) {
+        // 处理 ? 占位符
+        if (sql[i] == '?') {
+            count++;
+            continue;
+        }
+        
+        // 处理 :name 占位符
         if (sql[i] == ':') {
             if (i + 1 >= sql.size()) {
                 break;
             }
+            // 处理双冒号转义 :: (PostgreSQL type cast etc.)
             if (sql[i + 1] == ':') {
                 i++;
                 continue;
             }
 
             char next = sql[i + 1];
+            // 检查是否为合法的标识符开始
             if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '_') {
                 count++;
+                // 跳过标识符剩余部分
                 while (i + 1 < sql.size()) {
                     char c = sql[i + 1];
                     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
@@ -48,13 +58,25 @@ constexpr size_t count_sql_params(std::string_view sql) {
 }
 
 /**
- * @brief (不变) 编译期从SQL中提取所有命名占位符的名称
+ * @brief 编译期从SQL中提取所有参数名称
+ * 对于 :name，返回 "name"
+ * 对于 ?，返回 "?"
  */
 template <size_t N>
 consteval auto get_sql_param_names(std::string_view sql) -> std::array<std::string_view, N> {
     std::array<std::string_view, N> names {};
     size_t                          current_index = 0;
     for (size_t i = 0; i < sql.size(); ++i) {
+        // 处理 ? 占位符
+        if (sql[i] == '?') {
+            if (current_index < N) {
+                // 将 "?" 作为一个特殊的名称存入
+                names[current_index++] = sql.substr(i, 1);
+            }
+            continue;
+        }
+
+        // 处理 :name 占位符
         if (sql[i] == ':') {
             if (i + 1 >= sql.size()) {
                 break;
@@ -113,7 +135,7 @@ struct SqlStructCheck {
         }
         if constexpr (member_count > 0) {
             auto sql_names    = get_sql_param_names<member_count>(sql_view);
-            auto member_names = NEKO_NAMESPACE::detail::ReflectHelper<U>::getNames();
+            auto member_names = NEKO_NAMESPACE::Reflect<U>::names();
 
             std::ranges::sort(sql_names);
             std::ranges::sort(member_names);

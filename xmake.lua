@@ -11,10 +11,10 @@ add_configfiles("include/ilias/sql/global/config.h.in")
 set_configdir("include/ilias/sql/global")
 
 add_requires("ilias", {version = "0.3.2", configs = {log = true, cpp20 = true}})
-add_requires("neko-proto-tools", {version = "0.2.5", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false}})
+add_requires("neko-proto-tools", {version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false}})
 
 add_requireconfs("**.ilias", {version = "0.3.2", override = true, configs = {log = true, cpp20 = true}})
-add_requireconfs("**.neko-proto-tools", {override = true, version = "0.2.5", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false}})
+add_requireconfs("**.neko-proto-tools", {override = true, version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false}})
 
 includes("lua/hidetargets.lua")
 set_warnings("allextra")

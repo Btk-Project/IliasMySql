@@ -85,13 +85,15 @@ public:
         options.user     = get_env("DB_USER", "root");
         options.password = get_env("DB_PASS", "123456");
         options.database = get_env("DB_NAME", "test");
+        ILIAS_INFO("mysql-test", "Connecting to MySQL: host={}, port={}, user={}, password={}, database={}",
+                   options.host, options.port, options.user, options.password, options.database);
 
         // MySQL 特有配置
         options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
         options.extra.insert(std::make_pair("ConnectTimeout", "10"));
         // 1. 使用 TCP 协议 (默认是 Socket)
         options.extra.insert(std::make_pair("Protocol", "MYSQL_PROTOCOL_TCP"));
-        
+
         // 2. 禁用 SSL 强制校验 (防止握手阶段因证书问题断开)
         options.extra.insert(std::make_pair("SslEnforce", "false"));
         return options;
@@ -158,7 +160,6 @@ public:
         // 1. 插入 (Prepare with Struct)
         const char *insert_sql = "INSERT INTO complex_persons (id, name, age, email, born, promise, val1, val2) "
                                  "VALUES (:id, :name, :age, :email, :born, :promise, :val1, :val2)";
-
         auto stmt_ret = co_await db.prepare<Person>(insert_sql);
         CO_ASSERT_VAL(stmt_ret);
         auto stmt = std::move(stmt_ret.value());
@@ -174,8 +175,7 @@ public:
         auto query_ret = co_await db.query<Person>("SELECT * FROM complex_persons ORDER BY id");
         CO_ASSERT_VAL(query_ret);
         auto result = std::move(query_ret.value());
-
-        int count = 0;
+        int  count  = 0;
         ilias_for_await(auto &p, result.range()) {
             const auto &expected = persons[count];
             EXPECT_EQ(p.id, expected.id);

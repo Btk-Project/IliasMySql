@@ -34,7 +34,6 @@ public:
     auto operator->() const -> const IStatement * { return mStmt.get(); }
     auto operator*() -> IStatement & { return *mStmt; }
     auto operator*() const -> const IStatement & { return *mStmt; }
-
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
     auto bind(U &&arg) -> IoResult<void>;
@@ -118,8 +117,6 @@ template <typename... Args>
             (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
     using KeepAliveTuple = std::tuple<StorageType_t<Args>...>;
-    // 2. 在堆上创建 Tuple，并进行完美转发 (Move 右值, Copy 引用)
-    //    使用 make_shared 是为了方便类型擦除，并能自动管理生命周期
     auto           keepAlive = new KeepAliveTuple(std::forward<Args>(args)...);
     IoResult<void> ret       = {};
     [this, &ret, keepAlive]<size_t... I>(std::index_sequence<I...>) {
