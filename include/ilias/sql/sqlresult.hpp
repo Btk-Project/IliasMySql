@@ -182,7 +182,7 @@ auto SqlResult<void>::load(int index, U &value) -> IoResult<void> {
     if (!ret) {
         return Unexpected(ret.error());
     }
-    // ILIAS_INFO("ilias-sql", "index: {}, value: {}", index, *ret);
+    // ILIAS_TRACE("ilias-sql", "index: {}, value: {}", index, *ret);
     return unpack(*ret, value);
 }
 
@@ -192,7 +192,7 @@ auto SqlResult<void>::load(std::string_view name, U &value) -> IoResult<void> {
     if (!ret) {
         return Unexpected(ret.error());
     }
-    // ILIAS_INFO("ilias-sql", "name: {}, value: {}", name, *ret);
+    // ILIAS_TRACE("ilias-sql", "name: {}, value: {}", name, *ret);
     return unpack(*ret, value);
 }
 
@@ -229,7 +229,7 @@ auto SqlResult<void>::range(U &value) -> Generator<IoResult<void>> {
         IoResult<void> ret = {};
         NEKO_NAMESPACE::Reflect<U>::forEach(value, [this, &ret](auto &field, std::string_view name) {
             ret = ret ? load(name, field) : ret;
-            // ILIAS_INFO("ilias-sql", "field: {}, value: {}", name, field);
+            // ILIAS_TRACE("ilias-sql", "field: {}, value: {}", name, field);
         });
         co_yield ret;
     }

@@ -130,7 +130,7 @@ auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
 
 template <typename U>
 auto SqlStatement<void>::query() -> IoTask<SqlResult<U>> {
-    ILIAS_INFO("ilias-sql", "Executing query");
+    ILIAS_TRACE("ilias-sql", "Executing query");
     auto ret = co_await mStmt->query();
     if (!ret) {
         co_return Unexpected(ret.error());

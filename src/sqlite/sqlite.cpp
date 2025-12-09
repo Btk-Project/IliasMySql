@@ -160,7 +160,7 @@ auto SqliteStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     }
     auto ret = co_await blocking([this]() -> int {
         auto ret = sqlite3_step(mSqliteStmt.get());
-        ILIAS_INFO("ilias-sqlite", "sqlite({}) Executing query, ret={}", (void *)mSqlite.get(), ret);
+        ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing query, ret={}", (void *)mSqlite.get(), ret);
         return ret;
     });
     if (ret != SQLITE_DONE && ret != SQLITE_ROW) {
@@ -195,7 +195,7 @@ auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
     auto ret = co_await blocking([this, sql = sql]() -> int {
         sqlite3_stmt *stmt;
         auto          ret = sqlite3_prepare_v2(mSqlite.get(), sql.data(), sql.size(), &stmt, nullptr);
-        ILIAS_INFO("ilias-sqlite", "sqlite({}) Executing prepare: {}", (void *)mSqlite.get(), sql);
+        ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing prepare: {}", (void *)mSqlite.get(), sql);
         if (ret != SQLITE_OK) {
             return ret;
         }
@@ -383,7 +383,7 @@ auto Sqlite::beginTransaction() -> IoTask<bool> {
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
         auto ret = sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err);
-        ILIAS_INFO("ilias-sqlite", "sqlite({}) begin transaction ret={}", (void *)mSqlite.get(), ret);
+        ILIAS_TRACE("ilias-sqlite", "sqlite({}) begin transaction ret={}", (void *)mSqlite.get(), ret);
         return ret;
     });
     if (ret != SQLITE_OK) {
@@ -400,7 +400,7 @@ auto Sqlite::commit() -> IoTask<bool> {
     }
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
-        ILIAS_INFO("ilias-sqlite", "commit transaction");
+        ILIAS_TRACE("ilias-sqlite", "commit transaction");
         return sqlite3_exec(mSqlite.get(), "COMMIT", nullptr, nullptr, &err);
     });
     if (ret != SQLITE_OK) {
@@ -418,7 +418,7 @@ auto Sqlite::rollback() -> IoTask<bool> {
     char *err;
     auto  ret = co_await blocking([this, &err]() -> int {
         auto ret = sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
-        ILIAS_INFO("ilias-sqlite", "sqlite({}) rollback transaction ret={}", (void *)mSqlite.get(), ret);
+        ILIAS_TRACE("ilias-sqlite", "sqlite({}) rollback transaction ret={}", (void *)mSqlite.get(), ret);
         return ret;
     });
     if (ret != SQLITE_OK) {

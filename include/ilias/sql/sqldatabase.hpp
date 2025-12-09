@@ -218,15 +218,15 @@ template <typename... Args>
     requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
 auto SqlDatabase::query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
     -> IoTask<SqlResult<void>> {
-    ILIAS_INFO("ilias-sql", "Executing query {} with args", query.sql);
+    ILIAS_TRACE("ilias-sql", "Executing query {} with args", query.sql);
     auto ret = co_await prepare_with<Args...>(query, std::forward<Args>(args)...);
     if (!ret) {
-        ILIAS_INFO("ilias-sql", "Failed to prepare query {} with args", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to prepare query {} with args", query.sql);
         co_return Unexpected(ret.error());
     }
     auto ret1 = co_await ret.value().query();
     if (!ret1) {
-        ILIAS_INFO("ilias-sql", "Failed to execute query {} with args", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to execute query {} with args", query.sql);
         co_return Unexpected(ret1.error());
     }
     co_return std::move(ret1.value());
@@ -252,12 +252,12 @@ auto SqlDatabase::execute_with(SqlCheck<std::tuple<std::type_identity_t<Args>...
     -> IoTask<size_t> {
     auto ret = co_await prepare_with(query, std::forward<Args>(args)...);
     if (!ret) {
-        ILIAS_INFO("ilias-sql", "Failed to prepare query {}", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to prepare query {}", query.sql);
         co_return Unexpected(ret.error());
     }
     auto ret1 = co_await ret.value().execute();
     if (!ret1) {
-        ILIAS_INFO("ilias-sql", "Failed to execute query {}", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to execute query {}", query.sql);
     }
     co_return ret1.value();
 }
@@ -267,12 +267,12 @@ template <typename U>
 auto SqlDatabase::execute_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<size_t> {
     auto ret = co_await prepare_with(query, std::forward<U>(arg));
     if (!ret) {
-        ILIAS_INFO("ilias-sql", "Failed to prepare query {}", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to prepare query {}", query.sql);
         co_return Unexpected(ret.error());
     }
     auto ret1 = co_await ret.value().execute();
     if (!ret1) {
-        ILIAS_INFO("ilias-sql", "Failed to execute query {}", query.sql);
+        ILIAS_TRACE("ilias-sql", "Failed to execute query {}", query.sql);
     }
     co_return ret1.value();
 }

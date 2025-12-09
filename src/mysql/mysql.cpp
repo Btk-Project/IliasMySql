@@ -9,16 +9,16 @@ ILIAS_SQL_USE_NAMESPACE
 MySql::MySql() {
     mCtxt = IoContext::currentThread();
     if (mCtxt == nullptr) {
-        ILIAS_ERROR("sql", "no io context in current thread");
+        ILIAS_ERROR("ilias-mysql", "no io context in current thread");
         return;
     }
     if (mysql_init(&mMysql) == nullptr) {
-        ILIAS_ERROR("sql", "mysql init failed");
+        ILIAS_ERROR("ilias-mysql", "mysql init failed");
     }
 
     auto ret = mysql_options(&mMysql, MYSQL_OPT_NONBLOCK, 0);
     if (ret != 0) {
-        ILIAS_ERROR("sql", "mysql set option failed, {}", ret);
+        ILIAS_ERROR("ilias-mysql", "mysql set option failed, {}", ret);
     }
 }
 
@@ -57,12 +57,12 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
             events += "POLLPRI";
         }
     }
-    ILIAS_TRACE("sql", "poll events: {}", events);
+    ILIAS_TRACE("ilias-mysql", "poll events: {}", events);
     IoResult<unsigned int> ret;
     if (timeOut == 0) {
         auto ret = co_await mPoller.poll(pollEvents);
         if (!ret) {
-            ILIAS_ERROR("sql", "poll failed, {}", ret.error().message());
+            ILIAS_ERROR("ilias-mysql", "poll failed, {}", ret.error().message());
             co_return Unexpected(ret.error());
         }
     }
@@ -76,7 +76,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
             if ((*ret).error() == IoError::TimedOut) {
                 status = MYSQL_WAIT_TIMEOUT;
             }
-            ILIAS_ERROR("sql", "poll failed, no result in poll.");
+            ILIAS_ERROR("ilias-mysql", "poll failed, no result in poll.");
             co_return Unexpected((*ret).error());
         }
     }
@@ -101,13 +101,13 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
         }                                                                                                              \
         auto fd = mysql_get_socket(&mMysql);                                                                           \
         if (fd == (decltype(fd))MARIADB_INVALID_SOCKET) {                                                              \
-            ILIAS_ERROR("sql", "get socket failed");                                                                   \
+            ILIAS_ERROR("ilias-mysql", "get socket failed");                                                                   \
             co_return Unexpected(IoError::Unknown);                                                                    \
         }                                                                                                              \
         if (!mPoller || (mPoller.fd() != (fd_t)fd)) {                                                                  \
             mPoller = (co_await Poller::make((fd_t)fd, IoDescriptor ::Socket)).value();                                \
             if (!mPoller) {                                                                                            \
-                ILIAS_ERROR("sql", "add fd({}) to IoContext failed.", fd);                                             \
+                ILIAS_ERROR("ilias-mysql", "add fd({}) to IoContext failed.", fd);                                             \
                 co_return Unexpected(IoError::Unknown);                                                                \
             }                                                                                                          \
         }                                                                                                              \
@@ -118,7 +118,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
     if (status) {                                                                                                      \
         SQL_PRIVATE_MAKE_POLLER                                                                                        \
         while (status) {                                                                                               \
-            ILIAS_TRACE("sql", "{} waiting for status {}", #MysqlFunc, status);                                        \
+            ILIAS_TRACE("ilias-mysql", "{} waiting for status {}", #MysqlFunc, status);                                        \
             auto pret = co_await pollStatus(status);                                                                   \
             status    = MysqlFunc##_cont(&OutP, &mMysql, status);                                                      \
             if (!pret) {                                                                                               \
@@ -140,7 +140,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
                 return true;                                                                                           \
         }                                                                                                              \
         else {                                                                                                         \
-            ILIAS_ERROR("sql", "unknow type?");                                                                        \
+            ILIAS_ERROR("ilias-mysql", "unknow type?");                                                                        \
             return false;                                                                                              \
         }                                                                                                              \
         return false;                                                                                                  \
@@ -149,7 +149,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
         auto errCode = mysql_errno(&mMysql);                                                                           \
         if (errCode != 0) {                                                                                            \
             [[maybe_unused]] auto error = mysql_error(&mMysql);                                                        \
-            ILIAS_ERROR("sql", "{} failed, error({}): {}", #MysqlFunc, errCode, error);                                \
+            ILIAS_ERROR("ilias-mysql", "{} failed, error({}): {}", #MysqlFunc, errCode, error);                                \
             sql::SqlErrorCategory::instance().registerMessage(errCode, error);                                         \
             co_return Unexpected(sql::SqlError::Code(errCode));                                                        \
         }                                                                                                              \
@@ -189,7 +189,7 @@ auto MySql::changeUser(std::string_view user, std::string_view passwd, std::stri
 }
 
 auto MySql::close() -> void {
-    ILIAS_TRACE("sql", "close mysql connection");
+    ILIAS_TRACE("ilias-mysql", "close mysql connection");
     mPoller.close();
     mysql_close(&mMysql);
 }
@@ -243,7 +243,7 @@ auto MySql::disconnect() -> IoTask<void> {
     if (status) {
         SQL_PRIVATE_MAKE_POLLER
         while (status) {
-            ILIAS_TRACE("sql", "disconnect mysql waiting for status {}", status);
+            ILIAS_TRACE("ilias-mysql", "disconnect mysql waiting for status {}", status);
             auto pret = co_await pollStatus(status);
             status    = mysql_close_cont(&mMysql, status);
             if (!pret) {
@@ -251,7 +251,7 @@ auto MySql::disconnect() -> IoTask<void> {
             }
         }
     }
-    ILIAS_TRACE("sql", "close mysql connection");
+    ILIAS_TRACE("ilias-mysql", "close mysql connection");
     co_return {};
 }
 
@@ -565,7 +565,7 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
 }
 
 auto MysqlStatement::bind(size_t index, SqlValueView value) -> Result<void, std::error_code> {
-    ILIAS_INFO("ilias-mysql", "bind {} with {}", index, value);
+    ILIAS_TRACE("ilias-mysql", "bind {} with {}", index, value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NotPrepared);
     }
@@ -600,7 +600,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
         auto message     = mMysql->lastErrorMessage();
-        ILIAS_ERROR("sql", "stmt bind failed. (error {}:{})", ret, message);
+        ILIAS_ERROR("ilias-mysql", "stmt bind failed. (error {}:{})", ret, message);
         if (lastererror != 0) {
             sql::SqlErrorCategory::instance().registerMessage(lastererror, message);
             co_return Unexpected((SqlError::Code)lastererror);
@@ -611,10 +611,10 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     }
     auto status = mysql_stmt_execute_start(&ret, mMysqlStmt.get());
     while (status) {
-        ILIAS_TRACE("sql", "stmt execute waiting for status {}", status);
+        ILIAS_TRACE("ilias-mysql", "stmt execute waiting for status {}", status);
         auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
         if (!pret) {
-            ILIAS_ERROR("sql", "stmt execute failed. (error: {})", pret.error().message());
+            ILIAS_ERROR("ilias-mysql", "stmt execute failed. (error: {})", pret.error().message());
             co_return Unexpected(pret.error());
         }
         status = mysql_stmt_execute_cont(&ret, mMysqlStmt.get(), status);
@@ -622,7 +622,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
         auto message     = mMysql->lastErrorMessage();
-        ILIAS_ERROR("sql", "stmt execute failed. (error {}:{})", ret, mMysql->lastErrorMessage());
+        ILIAS_ERROR("ilias-mysql", "stmt execute failed. (error {}:{})", ret, mMysql->lastErrorMessage());
         if (lastererror != 0) {
             sql::SqlErrorCategory::instance().registerMessage(lastererror, message);
             co_return Unexpected((SqlError::Code)lastererror);
@@ -658,10 +658,10 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
     mMysqlStmt = std::shared_ptr<MYSQL_STMT>(mMysql->stmtInit(), [](MYSQL_STMT *stmt) { mysql_stmt_close(stmt); });
     int  ret;
     auto queryp = parser(sql);
-    ILIAS_TRACE("sql", "prepare :{}", queryp);
+    // ILIAS_TRACE("ilias-mysql", "prepare :{}", queryp);
     auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt.get(), queryp.data(), (unsigned long)queryp.size());
     while (status) {
-        ILIAS_TRACE("sql", "stmt prepare waiting for status {}", status);
+        ILIAS_TRACE("ilias-mysql", "stmt prepare waiting for status {}", status);
         auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
         if (!pret) {
             co_return Unexpected(pret.error());
@@ -671,7 +671,7 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
         auto message     = mMysql->lastErrorMessage();
-        ILIAS_ERROR("sql", "stmt prepare failed. (error {}:{})", ret, mMysql->lastErrorMessage());
+        ILIAS_ERROR("ilias-mysql", "stmt prepare failed. (error {}:{})", ret, mMysql->lastErrorMessage());
         if (lastererror != 0) {
             sql::SqlErrorCategory::instance().registerMessage(lastererror, message);
             co_return Unexpected((SqlError::Code)lastererror);
@@ -688,7 +688,7 @@ auto MysqlStatement::close() -> IoTask<void> {
         my_bool ret    = 0;
         auto    status = mysql_stmt_close_start(&ret, mMysqlStmt.get());
         while (status) {
-            ILIAS_TRACE("sql", "stmt close waiting for status {}", status);
+            ILIAS_TRACE("ilias-mysql", "stmt close waiting for status {}", status);
             auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
             if (!pret) {
                 co_return Unexpected(pret.error());
@@ -698,7 +698,7 @@ auto MysqlStatement::close() -> IoTask<void> {
         if (ret != 0) {
             auto lastererror = mMysql->lastError();
             auto message     = mMysql->lastErrorMessage();
-            ILIAS_ERROR("sql", "stmt close failed, error: {}", mMysql->lastErrorMessage());
+            ILIAS_ERROR("ilias-mysql", "stmt close failed, error: {}", mMysql->lastErrorMessage());
             if (lastererror != 0) {
                 sql::SqlErrorCategory::instance().registerMessage(lastererror, message);
                 co_return Unexpected((SqlError::Code)lastererror);
@@ -938,7 +938,7 @@ auto MysqlConnection::execute(std::string_view sql) -> IoTask<size_t> {
 
 auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> {
     ILIAS_ASSERT(mMysql != nullptr);
-    ILIAS_TRACE("sql", "exec query {}", sql);
+    ILIAS_TRACE("ilias-mysql", "exec query {}", sql);
     auto ret = co_await (mMysql->query(sql) | unstoppable());
     if (!ret) {
         co_return Unexpected(ret.error());

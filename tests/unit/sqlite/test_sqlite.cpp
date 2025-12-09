@@ -7,13 +7,12 @@
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
 #include "ilias/sql/sqldatabase.hpp"
-#include "ilias/sqlite/form.hpp"
+#include "ilias/sql/form.hpp"
 
 // 假设这些在你的项目中存在
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
-ILIAS_SQLITE_USE_NAMESPACE
 using namespace ILIAS_NAMESPACE;
 NEKO_USE_NAMESPACE
 // ==========================================
@@ -57,10 +56,9 @@ NEKO_BEGIN_NAMESPACE
 template <>
 struct Meta<SimpleUser, void> {
     constexpr static auto value = // NOLINT
-        Object("id",
-               make_tags<sqlite::SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
-               "name", make_tags<sqlite::SqlTags {.not_null = true}>(&SimpleUser::name), "score",
-               make_tags<sqlite::SqlTags {.not_null = true}>(&SimpleUser::score));
+        Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
+               "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
+               make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
 };
 NEKO_END_NAMESPACE
 
@@ -365,9 +363,10 @@ public:
     static auto test_form_interface() -> IoTask<void> {
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_form_full_coverage");
-
+        // 如果存在上次的测试数据，先清空
+        co_await db.execute("DROP TABLE IF EXISTS users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await sqlite::Form<SimpleUser>::create(db, "users_full_test");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -399,6 +398,20 @@ public:
                 res.load(0, count);
             }
             EXPECT_EQ(count, 10);
+        }
+
+        {
+            auto ret = co_await users.select("count(*)")
+                           .where("id"_sql < 5 || ("id"_sql >= 95 && "score"_sql > 970))
+                           .execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 8);
         }
 
         {
@@ -477,6 +490,7 @@ public:
             }
             EXPECT_EQ(count, 0);
         }
+        co_await users.print();
 
         ILIAS_INFO("mysql-test", ">>> test_form_full_coverage PASSED");
         co_return {};
@@ -507,7 +521,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
 }
 
 TEST(SQL, FullSuite) {
-    // run_all_tests().wait();
+    run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {
@@ -515,7 +529,7 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
-    run_all_tests().wait();
+    // run_all_tests().wait();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

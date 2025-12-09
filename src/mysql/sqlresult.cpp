@@ -223,7 +223,7 @@ auto SqlQueryResult::getResult() -> IoTask<void> {
     }
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
         ret.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
-    ILIAS_INFO("ilias-mysql", "Get {} rows", countRows());
+    ILIAS_TRACE("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
 
@@ -529,7 +529,7 @@ auto SqlStmtResult::fieldName(size_t index) -> std::string_view {
 }
 
 auto SqlStmtResult::fetchRow() -> IoTask<int> {
-    ILIAS_INFO("sql", "stmt fetch row");
+    ILIAS_TRACE("sql", "stmt fetch row");
     ILIAS_ASSERT(mStmt != nullptr);
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_stmt_fetch);
@@ -537,7 +537,7 @@ auto SqlStmtResult::fetchRow() -> IoTask<int> {
 }
 
 auto SqlStmtResult::freeResult() -> void {
-    ILIAS_INFO("sql", "stmt free result");
+    ILIAS_TRACE("sql", "stmt free result");
     mResult.reset();
     // 清理绑定缓冲区
     mBinds.reset();
@@ -655,7 +655,7 @@ auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
 }
 
 auto SqlStmtResult::storeResult() -> IoTask<MYSQL_RES *> {
-    ILIAS_INFO("sql", "stmt store result");
+    ILIAS_TRACE("sql", "stmt store result");
     ILIAS_ASSERT(mStmt != nullptr);
     // 1. 异步执行 store_result
     // 注意：execStoreResultAsync 现在使用新宏，如果 errno=0，它会返回非0值(如1)但不报错
@@ -691,7 +691,7 @@ auto SqlStmtResult::storeResult() -> IoTask<MYSQL_RES *> {
 }
 
 auto SqlStmtResult::nextResult() -> IoTask<int> {
-    ILIAS_INFO("sql", "stmt next result");
+    ILIAS_TRACE("sql", "stmt next result");
     ILIAS_ASSERT(mStmt != nullptr);
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_stmt_next_result);

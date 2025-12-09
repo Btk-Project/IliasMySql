@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "ilias/sql/driver_registry.hpp"
+#include "ilias/sql/form.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
@@ -50,6 +51,16 @@ struct SimpleUser {
     std::string name;
     int         score;
 };
+
+NEKO_BEGIN_NAMESPACE
+template <>
+struct Meta<SimpleUser, void> {
+    constexpr static auto value = // NOLINT
+        Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
+               "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
+               make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
+};
+NEKO_END_NAMESPACE
 
 // 用于复杂类型测试 (Date, Blob, etc.)
 struct Person {
@@ -160,7 +171,7 @@ public:
         // 1. 插入 (Prepare with Struct)
         const char *insert_sql = "INSERT INTO complex_persons (id, name, age, email, born, promise, val1, val2) "
                                  "VALUES (:id, :name, :age, :email, :born, :promise, :val1, :val2)";
-        auto stmt_ret = co_await db.prepare<Person>(insert_sql);
+        auto        stmt_ret   = co_await db.prepare<Person>(insert_sql);
         CO_ASSERT_VAL(stmt_ret);
         auto stmt = std::move(stmt_ret.value());
 
@@ -422,6 +433,141 @@ public:
         ILIAS_INFO("mysql-test", ">>> test_raii_rollback PASSED");
         co_return {};
     }
+    static auto test_form_interface() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_form_full_coverage");
+        // 如果存在上次的测试数据，先清空
+        co_await db.execute("DROP TABLE IF EXISTS users_full_test");
+        // 1. 创建表 (Create)
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "users_full_test");
+        CO_ASSERT_VAL(users_ret);
+        auto users = std::move(users_ret.value());
+
+        for (int i = 0; i < 100; ++i) {
+            auto insert_ret = co_await users.insert(i, fmtlib::format("User{}", i), i * 10 + 1);
+            CO_ASSERT_VAL(insert_ret);
+        }
+        ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
+
+        {
+            auto ret = co_await users.select("count(*)").where("score"_sql > 500 && "id"_sql < 60).execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 10);
+        }
+
+        {
+            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 10);
+        }
+
+        {
+            auto ret = co_await users.select("count(*)")
+                           .where("id"_sql < 5 || ("id"_sql >= 95 && "score"_sql > 970))
+                           .execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 8);
+        }
+
+        {
+            auto ret = co_await users.select("id").where("name"_sql == "User50").execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            int id = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, id);
+            }
+            EXPECT_EQ(id, 50);
+        }
+
+        {
+            auto ret = co_await users.select("id, score")
+                           .orderBy("score", true) // true for DESC
+                           .offset(1)
+                           .limit(2)
+                           .execute();
+            CO_ASSERT_VAL(ret);
+            auto res = std::move(ret.value());
+
+            std::vector<int> ids;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                int id = 0, score = 0;
+                res.load(0, id);
+                res.load(1, score);
+                ids.push_back(id);
+            }
+
+            EXPECT_EQ(ids.size(), 2);
+            if (ids.size() == 2) {
+                EXPECT_EQ(ids[0], 98);
+                EXPECT_EQ(ids[1], 97);
+            }
+        }
+
+        {
+            // 将 ID=10 的用户分数修改为 9999
+            SimpleUser u10 {10, "User10_Modified", 9999};
+
+            // 注意：Update 依赖 Form 能够正确识别 Primary Key
+            auto update_ret = co_await users.update(u10);
+            CO_ASSERT_VAL(update_ret);
+            EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
+
+            // 验证修改
+            auto ret = co_await users.select("score, name").where("id"_sql == 10).execute();
+            auto res = std::move(ret.value());
+
+            int         score = 0;
+            std::string name;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, score);
+                res.load(1, name);
+            }
+            EXPECT_EQ(score, 9999);
+            EXPECT_EQ(name, "User10_Modified");
+        }
+
+        {
+            // 删除 ID=20 的用户
+            SimpleUser u20 {20, "", 0};
+
+            auto remove_ret = co_await users.remove(u20);
+            CO_ASSERT_VAL(remove_ret);
+            EXPECT_EQ(remove_ret.value(), 1);
+
+            // 验证不存在
+            auto ret   = co_await users.select("count(*)").where("id"_sql == 20).execute();
+            auto res   = std::move(ret.value());
+            int  count = -1;
+            ilias_for_await([[maybe_unused]] auto &row, res.range()) {
+                res.load(0, count);
+            }
+            EXPECT_EQ(count, 0);
+        }
+        co_await users.print();
+
+        ILIAS_INFO("mysql-test", ">>> test_form_full_coverage PASSED");
+        co_return {};
+    }
 };
 
 // ==========================================
@@ -437,6 +583,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await MySqlTestSuite::test_null_handling();
         co_await MySqlTestSuite::test_transaction_rollback();
         co_await MySqlTestSuite::test_raii_rollback();
+        co_await MySqlTestSuite::test_form_interface();
     } catch (const std::exception &e) {
         ILIAS_ERROR("mysql-test", "Exception caught: {}", e.what());
         EXPECT_TRUE(false) << "Exception in runner: " << e.what();

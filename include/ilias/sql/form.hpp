@@ -1,17 +1,17 @@
 #pragma once
 
-#include "ilias/sqlite/global.hpp"
-#include "ilias/sql/global/global.hpp"
-#include "ilias/sql/sqldatabase.hpp"
-#include "ilias/sql/sqlresult.hpp"
-#include "ilias/sql/sqlstatement.hpp"
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
 #include <nekoproto/serialization/types/struct_unwrap.hpp>
 
-ILIAS_SQLITE_NS_BEGIN
-using namespace ILIAS_SQL_NAMESPACE;
+#include "ilias/sql/global/global.hpp"
+#include "ilias/sql/sqldatabase.hpp"
+#include "ilias/sql/sqlresult.hpp"
+#include "ilias/sql/sqlstatement.hpp"
+#include "ilias/sql/dialect.hpp"
+#include "ilias/sql/detail/console_table.hpp"
 
+ILIAS_SQL_NS_BEGIN
 namespace detail {
 
 // 工具：字符串拼接
@@ -167,7 +167,7 @@ struct SqlTags {
 };
 
 // 前置声明
-template <typename T>
+template <typename T, typename BackendTag = SqliteTag> // 默认可以是 SQLite
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class Form;
 
@@ -258,9 +258,11 @@ private:
 // ==========================================
 // Form Class
 // ==========================================
-template <typename T>
+template <typename T, typename BackendTag>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class Form final {
+    using Dialect = Dialect<BackendTag>; // 使用对应的方言
+
 public:
     static auto create(SqlDatabase &db, const std::string &tableName) -> IoTask<Form> {
         T                        obj;
@@ -270,34 +272,15 @@ public:
 
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
             std::string typeStr;
-            using FieldType = std::decay_t<decltype(field)>;
-
-            if constexpr (std::is_integral_v<FieldType>) {
-                // 处理 int64 等
-                typeStr = "INTEGER";
-            }
-            else if constexpr (std::is_floating_point_v<FieldType>) {
-                typeStr = "REAL";
-            }
-            else if constexpr (std::is_same_v<FieldType, std::string> || std::is_same_v<FieldType, SqlDate>) {
-                typeStr = "TEXT";
-            }
-            else if constexpr (std::is_same_v<FieldType, SqlBlob>) {
-                typeStr = "BLOB";
-            }
-            else {
-                // 默认回退
-                typeStr = "TEXT";
-            }
-
+            typeStr            = Dialect::template type_name<decltype(field)>();
             std::string colDef = std::string(name) + " " + typeStr;
 
             if (tags.primary_key) {
-                colDef += " PRIMARY KEY";
+                colDef += " " + std::string(Dialect::primary_key());
                 pkName = name;
             }
             if (tags.auto_increment)
-                colDef += " AUTOINCREMENT";
+                colDef += " " + std::string(Dialect::auto_increment());
             if (tags.unique)
                 colDef += " UNIQUE";
             if (tags.not_null)
@@ -316,6 +299,8 @@ public:
         Form form(db, tableName);
         form.mTableHeaderNames = std::move(colNames);
         form.mPrimaryKey       = std::move(pkName);
+        ILIAS_TRACE("ilias-sql", "Created table {}, columns: {}, primary key: {}", tableName,
+                    detail::join(form.mTableHeaderNames, ", "), form.mPrimaryKey);
         co_return form;
     }
 
@@ -347,7 +332,7 @@ public:
     auto update(T value) -> IoTask<size_t> {
         if (mPrimaryKey.empty()) {
             // 如果没有主键，无法自动 update，或者需要抛错
-            ILIAS_ERROR("ilias-sqlite", "Cannot update table {} without primary key", mTableName);
+            ILIAS_ERROR("ilias-sql", "Cannot update table {} without primary key", mTableName);
             co_return Unexpected(std::make_error_code(std::errc::invalid_argument));
         }
 
@@ -409,9 +394,51 @@ public:
     // --------------------------------------------------------
     // Select 入口
     // --------------------------------------------------------
-    auto select(const std::string &columns) -> SelectBuilder { return SelectBuilder(mDb, mTableName).select(columns); }
+    auto select(const std::string &columns = "") -> SelectBuilder {
+        if (columns.empty()) {
+            return SelectBuilder(mDb, mTableName);
+        }
+        else {
+            return SelectBuilder(mDb, mTableName).select(columns);
+        }
+    }
+
+    auto count() -> SelectBuilder { return SelectBuilder(mDb, mTableName).count(); }
 
     auto name() -> std::string & { return mTableName; }
+
+    auto print() -> IoTask<void> {
+        // 1. 获取所有数据
+        auto ret = co_await select().execute();
+        if (!ret) {
+            ILIAS_ERROR("ilias-sql", "Print failed: {}", ret.error().message());
+            co_return {};
+        }
+
+        // 2. 准备表头
+        detail::ConsoleTable table(mTableHeaderNames);
+
+        SqlResult<T> res = std::move(ret.value());
+
+        // 3. 遍历结果集
+        ilias_for_await([[maybe_unused]] auto obj, res.range()) {
+            std::vector<std::string> rowStrings;
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, auto...) {
+                using FieldType = std::decay_t<decltype(field)>;
+                if constexpr (std::is_same_v<FieldType, std::vector<char>> || std::is_same_v<FieldType, SqlBlob>) {
+                    rowStrings.push_back("(BLOB " + std::to_string(field.size()) + " bytes)");
+                }
+                else {
+                    rowStrings.push_back(detail::to_string_view(field));
+                }
+            });
+
+            table.addRow(rowStrings);
+        }
+
+        table.print();
+        co_return {};
+    }
 
 private:
     Form(SqlDatabase &db, const std::string &tableName) : mDb(db), mTableName(tableName) {}
@@ -422,4 +449,4 @@ private:
     std::string              mPrimaryKey; // 缓存主键名
 };
 
-ILIAS_SQLITE_NS_END
+ILIAS_SQL_NS_END
