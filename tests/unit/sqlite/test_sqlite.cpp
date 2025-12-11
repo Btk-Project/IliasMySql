@@ -7,7 +7,7 @@
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
 #include "ilias/sql/sqldatabase.hpp"
-#include "ilias/sql/form.hpp"
+#include "ilias/sql/orm_form.hpp"
 
 // 假设这些在你的项目中存在
 #include "../backtrace.hpp"
@@ -52,6 +52,13 @@ struct SimpleUser {
     int         score = 0;
 };
 
+struct SimpleOrder {
+    int         id      = 0;
+    int         user_id = 0;
+    int         amount  = 0;
+    std::string product = "";
+};
+
 NEKO_BEGIN_NAMESPACE
 template <>
 struct Meta<SimpleUser, void> {
@@ -59,6 +66,15 @@ struct Meta<SimpleUser, void> {
         Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
                "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
                make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
+};
+
+template <>
+struct Meta<SimpleOrder, void> {
+    constexpr static auto value = // NOLINT
+        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), "user_id",
+               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), "amount",
+               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), "product",
+               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
 };
 NEKO_END_NAMESPACE
 
@@ -377,7 +393,9 @@ public:
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
 
         {
-            auto ret = co_await users.select("count(*)").where("score"_sql > 500 && "id"_sql < 60).execute();
+            auto ret = co_await users.select("count(*)")
+                           .where(users.sql(&SimpleUser::score) > 500 && users.sql(&SimpleUser::id) < 60)
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -389,7 +407,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).execute();
+            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -402,8 +420,9 @@ public:
 
         {
             auto ret = co_await users.select("count(*)")
-                           .where("id"_sql < 5 || ("id"_sql >= 95 && "score"_sql > 970))
-                           .execute();
+                           .where(users.sql(&SimpleUser::id) < 5 ||
+                                  (users.sql(&SimpleUser::id) >= 95 && users.sql(&SimpleUser::score) > 970))
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -415,7 +434,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("id").where("name"_sql == "User50").execute();
+            auto ret = co_await users.select("id").where("name"_sql == "User50").query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -427,19 +446,17 @@ public:
         }
 
         {
-            auto ret = co_await users.select("id, score")
+            auto ret = co_await users.select(users.sql(&SimpleUser::id), users.sql(&SimpleUser::score))
                            .orderBy("score", true) // true for DESC
                            .offset(1)
                            .limit(2)
-                           .execute();
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
             std::vector<int> ids;
             ilias_for_await([[maybe_unused]] auto &row, res.range()) {
-                int id, score;
-                res.load(0, id);
-                res.load(1, score);
+                auto [id, score] = row;
                 ids.push_back(id);
             }
 
@@ -460,7 +477,7 @@ public:
             EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
 
             // 验证修改
-            auto ret = co_await users.select("score, name").where("id"_sql == 10).execute();
+            auto ret = co_await users.select("score, name").where(users.sql(&SimpleUser::id) == 10).query();
             auto res = std::move(ret.value());
 
             int         score = 0;
@@ -482,7 +499,7 @@ public:
             EXPECT_EQ(remove_ret.value(), 1);
 
             // 验证不存在
-            auto ret   = co_await users.select("count(*)").where("id"_sql == 20).execute();
+            auto ret   = co_await users.select("count(*)").where(users.sql(&SimpleUser::id) == 20).query();
             auto res   = std::move(ret.value());
             int  count = -1;
             ilias_for_await([[maybe_unused]] auto &row, res.range()) {
@@ -490,9 +507,138 @@ public:
             }
             EXPECT_EQ(count, 0);
         }
+
+        {
+            // 连续查询ID == (20, 40) 的用户
+            int id    = 21;
+            int count = 20;
+
+            ilias_for_await(auto &ret, users.select().where(users.sql(&SimpleUser::id) == id).loop(count)) {
+                CO_ASSERT_VAL(ret);
+                SqlResult<SimpleUser> res = std::move(ret.value());
+                ilias_for_await(auto &user, res.range()) {
+                    EXPECT_EQ(user.id, id);
+                    EXPECT_EQ(user.name, "User" + std::to_string(id));
+                    EXPECT_EQ(user.score, id * 10 + 1);
+                }
+                id++;
+            }
+        }
         co_await users.print();
 
         ILIAS_INFO("mysql-test", ">>> test_form_full_coverage PASSED");
+        co_return {};
+    }
+
+    static auto test_join_features() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_join_features");
+
+        // 1. 清理并创建表
+        co_await db.execute("DROP TABLE IF EXISTS test_users_join");
+        co_await db.execute("DROP TABLE IF EXISTS test_orders_join");
+
+        auto users_ret  = co_await Form<SimpleUser, SqliteTag>::create(db, "test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, SqliteTag>::create(db, "test_orders_join");
+        CO_ASSERT_VAL(users_ret);
+        CO_ASSERT_VAL(orders_ret);
+
+        auto users  = std::move(users_ret.value());
+        auto orders = std::move(orders_ret.value());
+
+        // 2. 准备数据
+        // 用户: 1(Alice), 2(Bob), 3(Charlie)
+        co_await users.insert(1, "Alice", 100);
+        co_await users.insert(2, "Bob", 200);
+        co_await users.insert(3, "Charlie", 50);
+
+        // 订单: Alice买了两单，Bob买了一单，Charlie没买
+        co_await orders.insert(101, 1, 500, "Apple"); // Alice
+        co_await orders.insert(102, 1, 50, "Banana"); // Alice
+        co_await orders.insert(103, 2, 900, "TV");    // Bob
+
+        ILIAS_INFO("mysql-test", ">>> Data prepared");
+
+        // =========================================================
+        // 测试场景 1: 别名(Alias) + 投影(Projection) + 过滤(Where)
+        // SQL 意图:
+        // SELECT u.name, o.product, o.amount
+        // FROM users AS u
+        // JOIN orders AS o ON u.id = o.user_id
+        // WHERE o.amount > 100
+        // =========================================================
+        {
+            // 1. 定义别名
+            auto u = users.as("u");
+            auto o = orders.as("o");
+
+            // 2. 构建查询
+            // 注意：select() 中的参数决定了 execute() 返回的 tuple 类型
+            // 返回类型推导为: std::vector<std::tuple<std::string, std::string, int>>
+            auto ret = co_await u.join(o)
+                           .on(u.col(&SimpleUser::id) == o.col(&SimpleOrder::user_id)) // ON u.id = o.user_id
+                           .select(u.col(&SimpleUser::name), o.col(&SimpleOrder::product), o.col(&SimpleOrder::amount))
+                           .where(o.col(&SimpleOrder::amount) > 100) // WHERE o.amount > 100
+                           .query();
+
+            CO_ASSERT_VAL(ret);
+            auto result = std::move(ret.value());
+
+            using resultType                  = std::tuple<std::string, std::string, int>;
+            std::vector<resultType> true_rows = {{"Alice", "Apple", 500}, {"Bob", "TV", 900}};
+            int                     idx       = 0;
+            ilias_for_await(auto &row, result.range()) {
+                if (idx >= true_rows.size()) {
+                    ILIAS_ERROR("mysql-test", ">>> test_join_features FAILED: result size mismatch");
+                    co_return {};
+                }
+                // 验证第一行 (假设顺序保持插入顺序，或数据库默认排序)
+                // 使用结构化绑定解包 tuple
+                const auto &[name1, prod1, amt1] = row;
+                const auto &[name2, prod2, amt2] = true_rows[idx++];
+                EXPECT_EQ(name1, name2);
+                EXPECT_EQ(prod1, prod2);
+                EXPECT_EQ(amt1, amt2);
+            }
+        }
+
+        // =========================================================
+        // 测试场景 2: 获取完整对象 (Select *)
+        // SQL 意图: SELECT * FROM users JOIN orders ...
+        // =========================================================
+        {
+            // 如果不调用 select()，默认返回参与 Join 的所有 Form 对应的实体对象
+            // 返回类型推导为: std::vector<std::tuple<SimpleUser, SimpleOrder>>
+            auto ret = co_await users.join(orders)
+                           .on(users.col(&SimpleUser::id) == orders.col(&SimpleOrder::user_id))
+                           .where(users.col(&SimpleUser::name) == "Alice")
+                           .query();
+
+            CO_ASSERT_VAL(ret);
+            auto result = std::move(ret.value());
+
+            using resultType                  = std::tuple<SimpleUser, SimpleOrder>;
+            std::vector<resultType> true_rows = {{SimpleUser{1, "Alice", 100}, SimpleOrder{101, 1, 500, "Apple"}}};
+            int                     idx       = 0;
+            ilias_for_await(auto &row, result.range()) {
+                if (idx >= true_rows.size()) {
+                    ILIAS_ERROR("mysql-test", ">>> test_join_features FAILED: result size mismatch");
+                    co_return {};
+                }
+                // 验证第一行 (假设顺序保持插入顺序，或数据库默认排序)
+                // 使用结构化绑定解包 tuple
+                const auto &[user, order] = row;
+                const auto &[true_user, true_order] = true_rows[idx++];
+                EXPECT_EQ(user.id, true_user.id);
+                EXPECT_EQ(user.name, true_user.name);
+                EXPECT_EQ(order.id, true_order.id);
+                EXPECT_EQ(order.user_id, true_order.user_id);
+                EXPECT_EQ(order.amount, true_order.amount);
+                EXPECT_EQ(order.product, true_order.product);
+            }
+        }
+
+        ILIAS_INFO("mysql-test", ">>> test_join_features PASSED");
         co_return {};
     }
 };
@@ -514,6 +660,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await SqlTestSuite::test_transaction_rollback();
         co_await SqlTestSuite::test_raii_rollback();
         co_await SqlTestSuite::test_form_interface();
+        co_await SqlTestSuite::test_join_features();
     } catch (const std::exception &e) {
         ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
         EXPECT_TRUE(false) << "Exception in test runner: " << e.what();

@@ -47,6 +47,9 @@ if is_plat("windows") then
     add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
 
+set_policy("build.sanitizer.address", true)
+set_policy("build.sanitizer.undefined", true)
+
 target("ilias_sql")
     add_headerfiles("include/(ilias/sql/**.hpp)")
     add_files("src/sql/**.cpp")

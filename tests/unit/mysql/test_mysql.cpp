@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include "ilias/sql/driver_registry.hpp"
-#include "ilias/sql/form.hpp"
+#include "ilias/sql/orm_form.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
@@ -177,7 +177,8 @@ public:
 
         for (auto &p : persons) {
             stmt.reset(); // 重置绑定状态
-            CO_EXPECT_RESULT(stmt.bind(p));
+            auto bind_ret = stmt.bind(p);
+            CO_EXPECT_RESULT(bind_ret);
             auto ret = co_await stmt.execute();
             CO_EXPECT_RESULT(ret);
         }
@@ -217,7 +218,8 @@ public:
         for (int i = 0; i < TOTAL_ROWS; ++i) {
             stmt.reset();
             // 手动 Bind 参数 (index based)
-            CO_EXPECT_RESULT(stmt.bind(i, "User_" + std::to_string(i), i * 10));
+            auto bind_ret = stmt.bind(i, "User_" + std::to_string(i), i * 10);
+            CO_EXPECT_RESULT(bind_ret);
             auto ret = co_await stmt.execute();
             if (!ret) {
                 ILIAS_ERROR("mysql-test", "Insert failed: {}", ret.error().message());
@@ -450,7 +452,7 @@ public:
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
 
         {
-            auto ret = co_await users.select("count(*)").where("score"_sql > 500 && "id"_sql < 60).execute();
+            auto ret = co_await users.select("count(*)").where("score"_sql > 500 && "id"_sql < 60).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -462,7 +464,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).execute();
+            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -476,7 +478,7 @@ public:
         {
             auto ret = co_await users.select("count(*)")
                            .where("id"_sql < 5 || ("id"_sql >= 95 && "score"_sql > 970))
-                           .execute();
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -488,7 +490,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("id").where("name"_sql == "User50").execute();
+            auto ret = co_await users.select("id").where("name"_sql == "User50").query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -504,7 +506,7 @@ public:
                            .orderBy("score", true) // true for DESC
                            .offset(1)
                            .limit(2)
-                           .execute();
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -533,7 +535,7 @@ public:
             EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
 
             // 验证修改
-            auto ret = co_await users.select("score, name").where("id"_sql == 10).execute();
+            auto ret = co_await users.select("score, name").where("id"_sql == 10).query();
             auto res = std::move(ret.value());
 
             int         score = 0;
@@ -555,7 +557,7 @@ public:
             EXPECT_EQ(remove_ret.value(), 1);
 
             // 验证不存在
-            auto ret   = co_await users.select("count(*)").where("id"_sql == 20).execute();
+            auto ret   = co_await users.select("count(*)").where("id"_sql == 20).query();
             auto res   = std::move(ret.value());
             int  count = -1;
             ilias_for_await([[maybe_unused]] auto &row, res.range()) {
