@@ -384,19 +384,29 @@ public:
         // 1. 创建表 (Create)
         auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "users_full_test");
         CO_ASSERT_VAL(users_ret);
-        auto users = std::move(users_ret.value());
-        SimpleUser user{0, "User0", 1};
+        auto       users = std::move(users_ret.value());
+        SimpleUser user {0, "User0", 1};
 
-        ilias_for_await(auto &ret, users.insert().set(user).loop(100)) {
+        ilias_for_await(auto &ret, users.insert().set(user).loop(50)) {
             // i, fmtlib::format("User{}", i), i * 10 + 1
-            user = SimpleUser{user.id + 1, "User" + std::to_string(user.id + 1), (user.id + 1) * 10 + 1};
+            user = SimpleUser {user.id + 1, "User" + std::to_string(user.id + 1), (user.id + 1) * 10 + 1};
+            CO_ASSERT_VAL(ret);
+        }
+        int  id           = 50;
+        auto id_generator = [&id]() { return id++; };
+        ilias_for_await(auto &ret,
+                        users.insert()
+                            .set(users.sql(&SimpleUser::id) = id_generator, users.sql(&SimpleUser::name) = user.name,
+                                 users.sql(&SimpleUser::score) = user.score)
+                            .loop(50)) {
+            user = SimpleUser {id, "User" + std::to_string(id), id * 10 + 1};
             CO_ASSERT_VAL(ret);
         }
 
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
 
         {
-            auto ret = co_await users.select("count(*)")
+            auto ret = co_await users.count()
                            .where(users.sql(&SimpleUser::score) > 500 && users.sql(&SimpleUser::id) < 60)
                            .query();
             CO_ASSERT_VAL(ret);
@@ -410,7 +420,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).query();
+            auto ret = co_await users.count().where("id"_sql < 5 || "id"_sql >= 95).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -422,7 +432,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)")
+            auto ret = co_await users.count()
                            .where(users.sql(&SimpleUser::id) < 5 ||
                                   (users.sql(&SimpleUser::id) >= 95 && users.sql(&SimpleUser::score) > 970))
                            .query();
