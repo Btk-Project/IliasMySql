@@ -106,49 +106,30 @@ SelectBuilder &SelectBuilder::offset(int offset) {
 }
 
 IoTask<SqlResult<void>> SelectBuilder::query() {
+    auto ret = co_await prepare();
+    if (!ret)
+        co_return Unexpected(ret.error());
+
+    bind(ret.value());
+    co_return co_await ret->query();
+}
+
+IoTask<SqlStatement<void>> SelectBuilder::prepare() const {
     std::string sql = "SELECT " + mSelectColumns + " FROM " + mTableName;
     if (!mWhereCondition.empty()) {
         sql += " WHERE " + mWhereCondition.sql();
     }
     sql += mOrderBy + mLimit + mOffset;
 
-    auto ret = co_await mDb.prepare(sql);
-    if (!ret)
-        co_return Unexpected(ret.error());
-
-    mWhereCondition.bindTo(ret.value());
-    co_return co_await ret->query();
+    co_return co_await mDb.prepare(sql);
 }
 
-auto SelectBuilder::loopWrap(SelectBuilder obj, int count) -> IoGenerator<SqlResult<void>> {
-    if (count <= 0 || obj.mSelectColumns.empty() || obj.mTableName.empty()) {
-        co_yield Unexpected(SqlError::InvalidParameter);
-    }
-    else {
-        std::string sql = "SELECT " + obj.mSelectColumns + " FROM " + obj.mTableName;
-
-        if (!obj.mWhereCondition.empty()) {
-            sql += " WHERE " + obj.mWhereCondition.sql();
-        }
-
-        sql += obj.mOrderBy + obj.mLimit + obj.mOffset;
-
-        auto ret = co_await obj.mDb.prepare(sql);
-        if (!ret) {
-            co_yield Unexpected(ret.error());
-        }
-        else {
-            while (count--) {
-                obj.mWhereCondition.bindTo(ret.value());
-                co_yield co_await ret->query();
-                ret.value()->reset();
-            }
-        }
-    }
+void SelectBuilder::bind(SqlStatement<void> &stmt) const {
+    mWhereCondition.bindTo(stmt);
 }
 
 IoGenerator<SqlResult<void>> SelectBuilder::loop(int count) {
-    return loopWrap(std::move(*this), count);
+    return queryLoopWrap(std::move(*this), count);
 }
 
 } // namespace detail
