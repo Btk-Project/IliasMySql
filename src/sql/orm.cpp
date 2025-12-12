@@ -121,23 +121,28 @@ IoTask<SqlResult<void>> SelectBuilder::query() {
 }
 
 auto SelectBuilder::loopWrap(SelectBuilder obj, int count) -> IoGenerator<SqlResult<void>> {
-    std::string sql = "SELECT " + obj.mSelectColumns + " FROM " + obj.mTableName;
-
-    if (!obj.mWhereCondition.empty()) {
-        sql += " WHERE " + obj.mWhereCondition.sql();
-    }
-
-    sql += obj.mOrderBy + obj.mLimit + obj.mOffset;
-
-    auto ret = co_await obj.mDb.prepare(sql);
-    if (!ret) {
-        co_yield Unexpected(ret.error());
+    if (count <= 0 || obj.mSelectColumns.empty() || obj.mTableName.empty()) {
+        co_yield Unexpected(SqlError::InvalidParameter);
     }
     else {
-        while (count--) {
-            obj.mWhereCondition.bindTo(ret.value());
-            co_yield co_await ret->query();
-            ret.value()->reset();
+        std::string sql = "SELECT " + obj.mSelectColumns + " FROM " + obj.mTableName;
+
+        if (!obj.mWhereCondition.empty()) {
+            sql += " WHERE " + obj.mWhereCondition.sql();
+        }
+
+        sql += obj.mOrderBy + obj.mLimit + obj.mOffset;
+
+        auto ret = co_await obj.mDb.prepare(sql);
+        if (!ret) {
+            co_yield Unexpected(ret.error());
+        }
+        else {
+            while (count--) {
+                obj.mWhereCondition.bindTo(ret.value());
+                co_yield co_await ret->query();
+                ret.value()->reset();
+            }
         }
     }
 }

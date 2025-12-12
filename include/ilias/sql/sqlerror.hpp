@@ -26,7 +26,9 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(NotPrepared, "Statement not prepared")                                                             \
     SQL_ERROR_ENTRY(AlreadyConnected, "Already connected")                                                             \
     SQL_ERROR_ENTRY(NotConnected, "Not connected")                                                                     \
-    SQL_ERROR_ENTRY(UnsupportedApi, "unsupported api")
+    SQL_ERROR_ENTRY(UnsupportedApi, "unsupported api")                                                                 \
+    SQL_ERROR_ENTRY(DialectNotSupported, "Dialect not supported")                                                      \
+    SQL_ERROR_ENTRY(InvalidParameter, "Invalid parameter")
 
 class ILIAS_SQL_API SqlError {
 public:

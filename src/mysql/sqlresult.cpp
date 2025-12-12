@@ -484,7 +484,7 @@ auto SqlStmtResult::get(size_t index) -> IoResult<SqlValue> {
     if (index >= mFieldMetas.size()) {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
-    auto &currentRow = mFields[mFieldMetas[index]->name];
+    auto &currentRow = mFields[index];
     // ILIAS_TRACE("sql", "{}({}) raw data {}: {}",
     //             std::string_view(mFieldMetas[index]->name, mFieldMetas[index]->name_length),
     //             (int)mFieldMetas[index]->type, mLengths[index], (char *)currentRow.get());
@@ -540,9 +540,6 @@ auto SqlStmtResult::freeResult() -> void {
     ILIAS_TRACE("sql", "stmt free result");
     mResult.reset();
     // 清理绑定缓冲区
-    mBinds.reset();
-    mLengths.reset();
-    mFieldMetas.clear();
     mFields.clear(); // 释放具体数据内存
 }
 
@@ -611,13 +608,16 @@ auto SqlStmtResult::getBindConfig(const MYSQL_FIELD *field) -> IoResult<BindConf
 
 auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
     unsigned int numFields = mysql_num_fields(meta);
-    mFieldMetas.resize(numFields);
+    if (mFieldMetas.size() != numFields) {
+        mFieldMetas.resize(numFields);
+        mBinds   = std::make_unique<MYSQL_BIND[]>(numFields);
+        mLengths = std::make_unique<unsigned long[]>(numFields);
+    }
+    // 同样调整 Buffer 容器的大小
+    if (mFields.size() != numFields) {
+        mFields.resize(numFields);
+    }
     auto rawFields = mysql_fetch_fields(meta);
-
-    // 重新分配绑定数组
-    mBinds   = std::make_unique<MYSQL_BIND[]>(numFields);
-    mLengths = std::make_unique<unsigned long[]>(numFields);
-
     // 清零是个好习惯，防止野指针
     std::memset(mBinds.get(), 0, sizeof(MYSQL_BIND) * numFields);
     std::memset(mLengths.get(), 0, sizeof(unsigned long) * numFields);
@@ -639,16 +639,12 @@ auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
 
         // 3. 分配实际的数据缓冲区
         if (cfg.bufferSize > 0) {
-            // 建议：mFields 如果是 map<string, ...> 会比较慢且内存不连续
-            // 这里仅仅是复原你的逻辑
-            auto &fieldName = mFieldMetas[i]->name;
-
             // 分配内存
-            mFields[fieldName] = std::make_unique<uint8_t[]>(cfg.bufferSize + 1); // +1 为了字符串 safe
-            std::memset(mFields[fieldName].get(), 0, cfg.bufferSize + 1);
+            mFields[i] = std::make_unique<uint8_t[]>(cfg.bufferSize + 1); // +1 为了字符串 safe
+            std::memset(mFields[i].get(), 0, cfg.bufferSize + 1);
 
             // 绑定 Buffer 指针
-            mBinds[i].buffer = mFields[fieldName].get();
+            mBinds[i].buffer = mFields[i].get();
         }
     }
     return {};

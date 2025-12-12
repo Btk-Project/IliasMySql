@@ -105,9 +105,11 @@ public:
 
     auto execute(std::string_view query) -> IoTask<size_t>;
     template <typename... Args>
-    auto query(std::string_view query) -> IoTask<SqlResult<std::tuple<Args...>>>;
+    auto query(std::string_view query)
+        -> IoTask<SqlResult<std::conditional_t<sizeof...(Args) == 0, void, std::tuple<Args...>>>>;
     template <typename... Args>
-    auto prepare(std::string_view query) -> IoTask<SqlStatement<std::tuple<Args...>>>;
+    auto prepare(std::string_view query)
+        -> IoTask<SqlStatement<std::conditional_t<sizeof...(Args) == 0, void, std::tuple<Args...>>>>;
 
     template <typename... Args>
         requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
@@ -278,7 +280,8 @@ auto SqlDatabase::execute_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -
 }
 
 template <typename... Args>
-auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<std::tuple<Args...>>> {
+auto SqlTransaction::query(std::string_view query)
+    -> IoTask<SqlResult<std::conditional_t<sizeof...(Args) == 0, void, std::tuple<Args...>>>> {
     if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
@@ -291,7 +294,8 @@ auto SqlTransaction::query(std::string_view query) -> IoTask<SqlResult<std::tupl
 }
 
 template <typename... Args>
-auto SqlTransaction::prepare(std::string_view query) -> IoTask<SqlStatement<std::tuple<Args...>>> {
+auto SqlTransaction::prepare(std::string_view query)
+    -> IoTask<SqlStatement<std::conditional_t<sizeof...(Args) == 0, void, std::tuple<Args...>>>> {
     if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }

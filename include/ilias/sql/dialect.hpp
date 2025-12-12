@@ -15,6 +15,7 @@ struct Dialect;
 // ================= SQLite 特化 =================
 template <>
 struct Dialect<SqliteTag> {
+    static bool check(std::string_view name) { return name == "sqlite"; }
     // 1. 类型映射
     template <typename T>
     static constexpr std::string_view type_name() {
@@ -45,6 +46,11 @@ struct Dialect<SqliteTag> {
 // ================= MySQL 特化 =================
 template <>
 struct Dialect<MysqlTag> {
+    static bool check(std::string_view name) {
+        std::string nameLower {name};
+        std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+        return nameLower == "mysql" || nameLower == "mariadb";
+    }
     // 1. 类型映射
     template <typename T>
     static constexpr std::string_view type_name() {

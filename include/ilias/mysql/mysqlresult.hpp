@@ -104,7 +104,7 @@ private:
     std::shared_ptr<MYSQL_STMT>                                  mStmt       = nullptr;
     std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>> mResult     = nullptr;
     std::vector<MYSQL_FIELD *>                                   mFieldMetas = {};
-    std::unordered_map<std::string, std::unique_ptr<uint8_t[]>>  mFields;
+    std::vector<std::unique_ptr<uint8_t[]>>                      mFields;
     std::unique_ptr<MYSQL_BIND[]>                                mBinds;
     std::unique_ptr<unsigned long[]>                             mLengths;
 };

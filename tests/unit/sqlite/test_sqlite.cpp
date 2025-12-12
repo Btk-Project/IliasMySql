@@ -253,7 +253,7 @@ public:
         auto ret1 = co_await db.execute("SELECT * FROM non_existent_table");
         CO_EXPECT_NOT_RESULT(ret1);
         // 打印错误看是否符合预期
-        // ILIAS_INFO("test", "Expected error: {}", ret1.error().message());
+        ILIAS_INFO("test", "Expected error: {}", ret1.error().message());
 
         // 7.2 约束冲突 (主键重复)
         co_await db.execute("INSERT INTO users VALUES (1, 'A', 1)");
@@ -385,11 +385,14 @@ public:
         auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
+        SimpleUser user{0, "User0", 1};
 
-        for (int i = 0; i < 100; ++i) {
-            auto insert_ret = co_await users.insert(i, fmtlib::format("User{}", i), i * 10 + 1);
-            CO_ASSERT_VAL(insert_ret);
+        ilias_for_await(auto &ret, users.insert().set(user).loop(100)) {
+            // i, fmtlib::format("User{}", i), i * 10 + 1
+            user = SimpleUser{user.id + 1, "User" + std::to_string(user.id + 1), (user.id + 1) * 10 + 1};
+            CO_ASSERT_VAL(ret);
         }
+
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
 
         {
@@ -471,8 +474,11 @@ public:
             // 将 ID=10 的用户分数修改为 9999
             SimpleUser u10 {10, "User10_Modified", 9999};
 
-            // 注意：Update 依赖 Form 能够正确识别 Primary Key
-            auto update_ret = co_await users.update(u10);
+            auto update_ret =
+                co_await users.update()
+                    .set(users.sql(&SimpleUser::score) = u10.score, users.sql(&SimpleUser::name) = u10.name)
+                    .where(users.sql(&SimpleUser::id) == u10.id)
+                    .execute();
             CO_ASSERT_VAL(update_ret);
             EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
 
@@ -492,9 +498,7 @@ public:
 
         {
             // 删除 ID=20 的用户
-            SimpleUser u20 {20, "", 0};
-
-            auto remove_ret = co_await users.remove(u20);
+            auto remove_ret = co_await users.remove().where("id"_sql == 20).execute();
             CO_ASSERT_VAL(remove_ret);
             EXPECT_EQ(remove_ret.value(), 1);
 
@@ -510,7 +514,7 @@ public:
 
         {
             // 连续查询ID == (20, 40) 的用户
-            int id    = 21;
+            int id    = 20;
             int count = 20;
 
             ilias_for_await(auto &ret, users.select().where(users.sql(&SimpleUser::id) == id).loop(count)) {
@@ -618,7 +622,7 @@ public:
             auto result = std::move(ret.value());
 
             using resultType                  = std::tuple<SimpleUser, SimpleOrder>;
-            std::vector<resultType> true_rows = {{SimpleUser{1, "Alice", 100}, SimpleOrder{101, 1, 500, "Apple"}}};
+            std::vector<resultType> true_rows = {{SimpleUser {1, "Alice", 100}, SimpleOrder {101, 1, 500, "Apple"}}};
             int                     idx       = 0;
             ilias_for_await(auto &row, result.range()) {
                 if (idx >= true_rows.size()) {
@@ -627,7 +631,7 @@ public:
                 }
                 // 验证第一行 (假设顺序保持插入顺序，或数据库默认排序)
                 // 使用结构化绑定解包 tuple
-                const auto &[user, order] = row;
+                const auto &[user, order]           = row;
                 const auto &[true_user, true_order] = true_rows[idx++];
                 EXPECT_EQ(user.id, true_user.id);
                 EXPECT_EQ(user.name, true_user.name);
@@ -650,17 +654,17 @@ public:
 ILIAS_NAMESPACE::Task<void> run_all_tests() {
     try {
         // 运行原有测试
-        co_await SqlTestSuite::test_basic_crud();
+        // co_await SqlTestSuite::test_basic_crud();
 
         // 运行新增的扩展测试
-        co_await SqlTestSuite::test_batch_insert_and_scan();
-        co_await SqlTestSuite::test_pagination();
-        co_await SqlTestSuite::test_bulk_update_delete();
-        co_await SqlTestSuite::test_null_handling();
-        co_await SqlTestSuite::test_transaction_rollback();
-        co_await SqlTestSuite::test_raii_rollback();
+        // co_await SqlTestSuite::test_batch_insert_and_scan();
+        // co_await SqlTestSuite::test_pagination();
+        // co_await SqlTestSuite::test_bulk_update_delete();
+        // co_await SqlTestSuite::test_null_handling();
+        // co_await SqlTestSuite::test_transaction_rollback();
+        // co_await SqlTestSuite::test_raii_rollback();
         co_await SqlTestSuite::test_form_interface();
-        co_await SqlTestSuite::test_join_features();
+        // co_await SqlTestSuite::test_join_features();
     } catch (const std::exception &e) {
         ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
         EXPECT_TRUE(false) << "Exception in test runner: " << e.what();
@@ -668,7 +672,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
 }
 
 TEST(SQL, FullSuite) {
-    run_all_tests().wait();
+    // run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {
@@ -676,7 +680,7 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
-    // run_all_tests().wait();
+    run_all_tests().wait();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

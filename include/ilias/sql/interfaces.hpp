@@ -47,8 +47,8 @@ class IStatement {
 public:
     virtual ~IStatement() = default;
 
-    virtual auto bind(size_t index, SqlValueView value) -> Result<void, std::error_code>          = 0;
-    virtual auto bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> = 0;
+    virtual auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code>          = 0;
+    virtual auto bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> = 0;
     // 执行查询 (SELECT)，返回结果集
     virtual auto query() -> IoTask<std::unique_ptr<IResultSet>> = 0;
 

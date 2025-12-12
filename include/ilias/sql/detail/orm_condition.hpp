@@ -14,8 +14,9 @@ namespace detail {
 // 绑定器基类
 class SqlStatementBinder {
 public:
-    virtual ~SqlStatementBinder()                                = default;
-    virtual void bind(int index, SqlStatement<void> &stmt) const = 0;
+    virtual ~SqlStatementBinder()                                            = default;
+    virtual void bind(int index, SqlStatement<void> &stmt) const             = 0;
+    virtual void bind(std::string_view name, SqlStatement<void> &stmt) const = 0;
 };
 
 // 具体的绑定器（模板必须在头文件）
@@ -23,10 +24,44 @@ template <typename T>
 class ValueBinder : public SqlStatementBinder {
 public:
     explicit ValueBinder(T value) : mValue(value) {}
-    void bind(int index, SqlStatement<void> &stmt) const override { stmt->bind(index, mValue); }
+    void bind(int index, SqlStatement<void> &stmt) const override { stmt->bind(index, to_sql_pointer(mValue)); }
+    void bind(std::string_view name, SqlStatement<void> &stmt) const override {
+        stmt->bind(name, to_sql_pointer(mValue));
+    }
 
 private:
     T mValue;
+};
+
+// 具体的绑定器（模板必须在头文件）
+template <typename T, typename... Ts>
+    requires std::is_constructible_v<T, Ts...>
+class ObjBinder : public SqlStatementBinder {
+public:
+    explicit ObjBinder(Ts... arg) : mValue(arg...) {}
+    void bind([[maybe_unused]] int index, SqlStatement<void> &stmt) const override {
+        stmt.bind(std::apply([](auto &&...args) { return T(std::forward<decltype(args)>(args)...); }, mValue));
+    }
+    void bind([[maybe_unused]] std::string_view name, SqlStatement<void> &stmt) const override {
+        stmt.bind(std::apply([](auto &&...args) { return T(std::forward<decltype(args)>(args)...); }, mValue));
+    }
+
+private:
+    std::tuple<Ts...> mValue;
+};
+
+class NamedBinder : public SqlStatementBinder {
+public:
+    explicit NamedBinder(const std::string &name, std::shared_ptr<SqlStatementBinder> binder)
+        : mbinder(binder), mName(name) {}
+    void bind([[maybe_unused]] int index, SqlStatement<void> &stmt) const override { mbinder->bind(mName, stmt); }
+    void bind([[maybe_unused]] std::string_view name, SqlStatement<void> &stmt) const override {
+        mbinder->bind(mName, stmt);
+    }
+
+private:
+    std::shared_ptr<SqlStatementBinder> mbinder;
+    std::string                         mName;
 };
 
 class SqlCondition {
@@ -46,6 +81,11 @@ public:
 private:
     std::string                                      mSql;
     std::vector<std::shared_ptr<SqlStatementBinder>> mBinders;
+};
+
+struct SqlAssignment {
+    std::string                                      sql;
+    std::vector<std::shared_ptr<SqlStatementBinder>> binders;
 };
 
 class SqlVariable {
@@ -99,6 +139,25 @@ public:
         return compare("LIKE", std::forward<T>(v));
     }
 
+    template <typename T>
+        requires ISqlValue<std::decay_t<T>> || ISqlValueView<std::decay_t<T>>
+    SqlAssignment operator=(T &&value) const {
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<ValueBinder<std::decay_t<T>>>(std::forward<T>(value)));
+        return SqlAssignment {.sql = mName + " = ?", .binders = std::move(binders)};
+    }
+
+    // template <typename T>
+    //     requires (!ISqlValue<std::decay_t<T>> && !ISqlValueView<std::decay_t<T>> && requires(T t) { t.sql(); })
+    // SqlAssignment operator=(const T& value) const {
+    //     std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+    //     if constexpr (requires { value.getBinders(); }) {
+    //          auto otherBinders = value.getBinders();
+    //          binders.insert(binders.end(), otherBinders.begin(), otherBinders.end());
+    //     }
+    //     return SqlAssignment {.sql = mName + " = " + value.sql(), .binders = std::move(binders)};
+    // }
+
 protected:
     std::string mName;
 };
@@ -107,7 +166,8 @@ template <typename T>
 class TypedColumn : public SqlVariable {
 public:
     using Type = T;
-    TypedColumn(std::string name) : SqlVariable(std::move(name)) {}
+    explicit TypedColumn(std::string name) : SqlVariable(std::move(name)) {}
+    using SqlVariable::operator=;
 };
 
 } // namespace detail

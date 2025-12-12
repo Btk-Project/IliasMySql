@@ -101,13 +101,13 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
         }                                                                                                              \
         auto fd = mysql_get_socket(&mMysql);                                                                           \
         if (fd == (decltype(fd))MARIADB_INVALID_SOCKET) {                                                              \
-            ILIAS_ERROR("ilias-mysql", "get socket failed");                                                                   \
+            ILIAS_ERROR("ilias-mysql", "get socket failed");                                                           \
             co_return Unexpected(IoError::Unknown);                                                                    \
         }                                                                                                              \
         if (!mPoller || (mPoller.fd() != (fd_t)fd)) {                                                                  \
             mPoller = (co_await Poller::make((fd_t)fd, IoDescriptor ::Socket)).value();                                \
             if (!mPoller) {                                                                                            \
-                ILIAS_ERROR("ilias-mysql", "add fd({}) to IoContext failed.", fd);                                             \
+                ILIAS_ERROR("ilias-mysql", "add fd({}) to IoContext failed.", fd);                                     \
                 co_return Unexpected(IoError::Unknown);                                                                \
             }                                                                                                          \
         }                                                                                                              \
@@ -118,7 +118,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
     if (status) {                                                                                                      \
         SQL_PRIVATE_MAKE_POLLER                                                                                        \
         while (status) {                                                                                               \
-            ILIAS_TRACE("ilias-mysql", "{} waiting for status {}", #MysqlFunc, status);                                        \
+            ILIAS_TRACE("ilias-mysql", "{} waiting for status {}", #MysqlFunc, status);                                \
             auto pret = co_await pollStatus(status);                                                                   \
             status    = MysqlFunc##_cont(&OutP, &mMysql, status);                                                      \
             if (!pret) {                                                                                               \
@@ -140,7 +140,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
                 return true;                                                                                           \
         }                                                                                                              \
         else {                                                                                                         \
-            ILIAS_ERROR("ilias-mysql", "unknow type?");                                                                        \
+            ILIAS_ERROR("ilias-mysql", "unknow type?");                                                                \
             return false;                                                                                              \
         }                                                                                                              \
         return false;                                                                                                  \
@@ -149,7 +149,7 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
         auto errCode = mysql_errno(&mMysql);                                                                           \
         if (errCode != 0) {                                                                                            \
             [[maybe_unused]] auto error = mysql_error(&mMysql);                                                        \
-            ILIAS_ERROR("ilias-mysql", "{} failed, error({}): {}", #MysqlFunc, errCode, error);                                \
+            ILIAS_ERROR("ilias-mysql", "{} failed, error({}): {}", #MysqlFunc, errCode, error);                        \
             sql::SqlErrorCategory::instance().registerMessage(errCode, error);                                         \
             co_return Unexpected(sql::SqlError::Code(errCode));                                                        \
         }                                                                                                              \
@@ -422,8 +422,8 @@ public:
     MysqlStatement(std::shared_ptr<MySql> mysql);
     ~MysqlStatement();
 
-    auto bind(size_t index, SqlValueView value) -> Result<void, std::error_code> override;
-    auto bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> override;
+    auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> override;
+    auto bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> override;
     // 执行查询 (SELECT)，返回结果集
     auto query() -> IoTask<std::unique_ptr<IResultSet>> override;
     // 执行命令 (INSERT, UPDATE, DELETE)，返回影响行数
@@ -438,17 +438,14 @@ private:
     // this query should like "SELECT * FROM table WHERE name=:name,age=:age;"
     // return query like "SELECT * FROM table WHERE name=?,age=?;"
     auto parser(std::string_view sql) -> std::string;
-    auto makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std::error_code>;
+    auto makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, std::error_code>;
 
 private:
-    std::shared_ptr<MySql>      mMysql;
-    std::shared_ptr<MYSQL_STMT> mMysqlStmt = nullptr;
-    std::vector<std::variant<SqlValueTraits<SqlValueType::kChar>::type, SqlValueTraits<SqlValueType::kInt>::type,
-                             SqlValueTraits<SqlValueType::kBigInt>::type, SqlValueTraits<SqlValueType::kFloat>::type,
-                             SqlValueTraits<SqlValueType::kDouble>::type, MYSQL_TIME>>
-                                         mBindBuffer; // save var to continue it is life.
-    std::vector<MYSQL_BIND>              mBinds;
-    std::unordered_map<std::string, int> mIndexs;
+    std::shared_ptr<MySql>                   mMysql;
+    std::shared_ptr<MYSQL_STMT>              mMysqlStmt = nullptr;
+    std::vector<std::unique_ptr<MYSQL_TIME>> mBindBuffer; // save var to continue it is life.
+    std::vector<MYSQL_BIND>                  mBinds;
+    std::unordered_map<std::string, int>     mIndexs;
 };
 
 MysqlStatement::MysqlStatement(std::shared_ptr<MySql> mysql) {
@@ -491,7 +488,7 @@ MYSQL_TIME toMysqlTime(const SqlDate &dt) {
     return time;
 }
 
-auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std::error_code> {
+auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, std::error_code> {
     MYSQL_BIND bind;
     memset(&bind, 0, sizeof(bind));
     switch ((SqlValueType)value.index()) {
@@ -501,33 +498,28 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
             bind.buffer_length = 0;
             break;
         case SqlValueType::kChar:
-            bind.buffer_type = MYSQL_TYPE_TINY;
-            mBindBuffer.push_back(get<SqlValueType::kChar>(value));
-            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kChar>::type>(&mBindBuffer.back());
+            bind.buffer_type   = MYSQL_TYPE_TINY;
+            bind.buffer        = std::get<(int)SqlValueType::kChar>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kChar>::type);
             break;
         case SqlValueType::kInt:
-            bind.buffer_type = MYSQL_TYPE_LONG;
-            mBindBuffer.push_back(get<SqlValueType::kInt>(value));
-            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kInt>::type>(&mBindBuffer.back());
+            bind.buffer_type   = MYSQL_TYPE_LONG;
+            bind.buffer        = std::get<(int)SqlValueType::kInt>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kInt>::type);
             break;
         case SqlValueType::kBigInt:
-            bind.buffer_type = MYSQL_TYPE_LONGLONG;
-            mBindBuffer.push_back(get<SqlValueType::kBigInt>(value));
-            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kBigInt>::type>(&mBindBuffer.back());
+            bind.buffer_type   = MYSQL_TYPE_LONGLONG;
+            bind.buffer        = std::get<(int)SqlValueType::kBigInt>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kBigInt>::type);
             break;
         case SqlValueType::kFloat:
-            bind.buffer_type = MYSQL_TYPE_FLOAT;
-            mBindBuffer.push_back(get<SqlValueType::kFloat>(value));
-            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kFloat>::type>(&mBindBuffer.back());
+            bind.buffer_type   = MYSQL_TYPE_FLOAT;
+            bind.buffer        = std::get<(int)SqlValueType::kFloat>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kFloat>::type);
             break;
         case SqlValueType::kDouble:
-            bind.buffer_type = MYSQL_TYPE_DOUBLE;
-            mBindBuffer.push_back(get<SqlValueType::kDouble>(value));
-            bind.buffer        = std::get_if<SqlValueTraits<SqlValueType::kDouble>::type>(&mBindBuffer.back());
+            bind.buffer_type   = MYSQL_TYPE_DOUBLE;
+            bind.buffer        = std::get<(int)SqlValueType::kDouble>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kDouble>::type);
             break;
         case SqlValueType::kText:
@@ -541,8 +533,8 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
             bind.buffer_length = get<SqlValueType::kBlob>(value).size();
             break;
         case SqlValueType::kDate:
-            mBindBuffer.push_back(toMysqlTime(get<SqlValueType::kDate>(value)));
-            switch (std::get<MYSQL_TIME>(mBindBuffer.back()).time_type) {
+            mBindBuffer.push_back(std::make_unique<MYSQL_TIME>(toMysqlTime(get<SqlValueType::kDate>(value))));
+            switch (mBindBuffer.back()->time_type) {
                 case MYSQL_TIMESTAMP_DATE:
                     bind.buffer_type = MYSQL_TYPE_DATE;
                     break;
@@ -555,7 +547,7 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
                 default:
                     return Unexpected(std::make_error_code(std::errc::invalid_argument));
             }
-            bind.buffer        = std::get_if<MYSQL_TIME>(&mBindBuffer.back());
+            bind.buffer        = mBindBuffer.back().get();
             bind.buffer_length = sizeof(MYSQL_TIME);
             break;
         default:
@@ -564,7 +556,7 @@ auto MysqlStatement::makeBindData(SqlValueView value) -> Result<MYSQL_BIND, std:
     return bind;
 }
 
-auto MysqlStatement::bind(size_t index, SqlValueView value) -> Result<void, std::error_code> {
+auto MysqlStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
     ILIAS_TRACE("ilias-mysql", "bind {} with {}", index, value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NotPrepared);
@@ -580,7 +572,7 @@ auto MysqlStatement::bind(size_t index, SqlValueView value) -> Result<void, std:
     return {};
 }
 
-auto MysqlStatement::bind(std::string_view name, SqlValueView value) -> Result<void, std::error_code> {
+auto MysqlStatement::bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> {
     // ILIAS_INFO("ilias-mysql", "bind {} = {}", name, value);
     auto index = mIndexs.find(std::string(name));
     if (index == mIndexs.end()) {

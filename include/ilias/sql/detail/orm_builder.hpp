@@ -104,7 +104,7 @@ public:
             // 复用基类的 limit/order (虽然基类存了，但这里手动拼一下)
             sql += mOrderBy + mLimit + mOffset;
 
-            auto stmtRet = co_await mDb.prepare(sql);
+            auto stmtRet = co_await mDb.prepare<ResultType>(sql);
             if (!stmtRet)
                 co_return Unexpected(stmtRet.error());
             auto stmt = std::move(stmtRet.value());
@@ -114,10 +114,7 @@ public:
                 b->bind(idx++, stmt);
             mWhereCondition.bindTo(stmt, idx);
 
-            auto resRet = co_await stmt->query();
-            if (!resRet)
-                co_return Unexpected(resRet.error());
-            co_return std::move(resRet.value());
+            co_return co_await stmt->query();
         }
 
         // 普通 Projected
@@ -127,17 +124,34 @@ public:
         co_return std::move(res.value());
     }
 
-    static auto loopWrap(ProjectedSelectBuilder obj, int count) -> IoGenerator<SqlResult<void>> {
-        // 简单复用基类逻辑，如果需要特定类型返回需自行修改
-        return SelectBuilder::loopWrap(std::move(obj), count);
+    static auto loopWrap(ProjectedSelectBuilder obj, int count) -> IoGenerator<SqlResult<ResultType>> {
+        if (count <= 0 || obj.mSelectColumns.empty() || obj.mTableName.empty()) {
+            co_yield Unexpected(SqlError::InvalidParameter);
+        }
+        else {
+            std::string sql = "SELECT " + obj.mSelectColumns + " FROM " + obj.mTableName;
+
+            if (!obj.mWhereCondition.empty()) {
+                sql += " WHERE " + obj.mWhereCondition.sql();
+            }
+
+            sql += obj.mOrderBy + obj.mLimit + obj.mOffset;
+
+            auto ret = co_await obj.mDb.prepare<ResultType>(sql);
+            if (!ret) {
+                co_yield Unexpected(ret.error());
+            }
+            else {
+                while (count--) {
+                    obj.mWhereCondition.bindTo(ret.value());
+                    co_yield co_await ret->query();
+                    ret.value()->reset();
+                }
+            }
+        }
     }
 
-    IoGenerator<SqlResult<ResultType>> loop(int count) {
-        // 注意：这里原来的 loopWrap 返回的是 void，如果需要 Typed loop 需要重新实现 loopWrap 模板
-        // 鉴于原代码 loopWrap 返回 void，这里暂时只支持 void 遍历或需要完善
-        // 为了编译通过，暂时留空或抛错，或者你需要在此处实现完整的 loop 逻辑
-        co_yield Unexpected(std::make_error_code(std::errc::not_supported));
-    }
+    IoGenerator<SqlResult<ResultType>> loop(int count) { return loopWrap(*this, count); }
 
 private:
     std::string                                      mBaseSql;
@@ -297,5 +311,192 @@ private:
     SqlCondition            mWhereCondition;
 };
 
+class DeleteBuilder {
+public:
+    DeleteBuilder(SqlDatabase &db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
+
+    DeleteBuilder &where(const SqlCondition &cond) {
+        mWhereCondition = cond;
+        return *this;
+    }
+
+    IoTask<size_t> execute() {
+        std::string sql = "DELETE FROM " + mTableName;
+
+        if (!mWhereCondition.empty()) {
+            sql += " WHERE " + mWhereCondition.sql();
+        }
+
+        auto stmtRet = co_await mDb.prepare(sql);
+        if (!stmtRet)
+            co_return Unexpected(stmtRet.error());
+        auto stmt = std::move(stmtRet.value());
+
+        // 这里的 1 是参数绑定的起始索引
+        mWhereCondition.bindTo(stmt, 1);
+
+        auto execRet = co_await stmt->execute();
+        if (!execRet)
+            co_return Unexpected(execRet.error());
+
+        co_return execRet.value();
+    }
+
+private:
+    SqlDatabase &mDb;
+    std::string  mTableName;
+    SqlCondition mWhereCondition;
+};
+
+class UpdateBuilder {
+public:
+    UpdateBuilder(SqlDatabase &db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
+
+    // [核心] 支持 set(col = val, col2 = val2, ...)
+    template <typename... Assignments>
+    UpdateBuilder &set(Assignments &&...assignments) {
+        // 折叠表达式，依次处理每个赋值
+        (addAssignment(std::forward<Assignments>(assignments)), ...);
+        return *this;
+    }
+
+    UpdateBuilder &where(const SqlCondition &cond) {
+        mWhereCondition = cond;
+        return *this;
+    }
+
+    IoTask<size_t> execute() {
+        if (mSetSqls.empty()) {
+            co_return 0;
+        }
+
+        std::string sql = "UPDATE " + mTableName + " SET " + join_strs(mSetSqls, ", ");
+
+        if (!mWhereCondition.empty()) {
+            sql += " WHERE " + mWhereCondition.sql();
+        }
+
+        auto stmtRet = co_await mDb.prepare(sql);
+        if (!stmtRet)
+            co_return Unexpected(stmtRet.error());
+        auto stmt = std::move(stmtRet.value());
+
+        int bindIndex = 1;
+
+        for (const auto &binder : mSetBinders) {
+            binder->bind(bindIndex++, stmt);
+        }
+
+        mWhereCondition.bindTo(stmt, bindIndex);
+
+        auto execRet = co_await stmt->execute();
+        if (!execRet)
+            co_return Unexpected(execRet.error());
+
+        co_return execRet.value();
+    }
+
+private:
+    // 辅助函数，用于处理单个 Assignment
+    void addAssignment(const SqlAssignment &assign) {
+        mSetSqls.push_back(assign.sql);
+        mSetBinders.insert(mSetBinders.end(), assign.binders.begin(), assign.binders.end());
+    }
+
+    SqlDatabase                                     &mDb;
+    std::string                                      mTableName;
+    std::vector<std::string>                         mSetSqls;
+    std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders; // 统一存储所有 Set 的 binder
+    SqlCondition                                     mWhereCondition;
+};
+
+template <typename T>
+class InsertBuilder {
+public:
+    InsertBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> columnNames)
+        : mDb(db), mTableName(std::move(tableName)), mColumnNames(std::move(columnNames)) {}
+    template <typename... Assignments>
+        requires(sizeof...(Assignments) > 1 && std::is_constructible_v<SqlAssignment, Assignments...>)
+    UpdateBuilder &set(Assignments &&...assignments) {
+        // 折叠表达式，依次处理每个赋值
+        (addAssignment(std::forward<Assignments>(assignments)), ...);
+        return *this;
+    }
+    template <typename... Columns>
+        requires(sizeof...(Columns) > 1 && std::is_constructible_v<T, Columns...>)
+    InsertBuilder &set(Columns &&...cloumns) {
+        mSetBinders.emplace_back(std::make_shared<ObjBinder<T, Columns...>>(std::forward<Columns>(cloumns)...));
+        return *this;
+    }
+    template <typename U>
+        requires(std::is_constructible_v<T, U>)
+    InsertBuilder &set(U &&obj) {
+        mSetBinders.emplace_back(std::make_shared<ObjBinder<T, U>>(std::forward<U>(obj)));
+        return *this;
+    }
+
+    // 基础查询
+    IoTask<size_t> execute() {
+        std::string sql = "INSERT INTO " + mTableName + " VALUES (" + join_strs(mColumnNames, ", ", ":") + ")";
+
+        auto stmtRet = co_await mDb.prepare(sql);
+        if (!stmtRet)
+            co_return Unexpected(stmtRet.error());
+        auto stmt = std::move(stmtRet.value());
+        for (auto &binder : mSetBinders) {
+            binder->bind(1, stmt);
+        }
+        co_return co_await stmt->execute();
+    }
+
+    IoGenerator<size_t> loop(int count) { return loopWrap(std::move(*this), count); }
+
+    // 辅助静态函数
+    static auto loopWrap(InsertBuilder obj, int count) -> IoGenerator<size_t> {
+        if (count <= 0) {
+            co_yield Unexpected(SqlError::InvalidParameter);
+        }
+        else {
+            std::string sql =
+                "INSERT INTO " + obj.mTableName + " VALUES (" + join_strs(obj.mColumnNames, ", ", ":") + ")";
+            auto stmt = co_await obj.mDb.prepare(sql);
+            if (!stmt) {
+                co_yield Unexpected(stmt.error());
+            }
+            else {
+                while (count--) {
+                    for (auto &binder : obj.mSetBinders) {
+                        binder->bind(1, stmt.value());
+                    }
+                    co_yield co_await stmt->execute();
+                    stmt.value()->reset();
+                }
+            }
+        }
+    }
+
+private:
+    void addAssignment(const SqlAssignment &assign) {
+        // assign 里面的sql存放 name = ?, 提取name 构造NamedBinder
+        auto assign_pos = assign.sql.find('=');
+        if (assign_pos == std::string::npos) {
+            throw std::runtime_error("Invalid assignment: " + assign.sql);
+        }
+        std::string name  = assign.sql.substr(0, assign_pos);
+        std::string value = assign.sql.substr(assign_pos + 1);
+        if (value != "?" || assign.binders.size() != 1) {
+            throw std::runtime_error("Invalid assignment: " + assign.sql);
+        }
+        for (auto &binder : assign.binders) {
+            mSetBinders.emplace_back(std::make_shared<NamedBinder>(name, binder));
+        }
+    }
+
+private:
+    SqlDatabase                                     &mDb;
+    std::string                                      mTableName;
+    std::vector<std::string>                         mColumnNames;
+    std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders;
+};
 } // namespace detail
 ILIAS_SQL_NS_END
