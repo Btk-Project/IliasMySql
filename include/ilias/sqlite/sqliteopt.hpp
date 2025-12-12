@@ -302,7 +302,7 @@ public:
         return ret;
     }
 
-    auto getopt(sqlite3 &sql) -> int override {
+    auto getopt([[maybe_unused]] sqlite3 &sql) -> int override {
         // String getters are not standard in sqlite3_config/db_config
         return SQLITE_ERROR;
     }
