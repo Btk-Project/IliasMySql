@@ -55,6 +55,8 @@ struct ILIAS_SQL_API SqlDate {
 
 // 空值类型
 struct SqlNull {};
+// 全局静态 SqlNull 实例，用于返回指向 NULL 的指针（避免返回 nullptr）
+inline SqlNull g_sql_null{};
 
 // 二进制视图
 using SqlBlobView = std::span<const std::byte>;
@@ -84,6 +86,14 @@ using SqlValuePointer =
     std::variant<SqlNull *, char *, int32_t *, int64_t *, float *, double *, std::string_view, SqlBlobView, SqlDate *>;
 using SqlValueRef =
     std::variant<SqlNull, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
+
+// 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
+inline auto to_sql_pointer(std::nullptr_t &) -> SqlValuePointer {
+    return SqlValuePointer{&g_sql_null};
+}
+inline auto to_sql_pointer(const std::nullptr_t &) -> SqlValuePointer {
+    return SqlValuePointer{&g_sql_null};
+}
 
 template <SqlValueType T, class enable = void>
 struct SqlValueTraits {
@@ -223,7 +233,12 @@ template <typename T>
 auto to_sql_pointer(T &t) -> SqlValuePointer {
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        return SqlValuePointer {std::string_view {t}};
+        if constexpr (std::is_pointer_v<std::decay_t<T>>) {
+            if (t == nullptr) {
+                return SqlValuePointer{&g_sql_null};
+            }
+        }
+        return SqlValuePointer{std::string_view{t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
                        std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {
@@ -240,7 +255,12 @@ template <typename T>
 auto to_sql_pointer(const T &t) -> SqlValuePointer {
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        return SqlValuePointer {std::string_view {t}};
+        if constexpr (std::is_pointer_v<std::decay_t<T>>) {
+            if (t == nullptr) {
+                return SqlValuePointer{&g_sql_null};
+            }
+        }
+        return SqlValuePointer{std::string_view{t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
                        std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {

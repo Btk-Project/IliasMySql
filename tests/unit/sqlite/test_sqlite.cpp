@@ -296,6 +296,39 @@ public:
         co_return {};
     }
 
+    // --- 场景 X: 显式覆盖 nullptr 绑定测试 ---
+    // 目的: 验证将 nullptr 作为字符串参数绑定到 SQL 时不会导致崩溃，且会被视为 SQL NULL
+    static auto test_null_bind() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("test", ">>> Running test_null_bind");
+
+        co_await db.execute("DROP TABLE IF EXISTS null_test");
+        auto r = co_await db.execute("CREATE TABLE null_test (id INTEGER PRIMARY KEY, t TEXT, b BLOB)");
+        CO_EXPECT_RESULT(r);
+
+        auto prep = (co_await db.prepare("INSERT INTO null_test (id, t, b) VALUES (?, ?, ?)"));
+        CO_ASSERT_VAL(prep);
+        auto stmt = std::move(prep.value());
+
+        stmt.reset();
+        // 绑定 nullptr 到 TEXT 字段（应被视为 SQL NULL），以及空 BLOB
+        stmt.bind(1, nullptr, std::vector<std::byte>{});
+        auto ir = co_await stmt.execute();
+        CO_EXPECT_RESULT(ir);
+
+        // 验证 t IS NULL
+        auto cnt_ret = co_await db.query<int>("SELECT count(*) FROM null_test WHERE t IS NULL");
+        CO_ASSERT_VAL(cnt_ret);
+        int cnt = 0;
+        ilias_for_await(auto v, cnt_ret.value().range()) {
+            cnt = std::get<0>(v);
+        }
+        EXPECT_EQ(cnt, 1);
+
+        ILIAS_INFO("test", ">>> test_null_bind PASSED");
+        co_return {};
+    }
+
     // --- 场景 7: 事务回滚测试 ---
     static auto test_transaction_rollback() -> IoTask<void> {
         auto db = (co_await setup_db()).value();
@@ -737,18 +770,19 @@ public:
 ILIAS_NAMESPACE::Task<void> run_all_tests() {
     try {
         // 运行原有测试
-        // co_await SqlTestSuite::test_basic_crud();
+        co_await SqlTestSuite::test_basic_crud();
 
         // 运行新增的扩展测试
-        // co_await SqlTestSuite::test_batch_insert_and_scan();
-        // co_await SqlTestSuite::test_pagination();
-        // co_await SqlTestSuite::test_bulk_update_delete();
-        // co_await SqlTestSuite::test_null_handling();
-        // co_await SqlTestSuite::test_transaction_rollback();
-        // co_await SqlTestSuite::test_raii_rollback();
+        co_await SqlTestSuite::test_batch_insert_and_scan();
+        co_await SqlTestSuite::test_pagination();
+        co_await SqlTestSuite::test_bulk_update_delete();
+        co_await SqlTestSuite::test_null_handling();
+        co_await SqlTestSuite::test_null_bind();
+        co_await SqlTestSuite::test_transaction_rollback();
+        co_await SqlTestSuite::test_raii_rollback();
         co_await SqlTestSuite::test_realistic_scenario();
         co_await SqlTestSuite::test_form_interface();
-        // co_await SqlTestSuite::test_join_features();
+        co_await SqlTestSuite::test_join_features();
     } catch (const std::exception &e) {
         ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
         EXPECT_TRUE(false) << "Exception in test runner: " << e.what();
