@@ -195,6 +195,28 @@ xmake build test_mysql
 xmake run test_mysql
 ```
 
+## 运行 MySQL 测试（本地与 CI 说明）
+
+- 环境变量说明：测试使用以下环境变量来连接 MySQL（CI 通过 env 传入）：
+    - `DB_HOST` (默认 `127.0.0.1`)
+    - `DB_PORT` (默认 `3306`)
+    - `DB_USER` (默认 `root`)
+    - `DB_PASS` (默认 `root`)
+    - `DB_NAME` (默认 `test_db`)
+
+- 本地运行推荐使用 Docker 启动一个 MySQL 实例：
+
+```bash
+docker run --name ilias-test-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=test_db -p 3306:3306 -d mysql:8.0
+# 等待几秒后运行测试
+ xmake build test_mysql
+ xmake run test_mysql
+```
+
+- Windows CI 常见问题：
+    - Windows 上的 MySQL 服务器有时默认使用 Named Pipe 或者 localhost 解析为 IPv6，导致 TCP 客户端无法连接。仓库的 Windows workflow 已调整为使用 `127.0.0.1` 并在创建数据库前循环检测 `mysqladmin ping`，同时会创建并授权 `root@127.0.0.1`，以提高 CI 稳定性。
+    - 如果在本地 Windows 上构建失败，确保已安装 MariaDB/MySQL 的 C client（或相应的开发包），以便链接运行时库。
+
 ## TODO
 *   [ ] 支持更多数据库驱动
     - 目前仅支持 SQLite 和 MySQL（mariaDB）
