@@ -17,9 +17,9 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         goto continue
     end
 
-    if not has_config("enable_" .. string.sub(name, 6, -1)) then 
-        goto continue
-    end
+    -- if not has_config("enable_" .. string.sub(name, 6, -1)) then 
+    --     goto continue
+    -- end
 
     -- Otherwise, create a target for this file, in most case, it should enough
     target(name)

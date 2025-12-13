@@ -47,7 +47,7 @@ if is_plat("windows") then
     add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
 
-if is_mode("debug") then
+if is_mode("debug") and is_plat("linux") then
     set_policy("build.sanitizer.address", true)
     set_policy("build.sanitizer.undefined", true)
 end

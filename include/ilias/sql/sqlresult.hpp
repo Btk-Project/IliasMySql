@@ -5,6 +5,7 @@
 #include <nekoproto/serialization/reflection.hpp>
 
 #include "ilias/sql/interfaces.hpp"
+#include "ilias/sql/detail/coverter.hpp"
 
 ILIAS_SQL_NS_BEGIN
 template <typename T>
@@ -39,10 +40,11 @@ public:
     template <typename U>
     auto load(std::string_view name, U &value) -> IoResult<void>;
     template <typename... Args>
+        requires(!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
     auto range(Args &...args) -> Generator<IoResult<void>>;
-    template <typename U>
-        requires(std::is_class_v<U> && NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>)
-    auto range(U &value) -> Generator<IoResult<void>>;
+    template <typename... Args>
+        requires(sizeof...(Args) > 0 && (NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...))
+    auto range(Args &...value) -> Generator<IoResult<void>>;
     auto operator->() -> IResultSet * { return mImp.get(); }
     auto operator->() const -> const IResultSet * { return mImp.get(); }
     auto operator*() -> IResultSet & { return *mImp; }
@@ -96,93 +98,16 @@ public:
 
 template <typename U>
 auto SqlResult<void>::unpack(SqlValue &ret, U &value) -> IoResult<void> {
-    switch ((SqlValueType)ret.index()) {
-        case SqlValueType::kNull:
-            return {};
-        case SqlValueType::kChar: {
-            if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kChar>::type, U>) {
-                value = get<SqlValueType::kChar>(ret);
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kInt: {
-            if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kInt>::type, U>) {
-                value = get<SqlValueType::kInt>(ret);
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kBigInt: {
-            if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kBigInt>::type, U>) {
-                value = get<SqlValueType::kBigInt>(ret);
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kFloat: {
-            if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kFloat>::type, U>) {
-                value = get<SqlValueType::kFloat>(ret);
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kDouble: {
-            if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kDouble>::type, U>) {
-                value = get<SqlValueType::kDouble>(ret);
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kText: {
-            if constexpr (std::is_constructible_v<U, SqlValueTraits<SqlValueType::kText>::type>) {
-                value = U(std::move(get<SqlValueType::kText>(ret)));
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kBlob: {
-            if constexpr (std::is_constructible_v<U, SqlValueTraits<SqlValueType::kBlob>::type>) {
-                value = U(std::move(get<SqlValueType::kBlob>(ret)));
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        case SqlValueType::kDate: {
-            if constexpr (std::is_constructible_v<U, SqlValueTraits<SqlValueType::kDate>::type>) {
-                value = U(std::move(get<SqlValueType::kDate>(ret)));
-                return {};
-            }
-            else {
-                return Unexpected(make_error_code(std::errc::invalid_argument));
-            }
-        }
-        default:
-            return Unexpected(make_error_code(std::errc::invalid_argument));
-    }
+    return SqlValueConverter<std::decay_t<U>>::convert(ret, value);
 }
 
 template <typename U>
 auto SqlResult<void>::load(int index, U &value) -> IoResult<void> {
     auto ret = mImp->getValue(index);
     if (!ret) {
+        ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", index, ret.error().message());
         return Unexpected(ret.error());
     }
-    // ILIAS_TRACE("ilias-sql", "index: {}, value: {}", index, *ret);
     return unpack(*ret, value);
 }
 
@@ -190,13 +115,14 @@ template <typename U>
 auto SqlResult<void>::load(std::string_view name, U &value) -> IoResult<void> {
     auto ret = mImp->getValue(name);
     if (!ret) {
+        ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
         return Unexpected(ret.error());
     }
-    // ILIAS_TRACE("ilias-sql", "name: {}, value: {}", name, *ret);
     return unpack(*ret, value);
 }
 
 template <typename... Args>
+    requires(!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
 auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
@@ -215,9 +141,9 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     }
 }
 
-template <typename U>
-    requires(std::is_class_v<U> && NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>)
-auto SqlResult<void>::range(U &value) -> Generator<IoResult<void>> {
+template <typename... Args>
+    requires(sizeof...(Args) > 0 && (NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...))
+auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
@@ -227,10 +153,35 @@ auto SqlResult<void>::range(U &value) -> Generator<IoResult<void>> {
             break;
         }
         IoResult<void> ret = {};
-        NEKO_NAMESPACE::Reflect<U>::forEach(value, [this, &ret](auto &field, std::string_view name) {
-            ret = ret ? load(name, field) : ret;
-            // ILIAS_TRACE("ilias-sql", "field: {}, value: {}", name, field);
-        });
+        if constexpr (sizeof...(Args) == 1) {
+            auto handler = [this, &ret](auto &value) {
+                using ObjT = std::decay_t<decltype(value)>;
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret](auto &field, std::string_view name) {
+                    ret = ret ? load(name, field) : ret;
+                    if (!ret) {
+                        ILIAS_TRACE("ilias-sql", "Failed to load field '{}': {}", name, ret.error().message());
+                    }
+                });
+            };
+            [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {
+                (handler(std::get<I>(tuple)), ...);
+            }(std::make_index_sequence<sizeof...(Args)>(), std::tie(value...));
+        }
+        else {
+            int  idx     = 0;
+            auto handler = [this, &ret, &idx](auto &value) {
+                using ObjT = std::decay_t<decltype(value)>;
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret, &idx](auto &field) {
+                    ret = ret ? load(idx++, field) : ret;
+                    if (!ret) {
+                        ILIAS_TRACE("ilias-sql", "Failed to load field '{}': {}", idx, ret.error().message());
+                    }
+                });
+            };
+            [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {
+                (handler(std::get<I>(tuple)), ...);
+            }(std::make_index_sequence<sizeof...(Args)>(), std::tie(value...));
+        }
         co_yield ret;
     }
 }
@@ -241,18 +192,20 @@ auto SqlResult<T>::range() -> Generator<T> {
     if constexpr (NEKO_NAMESPACE::detail::is_std_tuple<T>()) {
         ilias_for_await(auto rc,
                         std::apply([this](auto &...args) { return (SqlResult<void>::range(args...)); }, value)) {
-            if (!rc) {
-                co_return;
+            if (rc) {
+                co_yield value;
+            } else {
+                ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }
-            co_yield value;
         }
     }
     else {
         ilias_for_await(auto rc, SqlResult<void>::range(value)) {
-            if (!rc) {
-                co_return;
+            if (rc) {
+                co_yield value;
+            } else {
+                ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }
-            co_yield value;
         }
     }
 }

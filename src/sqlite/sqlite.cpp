@@ -100,8 +100,8 @@ SqliteStatement::~SqliteStatement() {
 }
 
 auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    ILIAS_TRACE("ilias-sqlite", "bind index: {}, value: {}", index, value);
     if (!mSqlite || !mSqliteStmt) {
+        ILIAS_TRACE("ilias-sqlite", "{} bind failed: not connected", index);
         return Unexpected(SqlError::Code::NotConnected);
     }
     switch ((SqlValueType)value.index()) {
@@ -136,6 +136,7 @@ auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, 
             sqlite3_bind_text(mSqliteStmt.get(), index, string.data(), string.size(), SQLITE_TRANSIENT);
         } break;
         default:
+            ILIAS_TRACE("ilias-sqlite", "{} bind failed: invalid argument", index);
             return Unexpected(std::make_error_code(std::errc::invalid_argument));
     }
     return {};

@@ -25,10 +25,10 @@ class Form final : public TableOperations<Form<T, BackendTag>, T, BackendTag> {
 
 public:
     using type    = T;
-    using Dialect = Dialect<BackendTag>;
+    using BackendDialect = Dialect<BackendTag>;
 
     static auto create(SqlDatabase &db, const std::string &tableName) -> IoTask<Form> {
-        if (!Dialect::check(db->sqlname())) {
+        if (!BackendDialect::check(db->sqlname())) {
             ILIAS_ERROR("ilias-sql", "Dialect {} is not supported", db->sqlname());
             co_return Unexpected(SqlError::DialectNotSupported);
         }
@@ -41,17 +41,17 @@ public:
         std::map<std::ptrdiff_t, int> tableHeaderIndex;
 
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
-            std::string typeStr = std::string(Dialect::template type_name<decltype(field)>());
+            std::string typeStr = std::string(BackendDialect::template type_name<decltype(field)>());
             std::string colDef  = std::string(name) + " " + typeStr;
             tableHeaderTags.emplace_back(tags);
             tableHeaderIndex[(char *)&field - (char *)&obj] = colDefs.size();
 
             if (tags.primary_key) {
-                colDef += " " + std::string(Dialect::primary_key());
+                colDef += " " + std::string(BackendDialect::primary_key());
                 pkName = name;
             }
             if (tags.auto_increment)
-                colDef += " " + std::string(Dialect::auto_increment());
+                colDef += " " + std::string(BackendDialect::auto_increment());
             if (tags.unique)
                 colDef += " UNIQUE";
             if (tags.not_null)
@@ -106,7 +106,7 @@ class TableAlias final : public TableOperations<TableAlias<T, BackendTag>, T, Ba
 
 public:
     using type    = T;
-    using Dialect = Dialect<BackendTag>;
+    using BackendDialect = Dialect<BackendTag>;
 
     TableAlias(const std::string &alias, Form<T, BackendTag> &form) : mAlias(alias), mForm(form) {}
 

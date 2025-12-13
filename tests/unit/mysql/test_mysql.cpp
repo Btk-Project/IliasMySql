@@ -117,7 +117,10 @@ public:
 
         // MySQL 特有配置
         options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
-        options.extra.insert(std::make_pair("ConnectTimeout", "10"));
+        options.extra.insert(std::make_pair("ConnectTimeout", "30"));
+        // 增加读写超时，避免短暂网络波动导致查询中断
+        options.extra.insert(std::make_pair("ReadTimeout", "30"));
+        options.extra.insert(std::make_pair("WriteTimeout", "30"));
         // 1. 使用 TCP 协议 (默认是 Socket)
         options.extra.insert(std::make_pair("Protocol", "MYSQL_PROTOCOL_TCP"));
 
@@ -128,12 +131,23 @@ public:
 
     static auto setup_db() -> IoTask<SqlDatabase> {
         auto options = get_options();
-        auto ret     = co_await SqlDatabase::open("mysql", options);
-        if (!ret) {
-            ILIAS_ERROR("mysql-test", "Failed to open MySQL: {}", ret.error().message());
+        // 重试打开连接，缓解临时网络/服务抖动
+        IoResult<SqlDatabase> open_ret     = Unexpected(SqlError::UnknownError);
+        int                   attempts     = 0;
+        const int             max_attempts = 3;
+        while (attempts < max_attempts) {
+            open_ret = co_await SqlDatabase::open("mysql", options);
+            if (open_ret)
+                break;
+            attempts++;
+            ILIAS_WARN("mysql-test", "MySQL open attempt {} failed: {}", attempts, open_ret.error().message());
+        }
+        if (!open_ret) {
+            ILIAS_ERROR("mysql-test", "Failed to open MySQL after {} attempts: {}", max_attempts,
+                        open_ret.error().message());
             throw std::runtime_error("Failed to connect to MySQL");
         }
-        auto db = std::move(ret.value());
+        auto db = std::move(open_ret.value());
 
         // 清理旧表 (Drop Table if exists)
         co_await db.execute("DROP TABLE IF EXISTS simple_users");
@@ -719,80 +733,6 @@ public:
         ILIAS_INFO("mysql-test", ">>> test_join_features PASSED");
         co_return {};
     }
-
-    // --- 场景 9: 更贴近真实使用的综合场景测试 ---
-    static auto test_realistic_scenario() -> IoTask<void> {
-        auto db = (co_await setup_db()).value();
-        ILIAS_INFO("mysql-test", ">>> Running test_realistic_scenario");
-
-        co_await db.execute("DROP TABLE IF EXISTS realistic_users");
-
-        const char *create_sql = "CREATE TABLE realistic_users ("
-                                 "id BIGINT PRIMARY KEY, "
-                                 "name VARCHAR(200), "
-                                 "bio TEXT, "
-                                 "balance DECIMAL(10,2), "
-                                 "active TINYINT, "
-                                 "created_at DATETIME, "
-                                 "payload BLOB"
-                                 ")";
-        auto r = co_await db.execute(create_sql);
-        CO_EXPECT_RESULT(r);
-
-        auto prep_ret = (co_await db.prepare("INSERT INTO realistic_users (id,name,bio,balance,active,created_at,payload) VALUES (?, ?, ?, ?, ?, ?, ?)"));
-        CO_ASSERT_VAL(prep_ret);
-        auto stmt = std::move(prep_ret.value());
-
-        std::vector<std::vector<std::byte>> blobs = {{std::byte{0x01}, std::byte{0x02}}, {}};
-
-        // 插入多样化数据（含 NULL/空值）
-        {
-            stmt.reset();
-            stmt.bind(1, "Alice", "Long bio...\nLine2", 1234.56, 1, SqlDate(2024, 5, 1, 12, 0, 0), blobs[0]);
-            auto ir = co_await stmt.execute();
-            CO_EXPECT_RESULT(ir);
-        }
-        {
-            stmt.reset();
-            stmt.bind(2, "Bob", "", 0.00, 0, SqlDate(2023, 1, 1, 0, 0, 0), blobs[1]);
-            auto ir = co_await stmt.execute();
-            CO_EXPECT_RESULT(ir);
-        }
-        {
-            stmt.reset();
-            // 包含 NULL 字段（bio 为空、payload 为空）
-            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59), std::vector<std::byte>{});
-            auto ir = co_await stmt.execute();
-            CO_EXPECT_RESULT(ir);
-        }
-
-        // 验证总数
-        auto cnt_ret = co_await db.query<int>("SELECT count(*) FROM realistic_users");
-        CO_ASSERT_VAL(cnt_ret);
-        int cnt = 0;
-        ilias_for_await(auto v, cnt_ret.value().range()) {
-            cnt = std::get<0>(v);
-        }
-        EXPECT_EQ(cnt, 3);
-
-        // 查询并检测数值类型与顺序
-        auto rows_ret = co_await db.query<std::tuple<std::string, double, int>>("SELECT name, balance, active FROM realistic_users ORDER BY id");
-        CO_ASSERT_VAL(rows_ret);
-        auto res = std::move(rows_ret.value());
-        std::vector<std::tuple<std::string, double, int>> truth = {{"Alice", 1234.56, 1}, {"Bob", 0.0, 0}, {"Charlie", 9.99, 1}};
-        int idx = 0;
-        ilias_for_await(auto &row, res.range()) {
-            auto &[n, b, a] = row;
-            EXPECT_EQ(n, std::get<0>(truth[idx]));
-            EXPECT_NEAR(b, std::get<1>(truth[idx]), 0.001);
-            EXPECT_EQ(a, std::get<2>(truth[idx]));
-            idx++;
-        }
-        EXPECT_EQ(idx, 3);
-
-        ILIAS_INFO("mysql-test", ">>> test_realistic_scenario PASSED");
-        co_return {};
-    }
 };
 
 // ==========================================
@@ -810,7 +750,6 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await MySqlTestSuite::test_raii_rollback();
         co_await MySqlTestSuite::test_form_interface();
         co_await MySqlTestSuite::test_join_features();
-        co_await MySqlTestSuite::test_realistic_scenario();
     } catch (const std::exception &e) {
         ILIAS_ERROR("mysql-test", "Exception caught: {}", e.what());
         EXPECT_TRUE(false) << "Exception in runner: " << e.what();

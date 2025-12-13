@@ -52,7 +52,10 @@ public:
         int bindIndex = 1;
         for (const auto &item : items) {
             NEKO_NAMESPACE::Reflect<T>::forEach(
-                item, [&](const auto &field) { (*ret)->bind(bindIndex++, to_sql_pointer(field)); });
+                item, [&](const auto &field) {
+                    using FieldType = std::decay_t<decltype(field)>;
+                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
+                });
         }
 
         co_return co_await ret->execute();
@@ -163,13 +166,25 @@ public:
         SqlResult<T>         res = std::move(ret.value());
         ilias_for_await([[maybe_unused]] auto obj, res.range()) {
             std::vector<std::string> rowStrings;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, auto...) {
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field) {
                 using FieldType = std::decay_t<decltype(field)>;
                 if constexpr (std::is_same_v<FieldType, std::vector<char>> || std::is_same_v<FieldType, SqlBlob>) {
                     rowStrings.push_back("(BLOB " + std::to_string(field.size()) + " bytes)");
                 }
-                else {
+                else if constexpr (requires(FieldType field) { detail::to_string_view(field); }) {
                     rowStrings.push_back(detail::to_string_view(field));
+                }
+                else if constexpr (requires(FieldType field) {
+                                       field.has_value();
+                                       detail::to_string_view(field.value());
+                                   }) {
+                    if (field.has_value())
+                        rowStrings.push_back(detail::to_string_view(field.value()));
+                    else
+                        rowStrings.push_back("NULL");
+                }
+                else {
+                    static_assert(std::is_void_v<FieldType>, "Field type is not convertible to string");
                 }
             });
             table.addRow(rowStrings);

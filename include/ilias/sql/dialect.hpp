@@ -3,6 +3,7 @@
 #include <type_traits>
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
+#include "ilias/sql/detail/orm_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
 
@@ -19,7 +20,7 @@ struct Dialect<SqliteTag> {
     // 1. 类型映射
     template <typename T>
     static constexpr std::string_view type_name() {
-        using DT = std::decay_t<T>;
+        using DT = detail::strip_wrapper_t<T>;
         if constexpr (std::is_same_v<DT, SqlNull>) {
             static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
         }
@@ -54,7 +55,7 @@ struct Dialect<MysqlTag> {
     // 1. 类型映射
     template <typename T>
     static constexpr std::string_view type_name() {
-        using DT = std::decay_t<T>;
+        using DT = detail::strip_wrapper_t<T>;
         if constexpr (std::is_same_v<DT, SqlNull>) {
             static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
         }

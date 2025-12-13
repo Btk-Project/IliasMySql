@@ -7,6 +7,7 @@
 #include "ilias/sql/sqlstatement.hpp"
 #include <nekoproto/serialization/types/struct_unwrap.hpp>
 #include "ilias/sql/detail/orm_types.hpp"
+#include "ilias/sql/detail/orm_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
@@ -24,9 +25,9 @@ template <typename T>
 class ValueBinder : public SqlStatementBinder {
 public:
     explicit ValueBinder(T value) : mValue(value) {}
-    void bind(int index, SqlStatement<void> &stmt) const override { stmt->bind(index, to_sql_pointer(mValue)); }
+    void bind(int index, SqlStatement<void> &stmt) const override { SqlBinder<T>::bind(*stmt, index, mValue); }
     void bind(std::string_view name, SqlStatement<void> &stmt) const override {
-        stmt->bind(name, to_sql_pointer(mValue));
+        SqlBinder<T>::bind(*stmt, name, mValue);
     }
 
 private:
@@ -72,10 +73,12 @@ class LambdaBinder<T> : public SqlStatementBinder {
 public:
     explicit LambdaBinder(std::function<T()> valueFunc) : mValueFunc(valueFunc) {}
     void bind([[maybe_unused]] int index, SqlStatement<void> &stmt) const override {
-        stmt->bind(index, to_sql_pointer(mValueFunc()));
+        using RawType = std::decay_t<T>;
+        SqlBinder<RawType>::bind(*stmt, index, mValueFunc());
     }
     void bind([[maybe_unused]] std::string_view name, SqlStatement<void> &stmt) const override {
-        stmt->bind(name, to_sql_pointer(mValueFunc()));
+        using RawType = std::decay_t<T>;
+        SqlBinder<RawType>::bind(*stmt, name, mValueFunc());
     }
 
 private:
@@ -89,11 +92,11 @@ public:
     explicit LambdaBinder(std::function<T()> valueFunc) : mValueFunc(valueFunc) {}
     void bind([[maybe_unused]] int index, SqlStatement<void> &stmt) const override {
         mValue = mValueFunc();
-        stmt->bind(index, to_sql_pointer(mValue));
+        SqlBinder<T>::bind(*stmt, index, mValue);
     }
     void bind([[maybe_unused]] std::string_view name, SqlStatement<void> &stmt) const override {
         mValue = mValueFunc();
-        stmt->bind(name, to_sql_pointer(mValue));
+        SqlBinder<T>::bind(*stmt, name, mValue);
     }
 
 private:
@@ -130,8 +133,14 @@ public:
     explicit SqlVariable(std::string_view name);
 
     template <typename T>
-        requires ISqlValue<T> || ISqlValueView<T>
+        requires SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)
     SqlCondition compare(const std::string &op, T &&value) const {
+        if (is_sql_null(value)) {
+            if (op == "=")
+                return SqlCondition(mName + " IS NULL", {});
+            if (op == "!=")
+                return SqlCondition(mName + " IS NOT NULL", {});
+        }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using StorageT = StorageType_t<T>;
         binders.push_back(std::make_shared<ValueBinder<StorageT>>(std::forward<T>(value)));
@@ -139,15 +148,17 @@ public:
     }
 
     template <typename T>
-        requires ISqlValue<T> || ISqlValueView<T>
-    SqlCondition compare(const std::string &op, std::function<T()> &&value) const {
+        requires std::is_invocable_v<T>
+    SqlCondition compare(const std::string &op, T &&value) const {
+        using ResultT = std::invoke_result_t<T>;
+        static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
-        binders.push_back(std::make_shared<LambdaBinder<T>>(std::forward<T>(value)));
+        binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(value)));
         return SqlCondition(mName + " " + op + " ?", std::move(binders));
     }
 
     template <typename T>
-        requires(!ISqlValue<T> && !ISqlValueView<T> && requires(T &&v) { v.sql(); })
+        requires HasSqlMethod<T>
     SqlCondition compare(const std::string &op, T &&value) const {
         return SqlCondition(mName + " " + op + " " + value.sql(), {});
     }
@@ -185,7 +196,7 @@ public:
     }
 
     template <typename T>
-        requires ISqlValue<std::decay_t<T>> || ISqlValueView<std::decay_t<T>>
+        requires SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)
     SqlAssignment operator=(T &&value) const {
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<T>>>(std::forward<T>(value)));
@@ -193,19 +204,17 @@ public:
     }
 
     template <typename T>
-        requires(std::is_invocable_v<T> &&
-                 requires(T u) {
-                     { u() } -> ISqlValueView<>;
-                 })
+        requires std::is_invocable_v<T>
     SqlAssignment operator=(T &&u) const {
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using ResultT = std::invoke_result_t<T>;
+        static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(u)));
         return SqlAssignment {.sql = mName + " = ?", .binders = std::move(binders)};
     }
 
     template <typename T>
-        requires(!ISqlValue<std::decay_t<T>> && !ISqlValueView<std::decay_t<T>> && requires(T t) { t.sql(); })
+        requires HasSqlMethod<T>
     SqlAssignment operator=(const T &value) const {
         return SqlAssignment {.sql = mName + " = " + value.sql(), .binders = {}};
     }
@@ -219,57 +228,38 @@ class TypedColumn : public SqlVariable {
 public:
     using Type = T;
     explicit TypedColumn(std::string name) : SqlVariable(std::move(name)) {}
+
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+    static constexpr bool IsValidOperand =
+        HasSqlMethod<U> || (SqlBindable<U> && IsCompatible<T, U>) || std::is_invocable_v<U>;
+
+    template <typename U>
+        requires IsValidOperand<U>
     auto operator<(U &&v) {
         return SqlVariable::compare("<", std::forward<U>(v));
     }
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires IsValidOperand<U>
     auto operator<=(U &&v) {
         return SqlVariable::compare("<=", std::forward<U>(v));
     }
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires IsValidOperand<U>
     auto operator>(U &&v) {
         return SqlVariable::compare(">", std::forward<U>(v));
     }
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires IsValidOperand<U>
     auto operator>=(U &&v) {
         return SqlVariable::compare(">=", std::forward<U>(v));
     }
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires IsValidOperand<U>
     auto operator==(U &&v) {
         return SqlVariable::compare("=", std::forward<U>(v));
     }
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires IsValidOperand<U>
     auto operator!=(U &&v) {
         return SqlVariable::compare("!=", std::forward<U>(v));
     }
@@ -277,11 +267,8 @@ public:
     std::string sql() const { return mName; }
 
     template <typename U>
-        requires std::totally_ordered_with<U, T> || std::is_same_v<std::decay_t<U>, TypedColumn<T>> ||
-                 (std::is_function_v<U> &&
-                  requires(U u) {
-                      { u() } -> std::totally_ordered_with<T>;
-                  })
+        requires(IsCompatible<T, U> && SqlBindable<U>) || std::is_same_v<std::decay_t<U>, std::string> ||
+                std::is_convertible_v<std::decay_t<U>, std::string_view>
     SqlCondition like(U &&v) {
         return SqlVariable::compare("LIKE", std::forward<U>(v));
     }

@@ -104,7 +104,11 @@ auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
         [&ret, this](auto &field, std::string_view name) {
             // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
-            ret = ret ? mStmt->bind(name, to_sql_pointer(field)) : ret;
+            if (!ret) {
+                return;
+            }
+            using FieldType = std::decay_t<decltype(field)>;
+            ret = SqlBinder<FieldType>::bind(*mStmt, name, field);
         });
     // clang-format on
     mKeepAlive.emplace_back(
@@ -116,12 +120,14 @@ template <typename... Args>
     requires(sizeof...(Args) > 1) ||
             (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
-    using KeepAliveTuple = std::tuple<StorageType_t<Args>...>;
+    using KeepAliveTuple     = std::tuple<StorageType_t<Args>...>;
     auto           keepAlive = new KeepAliveTuple(std::forward<Args>(args)...);
     IoResult<void> ret       = {};
     [this, &ret, keepAlive]<size_t... I>(std::index_sequence<I...>) {
         int idx = 0;
-        ((ret = ret ? mStmt->bind(++idx, to_sql_pointer(std::get<I>(*keepAlive))) : ret), ...);
+        ((ret = ret ? SqlBinder<std::decay_t<decltype(std::get<I>(*keepAlive))>>::bind(
+                          *mStmt, ++idx, std::get<I>(*keepAlive))
+                    : ret), ...);
     }(std::make_index_sequence<sizeof...(Args)>());
     mKeepAlive.emplace_back(
         std::unique_ptr<void, DeleterFunc>(keepAlive, [](void *ptr) { delete static_cast<KeepAliveTuple *>(ptr); }));

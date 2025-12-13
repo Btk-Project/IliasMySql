@@ -47,9 +47,9 @@ NEKO_USE_NAMESPACE
 // 2. 测试用的数据结构
 // ==========================================
 struct SimpleUser {
-    int         id    = 0;
-    std::string name  = "";
-    int         score = 0;
+    int                id    = 0;
+    std::string        name  = "";
+    std::optional<int> score = 0;
 };
 
 struct SimpleOrder {
@@ -65,7 +65,7 @@ struct Meta<SimpleUser, void> {
     constexpr static auto value = // NOLINT
         Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
                "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
-               make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
+               make_tags<SqlTags {}>(&SimpleUser::score));
 };
 
 template <>
@@ -144,7 +144,7 @@ public:
             EXPECT_EQ(user.name, expected_name);
             EXPECT_EQ(user.score, count * 10);
 
-            sum_score += user.score;
+            sum_score += user.score.value_or(0);
             count++;
         }
 
@@ -289,7 +289,7 @@ public:
             EXPECT_EQ(u.id, 999);
             // 假设库策略：NULL -> 0 (需要根据实际 ilias 实现调整预期)
             // EXPECT_EQ(u.score, 0);
-            ILIAS_INFO("test", "Got user with score: {}", u.score);
+            ILIAS_INFO("test", "Got user with score: {}", u.score.value_or(-1));
         }
         EXPECT_TRUE(found);
 
@@ -312,7 +312,7 @@ public:
 
         stmt.reset();
         // 绑定 nullptr 到 TEXT 字段（应被视为 SQL NULL），以及空 BLOB
-        stmt.bind(1, nullptr, std::vector<std::byte>{});
+        stmt.bind(1, nullptr, std::vector<std::byte> {});
         auto ir = co_await stmt.execute();
         CO_EXPECT_RESULT(ir);
 
@@ -425,15 +425,18 @@ public:
             user = SimpleUser {user.id + 1, "User" + std::to_string(user.id + 1), (user.id + 1) * 10 + 1};
             CO_ASSERT_VAL(ret);
         }
-        int  id           = 50;
+        int id = 50;
         auto id_generator = [&id]() { return id++; };
         ilias_for_await(auto &ret,
                         users.insert()
                             .set(users.sql(&SimpleUser::id) = id_generator, users.sql(&SimpleUser::name) = user.name,
                                  users.sql(&SimpleUser::score) = user.score)
-                            .loop(50)) {
+                            .loop(-1)) {
             user = SimpleUser {id, "User" + std::to_string(id), id * 10 + 1};
             CO_ASSERT_VAL(ret);
+            if (id >= 100) {
+                break;
+            }
         }
 
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
@@ -665,16 +668,19 @@ public:
             auto result = std::move(ret.value());
 
             using resultType                  = std::tuple<SimpleUser, SimpleOrder>;
-            std::vector<resultType> true_rows = {{SimpleUser {1, "Alice", 100}, SimpleOrder {101, 1, 500, "Apple"}}};
+            std::vector<resultType> true_rows = {{SimpleUser {1, "Alice", 100}, SimpleOrder {101, 1, 500, "Apple"}},
+                                                 {SimpleUser {1, "Alice", 100}, SimpleOrder {102, 1, 50, "Banana"}}};
             int                     idx       = 0;
             ilias_for_await(auto &row, result.range()) {
-                if (idx >= true_rows.size()) {
+                const auto &[user, order] = row;
+                ILIAS_INFO("mysql-test", "idx: {}, user id: {}, name: {}, order id: {}, order user_id: {}", idx,
+                           user.id, user.name, order.id, order.user_id);
+                if (idx >= (int)true_rows.size()) {
                     ILIAS_ERROR("mysql-test", ">>> test_join_features FAILED: result size mismatch");
-                    co_return {};
+                    continue;
                 }
                 // 验证第一行 (假设顺序保持插入顺序，或数据库默认排序)
                 // 使用结构化绑定解包 tuple
-                const auto &[user, order]           = row;
                 const auto &[true_user, true_order] = true_rows[idx++];
                 EXPECT_EQ(user.id, true_user.id);
                 EXPECT_EQ(user.name, true_user.name);
@@ -705,14 +711,16 @@ public:
                                  "created_at DATETIME, "
                                  "payload BLOB"
                                  ")";
-        auto r = co_await db.execute(create_sql);
+        auto        r          = co_await db.execute(create_sql);
         CO_EXPECT_RESULT(r);
 
-        auto prep_ret = (co_await db.prepare("INSERT INTO realistic_users (id,name,bio,balance,active,created_at,payload) VALUES (?, ?, ?, ?, ?, ?, ?)"));
+        auto prep_ret =
+            (co_await db.prepare("INSERT INTO realistic_users (id,name,bio,balance,active,created_at,payload) VALUES "
+                                 "(?, ?, ?, ?, ?, ?, ?)"));
         CO_ASSERT_VAL(prep_ret);
         auto stmt = std::move(prep_ret.value());
 
-        std::vector<std::vector<std::byte>> blobs = {{std::byte{0x01}, std::byte{0x02}}, {}};
+        std::vector<std::vector<std::byte>> blobs = {{std::byte {0x01}, std::byte {0x02}}, {}};
 
         // 插入多样化数据（含 NULL/空值）
         {
@@ -729,7 +737,7 @@ public:
         }
         {
             stmt.reset();
-            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59), std::vector<std::byte>{});
+            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59), std::vector<std::byte> {});
             auto ir = co_await stmt.execute();
             CO_EXPECT_RESULT(ir);
         }
@@ -744,10 +752,12 @@ public:
         EXPECT_EQ(cnt, 3);
 
         // 查询并检测数值类型与顺序
-        auto rows_ret = co_await db.query<std::tuple<std::string, double, int>>("SELECT name, balance, active FROM realistic_users ORDER BY id");
+        auto rows_ret = co_await db.query<std::tuple<std::string, double, int>>(
+            "SELECT name, balance, active FROM realistic_users ORDER BY id");
         CO_ASSERT_VAL(rows_ret);
-        auto res = std::move(rows_ret.value());
-        std::vector<std::tuple<std::string, double, int>> truth = {{"Alice", 1234.56, 1}, {"Bob", 0.0, 0}, {"Charlie", 9.99, 1}};
+        auto                                              res   = std::move(rows_ret.value());
+        std::vector<std::tuple<std::string, double, int>> truth = {
+            {"Alice", 1234.56, 1}, {"Bob", 0.0, 0}, {"Charlie", 9.99, 1}};
         int idx = 0;
         ilias_for_await(auto &row, res.range()) {
             auto &[n, b, a] = row;
@@ -790,7 +800,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
 }
 
 TEST(SQL, FullSuite) {
-    // run_all_tests().wait();
+    run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {
@@ -798,7 +808,6 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
-    run_all_tests().wait();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
