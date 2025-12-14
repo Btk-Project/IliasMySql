@@ -133,7 +133,7 @@ public:
     explicit SqlVariable(std::string_view name);
 
     template <typename T>
-        requires SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)
+        requires(SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)) || std::is_null_pointer_v<T>
     SqlCondition compare(const std::string &op, T &&value) const {
         if (is_sql_null(value)) {
             if (op == "=")

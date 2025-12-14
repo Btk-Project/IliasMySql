@@ -103,7 +103,10 @@ protected:
 // ================== ProjectedSelectBuilder ==================
 template <typename... ResultTypes>
 class ProjectedSelectBuilder : public SelectBuilder {
-    using ResultType = std::tuple<ResultTypes...>;
+    using ResultType = std::conditional_t<
+        sizeof...(ResultTypes) == 0, void,
+        std::conditional_t<sizeof...(ResultTypes) == 1 && (NekoProto::detail::has_names_meta<ResultTypes> && ...),
+                           select_type_t<0, ResultTypes...>, std::tuple<ResultTypes...>>>;
     template <typename T, typename ResultType>
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
@@ -113,6 +116,13 @@ public:
         // 使用 cpp 中的 join_strs
         std::vector<std::string> colSqls = {cols.sql()...};
         SelectBuilder::select(join_strs(colSqls, ", "));
+    }
+
+    // 专门用于 select * 的构造函数
+    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName)
+        requires(sizeof...(ResultTypes) == 1)
+        : SelectBuilder(db, std::move(tableName)) {
+        SelectBuilder::select(" * ");
     }
 
     // 专门用于 join 的构造

@@ -13,6 +13,7 @@
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
+#include "ilias/sql/detail/coverter.hpp"
 
 ILIAS_SQL_NS_BEGIN
 
@@ -20,7 +21,8 @@ namespace detail {
 
 class ConsoleTable {
 public:
-    ConsoleTable(std::vector<std::string> headers) : mHeaders(std::move(headers)) {
+    ConsoleTable(const std::string &tableName, std::vector<std::string> headers)
+        : mTableName(tableName), mHeaders(std::move(headers)) {
         mColumnWidths.resize(mHeaders.size());
         for (size_t i = 0; i < mHeaders.size(); ++i) {
             mColumnWidths[i] = mHeaders[i].length();
@@ -39,6 +41,8 @@ public:
     }
 
     void print() const {
+        // 打印表名
+        printf("%s\n", fmtlib::format("Table: {}", mTableName).c_str());
         printSeparator();
         printRow(mHeaders);
         printSeparator();
@@ -66,7 +70,7 @@ private:
         }
         printf("\n");
     }
-
+    std::string                           mTableName;
     std::vector<std::string>              mHeaders;
     std::vector<std::vector<std::string>> mRows;
     std::vector<size_t>                   mColumnWidths;
@@ -75,7 +79,13 @@ private:
 // 辅助函数：将任意类型转为 string
 template <typename T>
 std::string to_string_view(const T &t) {
-    if constexpr (std::is_same_v<std::decay_t<T>, std::string>) {
+    if constexpr (DereferenceableAndNullable<std::decay_t<T>>) {
+        if (!t.has_value()) {
+            return "NULL";
+        }
+        return to_string_view(*t);
+    }
+    else if constexpr (std::is_same_v<std::decay_t<T>, std::string>) {
         return t;
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, std::string_view>) {

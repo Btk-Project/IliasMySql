@@ -56,7 +56,7 @@ struct ILIAS_SQL_API SqlDate {
 // 空值类型
 struct SqlNull {};
 // 全局静态 SqlNull 实例，用于返回指向 NULL 的指针（避免返回 nullptr）
-inline SqlNull g_sql_null{};
+inline SqlNull g_sql_null {};
 
 // 二进制视图
 using SqlBlobView = std::span<const std::byte>;
@@ -89,10 +89,16 @@ using SqlValueRef =
 
 // 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
 inline auto to_sql_pointer(std::nullptr_t &) -> SqlValuePointer {
-    return SqlValuePointer{&g_sql_null};
+    return SqlValuePointer {&g_sql_null};
 }
 inline auto to_sql_pointer(const std::nullptr_t &) -> SqlValuePointer {
-    return SqlValuePointer{&g_sql_null};
+    return SqlValuePointer {&g_sql_null};
+}
+inline auto to_sql_pointer(const std::nullopt_t &) -> SqlValuePointer {
+    return SqlValuePointer {&g_sql_null};
+}
+inline auto to_sql_pointer(std::nullopt_t &) -> SqlValuePointer {
+    return SqlValuePointer {&g_sql_null};
 }
 
 template <SqlValueType T, class enable = void>
@@ -235,10 +241,10 @@ auto to_sql_pointer(T &t) -> SqlValuePointer {
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
         if constexpr (std::is_pointer_v<std::decay_t<T>>) {
             if (t == nullptr) {
-                return SqlValuePointer{&g_sql_null};
+                return SqlValuePointer {&g_sql_null};
             }
         }
-        return SqlValuePointer{std::string_view{t}};
+        return SqlValuePointer {std::string_view {t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
                        std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {
@@ -249,7 +255,6 @@ auto to_sql_pointer(T &t) -> SqlValuePointer {
     }
 }
 
-
 template <typename T>
     requires ISqlValue<T>
 auto to_sql_pointer(const T &t) -> SqlValuePointer {
@@ -257,17 +262,17 @@ auto to_sql_pointer(const T &t) -> SqlValuePointer {
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
         if constexpr (std::is_pointer_v<std::decay_t<T>>) {
             if (t == nullptr) {
-                return SqlValuePointer{&g_sql_null};
+                return SqlValuePointer {&g_sql_null};
             }
         }
-        return SqlValuePointer{std::string_view{t}};
+        return SqlValuePointer {std::string_view {t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
                        std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {
         return SqlValuePointer {SqlBlobView {t}};
     }
     else {
-        return const_cast<T*>(std::addressof(t));
+        return const_cast<T *>(std::addressof(t));
     }
 }
 
@@ -314,7 +319,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlobView) {
             hex[i * 2] = "0123456789ABCDEF"[(int)c >> 4];
             hex[i * 2 + 1] = "0123456789ABCDEF"[(int)c & 0xF];
         }
-        return format_to(ctx.out(), "{}", hex);
+        return format_to(ctx.out(), "bytes({}):[{}]", blob.size_bytes(), hex);
     }
 };
 
@@ -327,7 +332,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
+                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kInt>(value));
             case SqlValueType::kBigInt:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kBigInt>(value));
             case SqlValueType::kFloat:
@@ -355,7 +360,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kChar:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kChar>(value));
+                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
             case SqlValueType::kBigInt:
@@ -385,7 +390,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kChar:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kChar>(value));
+                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
             case SqlValueType::kBigInt:

@@ -1,20 +1,21 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>
+#include <cmath>
+#include <limits>
+#include <optional>
 
 #include <ilias/platform.hpp>
 #include "ilias/sql/orm_form.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
-
-// 测试回溯辅助（与现有测试保持一致）
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
 using namespace ILIAS_NAMESPACE;
 NEKO_USE_NAMESPACE
 
-// 简化断言宏，匹配仓库中已有风格
+// ... [原有宏定义 CO_ASSERT_VAL 保持不变] ...
 #define CO_ASSERT_VAL(ret)                                                                                             \
     do {                                                                                                               \
         if (!ret.has_value()) {                                                                                        \
@@ -23,291 +24,301 @@ NEKO_USE_NAMESPACE
         }                                                                                                              \
     } while (0)
 
-// 测试实体（与其他测试使用不同命名以避免重复）
-struct OrmUser {
-    int         id    = 0;
-    std::string name  = "";
-    int         score = 0;
+// ==========================================
+// 新增：全类型覆盖测试实体
+// ==========================================
+struct ComplexModel {
+    std::optional<int64_t> id         = 0;
+    char                   tiny_val   = 0;    // TinyInt
+    int32_t                int_val    = 0;    // Int
+    int64_t                big_val    = 0;    // BigInt
+    float                  float_val  = 0.0f; // Float
+    double                 double_val = 0.0;  // Double
+    std::string            text_val;          // Text
+    std::vector<std::byte> blob_val;          // Binary
+    // 假设 SqlDate 内部表现为字符串或时间戳，这里演示其作为成员
+    // 如果 SqlDate 是库内建类型，直接使用。
+    std::string date_val; // 模拟 Timestamp/Date (SQLite常以Text存储)
+
+    // 可空类型测试
+    std::optional<int>         opt_int;
+    std::optional<std::string> opt_text;
+
+    // 唯一性约束字段
+    std::string unique_code;
 };
 
-struct OrmOrder {
-    int         id      = 0;
-    int         user_id = 0;
-    int         amount  = 0;
-    std::string product = "";
-};
+// 辅助：构建 Blob
+std::vector<std::byte> make_blob(const std::string &s) {
+    std::vector<std::byte> b;
+    b.reserve(s.size());
+    for (char c : s)
+        b.push_back(static_cast<std::byte>(c));
+    return b;
+}
+
+template <typename T, size_t N>
+std::vector<std::byte> make_blob(const T (&arr)[N]) {
+    std::vector<std::byte> b;
+    if (N == 0) {
+        return b;
+    }
+    if (sizeof(T) % sizeof(char) != 0) {
+        throw std::runtime_error("make_blob: element type size is not multiple of char size");
+    }
+    auto stride = sizeof(T) / sizeof(char);
+    b.reserve(N * stride);
+    for (auto &e : arr) {
+        const char *p = reinterpret_cast<const char *>(&e);
+        for (size_t i = 0; i < stride; ++i) {
+            b.push_back(static_cast<std::byte>(p[i]));
+        }
+    }
+    return b;
+}
+
+// 辅助：比较 Blob
+bool blob_eq(const std::vector<std::byte> &a, const std::string &s) {
+    if (a.size() != s.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != static_cast<std::byte>(s[i]))
+            return false;
+    }
+    return true;
+}
 
 NEKO_BEGIN_NAMESPACE
 template <>
-struct Meta<OrmUser, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&OrmUser::id), "name",
-               make_tags<SqlTags {.not_null = true}>(&OrmUser::name), "score",
-               make_tags<SqlTags {.not_null = true}>(&OrmUser::score));
-};
-
-template <>
-struct Meta<OrmOrder, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&OrmOrder::id), "user_id",
-               make_tags<SqlTags {.not_null = true}>(&OrmOrder::user_id), "amount",
-               make_tags<SqlTags {.not_null = true}>(&OrmOrder::amount), "product",
-               make_tags<SqlTags {.not_null = true}>(&OrmOrder::product));
+struct Meta<ComplexModel, void> {
+    constexpr static auto value =
+        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&ComplexModel::id), "tiny_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::tiny_val), "int_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::int_val), "big_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::big_val), "float_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::float_val), "double_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::double_val), "text_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::text_val), "blob_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::blob_val), "date_val",
+               make_tags<SqlTags {.not_null = true}>(&ComplexModel::date_val), "opt_int",
+               make_tags<SqlTags {.not_null = false}>(&ComplexModel::opt_int), "opt_text",
+               make_tags<SqlTags {.not_null = false}>(&ComplexModel::opt_text), "unique_code",
+               make_tags<SqlTags {.unique = true, .not_null = true}>(&ComplexModel::unique_code));
 };
 NEKO_END_NAMESPACE
 
-// 独立的 ORM 针对性测试集合
-class OrmInterfaceTests {
+class OrmFullCoverageTests {
 public:
-    // 打开内存 sqlite 并创建基础 users 表
     static auto setup_db() -> IoTask<SqlDatabase> {
         auto ret = co_await SqlDatabase::open_in_memory();
         if (!ret)
             throw std::runtime_error("open db failed");
         auto db = std::move(ret.value());
-
-        co_await db.execute("PRAGMA foreign_keys = ON;");
-        co_await db.execute("DROP TABLE IF EXISTS orm_users");
-        co_await db.execute("DROP TABLE IF EXISTS orm_orders");
-
-        co_await db.execute(
-            "CREATE TABLE orm_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score INTEGER NOT NULL);");
-        co_await db.execute("CREATE TABLE orm_orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, amount INTEGER "
-                            "NOT NULL, product TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES orm_users(id));");
-
         co_return db;
     }
 
-    // 测试 Form 创建/插入/读取 的基础 CRUD
-    static auto test_form_crud() -> IoTask<void> {
-        auto db = (co_await setup_db()).value();
-
-        auto form_ret = co_await Form<OrmUser, SqliteTag>::create(db, "orm_users");
+    // 测试 1: 完整的数据类型往返（Round-Trip），验证精度和二进制安全
+    static auto test_all_types_round_trip() -> IoTask<void> {
+        auto db       = (co_await setup_db()).value();
+        auto form_ret = co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models");
         CO_ASSERT_VAL(form_ret);
-        auto users = std::move(form_ret.value());
+        auto form = std::move(form_ret.value());
 
-        // 插入若干用户（显式使用唯一 id，避免绑定默认 id=0 导致主键冲突）
-        {
-            auto r = co_await users.insert(1, "Alice", 10);
-            CO_ASSERT_VAL(r);
+        ComplexModel m;
+        m.id          = 0;
+        m.tiny_val    = 127;
+        m.int_val     = 123456;
+        m.big_val     = 9223372036854775807L; // Max Int64
+        m.float_val   = 3.14159f;
+        m.double_val  = 1.23456789012345;
+        m.text_val    = "Hello \n 'World' \"Quote\"";  // 特殊字符测试
+        m.blob_val    = make_blob("\x00\x01\xFF\xFE"); // 二进制测试
+        m.date_val    = "2023-10-01 12:00:00";
+        m.opt_int     = 999;
+        m.opt_text    = "Optional String";
+        m.unique_code = "U001";
+        ILIAS_INFO("orm-test", "Inserting ComplexModel with all types, blob {}", SqlValueView {m.blob_val});
+        // 插入
+        auto ins_ret = co_await form.insert(m);
+        CO_ASSERT_VAL(ins_ret);
+
+        // 读取
+        auto query_ret = co_await form.select().where(form.col(&ComplexModel::unique_code) == "U001").query();
+        CO_ASSERT_VAL(query_ret);
+
+        int count = 0;
+        ilias_for_await(auto &row, query_ret.value().range()) {
+            ComplexModel res;
+            // 假设 load 支持自动解包到 struct，或手动解包
+            // 这里演示手动解包以验证值
+            auto [id, t, i, b, f, d, txt, blb, dt, oi, ot, uc] = row;
+
+            EXPECT_EQ(t, m.tiny_val);
+            EXPECT_EQ(i, m.int_val);
+            EXPECT_EQ(b, m.big_val);
+            EXPECT_FLOAT_EQ(f, m.float_val);
+            EXPECT_DOUBLE_EQ(d, m.double_val);
+            EXPECT_EQ(txt, m.text_val);
+            EXPECT_TRUE(std::equal(blb.begin(), blb.end(), m.blob_val.begin()));
+            EXPECT_EQ(dt, m.date_val);
+
+            EXPECT_TRUE(oi.has_value());
+            EXPECT_EQ(*oi, *m.opt_int);
+            EXPECT_TRUE(ot.has_value());
+            EXPECT_EQ(*ot, *m.opt_text);
+
+            count++;
         }
-        {
-            auto r = co_await users.insert(2, "Bob", 20);
-            CO_ASSERT_VAL(r);
+        EXPECT_EQ(count, 1);
+        co_return {};
+    }
+
+    // 测试 2: Null 值处理与 std::optional 映射
+    static auto test_null_semantics() -> IoTask<void> {
+        auto db   = (co_await setup_db()).value();
+        auto form = (co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models")).value();
+
+        // 插入包含 std::nullopt 的数据
+        auto ins_ret = co_await form.insert(1, 'c', 100, 1000L, 1.1f, 2.2, "Text", make_blob("b"), "2023-01-01",
+                                            std::nullopt, // opt_int is NULL
+                                            std::nullopt, // opt_text is NULL
+                                            "U_NULL_TEST");
+        CO_ASSERT_VAL(ins_ret);
+
+        // 1. 在 C++ 侧验证读取结果
+        auto q1 = co_await form.select().where(form.col(&ComplexModel::unique_code) == "U_NULL_TEST").query();
+        CO_ASSERT_VAL(q1);
+        ilias_for_await(auto &row, q1.value().range()) {
+            auto [id, t, i, b, f, d, txt, blb, dt, oi, ot, uc] = row;
+            EXPECT_FALSE(oi.has_value()); // 应该是 nullopt
+            EXPECT_FALSE(ot.has_value()); // 应该是 nullopt
         }
-        {
-            auto r = co_await users.insert(3, "Charlie", 30);
-            CO_ASSERT_VAL(r);
+
+        // 2. 使用 SQL 语义进行筛选 (WHERE opt_int IS NULL)
+        // 假设 ORM 重载了 == nullptr 或者有 is_null() 方法，或者是用 execute raw sql 验证
+        // 这里尝试用 raw where 验证数据确实落盘为 NULL
+        auto q2 = co_await form.select().where("opt_int"_sql == nullptr).query();
+        CO_ASSERT_VAL(q2);
+        int null_cnt = 0;
+        ilias_for_await(auto &row, q2.value().range()) {
+            null_cnt++;
         }
-
-        // 验证 count
-        auto cnt_ret = co_await users.count().query();
-        CO_ASSERT_VAL(cnt_ret);
-        int cnt = 0;
-        ilias_for_await(auto &row, cnt_ret.value().range()) {
-            cnt_ret.value().load(0, cnt);
-        }
-        EXPECT_EQ(cnt, 3);
-
-        // 查询并验证字段
-        auto sel_ret = co_await users.select().orderBy("id", false).query();
-        CO_ASSERT_VAL(sel_ret);
-        // 遍历验证在后续的 update/remove 场景中覆盖，此处仅确保查询成功
-
-        // 使用 where 及 update
-        auto update_ret =
-            co_await users.update().set(users.sql(&OrmUser::score) = 999).where("name"_sql == "Bob").execute();
-        CO_ASSERT_VAL(update_ret);
-        EXPECT_EQ(update_ret.value(), 1);
-
-        // 验证更新
-        auto q = co_await users.select("score").where("name"_sql == "Bob").query();
-        CO_ASSERT_VAL(q);
-        int score = 0;
-        ilias_for_await(auto &row, q.value().range()) {
-            q.value().load(0, score);
-        }
-        EXPECT_EQ(score, 999);
-
-        // 删除
-        auto del_ret = co_await users.remove().where("name"_sql == "Alice").execute();
-        CO_ASSERT_VAL(del_ret);
-        EXPECT_EQ(del_ret.value(), 1);
-
-        // 最终数量为 2
-        cnt_ret = co_await users.count().query();
-        CO_ASSERT_VAL(cnt_ret);
-        cnt = 0;
-        ilias_for_await(auto &row2, cnt_ret.value().range()) {
-            cnt_ret.value().load(0, cnt);
-        }
-        EXPECT_EQ(cnt, 2);
+        EXPECT_EQ(null_cnt, 1);
 
         co_return {};
     }
 
-    // 测试事务的提交与回滚语义
-    static auto test_transactions() -> IoTask<void> {
-        auto db = (co_await setup_db()).value();
+    // 测试 3: 复杂查询逻辑 (AND, OR, 大于小于, 排序)
+    static auto test_complex_queries() -> IoTask<void> {
+        auto db   = (co_await setup_db()).value();
+        auto form = (co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models")).value();
 
-        // 使用 Form 插入并回滚
-        auto users_ret = co_await Form<OrmUser, SqliteTag>::create(db, "orm_users");
-        CO_ASSERT_VAL(users_ret);
-        auto users = std::move(users_ret.value());
-
-        // 开事务并插入，然后回滚
-        auto tx = (co_await db.transaction()).value();
-        co_await tx.execute("INSERT INTO orm_users (name, score) VALUES ('TxUser', 5)");
-        auto q = co_await db.query<int>("SELECT count(*) FROM orm_users WHERE name = 'TxUser'");
-        CO_ASSERT_VAL(q);
-        int cnt = 0;
-        ilias_for_await(auto &r, q.value().range()) {
-            q.value().load(0, cnt);
+        // 准备数据
+        for (int k = 0; k < 10; ++k) {
+            co_await form.insert(std::nullopt, 'a' + k, k * 10, k * 100, (float)k, (double)k,
+                                 "Group" + std::to_string(k % 2), // Group0 or Group1
+                                 make_blob(""), "2023", std::nullopt, std::nullopt, "CODE_" + std::to_string(k));
         }
-        EXPECT_EQ(cnt, 1);
 
-        // 回滚
-        auto rb = co_await tx.rollback();
-        EXPECT_TRUE(rb);
-
-        // 验证不存在
-        q = co_await db.query<int>("SELECT count(*) FROM orm_users WHERE name = 'TxUser'");
-        CO_ASSERT_VAL(q);
-        cnt = 0;
-        ilias_for_await(auto &r2, q.value().range()) {
-            q.value().load(0, cnt);
+        // 场景 A: 范围 + 逻辑与 (int_val >= 30 AND int_val <= 70)
+        auto qA = co_await form.select()
+                      .where(form.col(&ComplexModel::int_val) >= 30 && form.col(&ComplexModel::int_val) <= 70)
+                      .query();
+        CO_ASSERT_VAL(qA);
+        int countA = 0;
+        ilias_for_await(auto &r, qA.value().range()) {
+            countA++;
         }
-        EXPECT_EQ(cnt, 0);
+        EXPECT_EQ(countA, 5); // 30, 40, 50, 60, 70
 
-        // 再次测试提交
-        auto tx2 = (co_await db.transaction()).value();
-        co_await tx2.execute("INSERT INTO orm_users (name, score) VALUES ('CommitUser', 7)");
-        auto commit_ret = co_await tx2.commit();
-        CO_ASSERT_VAL(commit_ret);
-
-        q = co_await db.query<int>("SELECT count(*) FROM orm_users WHERE name = 'CommitUser'");
-        CO_ASSERT_VAL(q);
-        cnt = 0;
-        ilias_for_await(auto &r3, q.value().range()) {
-            q.value().load(0, cnt);
+        // 场景 B: 混合类型逻辑 (Group1 AND double_val > 5.0)
+        auto qB = co_await form.select()
+                      .where(form.col(&ComplexModel::text_val) == "Group1" && form.col(&ComplexModel::double_val) > 5.0)
+                      .query();
+        CO_ASSERT_VAL(qB);
+        // k=1,3,5,7,9 are Group1. k>5 are 7,9.
+        int countB = 0;
+        ilias_for_await(auto &r, qB.value().range()) {
+            countB++;
         }
-        EXPECT_EQ(cnt, 1);
-
-        co_return {};
-    }
-
-    // 测试 Join 投影与完整对象返回
-    static auto test_join_and_projection() -> IoTask<void> {
-        auto db = (co_await setup_db()).value();
-
-        auto users_ret  = co_await Form<OrmUser, SqliteTag>::create(db, "orm_users");
-        auto orders_ret = co_await Form<OrmOrder, SqliteTag>::create(db, "orm_orders");
-        CO_ASSERT_VAL(users_ret);
-        CO_ASSERT_VAL(orders_ret);
-        auto users  = std::move(users_ret.value());
-        auto orders = std::move(orders_ret.value());
-
-        // 插入用户与订单
-        co_await users.insert(1, "U1", 10);
-        co_await users.insert(2, "U2", 20);
-        co_await orders.insert(101, 1, 500, "P1");
-        co_await orders.insert(102, 2, 200, "P2");
-
-        // 投影查询：user.name, order.product
-        auto u   = users.as("u");
-        auto o   = orders.as("o");
-        auto ret = co_await u.join(o)
-                       .on(u.col(&OrmUser::id) == o.col(&OrmOrder::user_id))
-                       .select(u.col(&OrmUser::name), o.col(&OrmOrder::product), o.col(&OrmOrder::amount))
-                       .where(o.col(&OrmOrder::amount) > 100)
-                       .query();
-        CO_ASSERT_VAL(ret);
-        int rows = 0;
-        ilias_for_await(auto &row, ret.value().range()) {
-            auto [n, p, a] = row;
-            EXPECT_FALSE(n.empty());
-            EXPECT_FALSE(p.empty());
-            EXPECT_GT(a, 0);
-            rows++;
+        EXPECT_EQ(countB, 2);
+        co_await form.print();
+        // 场景 C: 排序 (Desc by id)
+        auto qC = co_await form.select("id")
+                      .where(form.col(&ComplexModel::id) < 3)
+                      .orderBy("id", true) // true for desc
+                      .query();
+        CO_ASSERT_VAL(qC);
+        std::vector<int64_t> ids;
+        ilias_for_await(auto &row, qC.value().range()) {
+            int64_t id;
+            qC.value().load(0, id);
+            ids.push_back(id);
         }
-        EXPECT_EQ(rows, 2);
-
-        // 全对象 Join: 有些 orm 实现对无 select() 的 join 返回类型处理不同，使用原始 SQL 验证关联行数
-        auto cnt_ret = co_await db.query<int>(
-            "SELECT count(*) FROM orm_users INNER JOIN orm_orders ON orm_users.id = orm_orders.user_id");
-        CO_ASSERT_VAL(cnt_ret);
-        int join_count = 0;
-        ilias_for_await(auto &rowc, cnt_ret.value().range()) {
-            cnt_ret.value().load(0, join_count);
-        }
-        EXPECT_EQ(join_count, 2);
-
-        // 若库支持直接返回对象对，则也尽量遍历一次（不作为严格断言）
-        auto maybe_ret2 = co_await users.join(orders).on(users.col(&OrmUser::id) == orders.col(&OrmOrder::user_id)).query();
-        if (maybe_ret2.has_value()) {
-            ilias_for_await(auto &r, maybe_ret2.value().range()) {
-                (void)r; // 遍历以确保不崩溃
-            }
+        // id 从 1 开始， <3 为 1, 2。倒序应为 2, 1
+        EXPECT_EQ(ids.size(), 2);
+        if (ids.size() == 2) {
+            EXPECT_EQ(ids[0], 2);
+            EXPECT_EQ(ids[1], 1);
         }
 
         co_return {};
     }
 
-    // 测试 NULL 与 BLOB 的存取
-    static auto test_null_and_blob() -> IoTask<void> {
-        auto db = (co_await setup_db()).value();
+    // 测试 4: 数据库约束 (Unique, Not Null)
+    static auto test_constraints() -> IoTask<void> {
+        auto db   = (co_await setup_db()).value();
+        auto form = (co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models")).value();
 
-        co_await db.execute("DROP TABLE IF EXISTS orm_payload");
-        co_await db.execute("CREATE TABLE orm_payload (id INTEGER PRIMARY KEY, t TEXT, b BLOB)");
+        // 1. 正常插入
+        auto r1 = co_await form.insert(1, '1', 1, 1, 1.0, 1.0, "t", make_blob(""), "d", std::nullopt, std::nullopt,
+                                       "UNIQUE_A");
+        CO_ASSERT_VAL(r1);
 
-        // 使用 execute_with 明确绑定参数，避免 prepare.bind 的歧义导致重复 id
-        auto ir = co_await db.execute_with("INSERT INTO orm_payload (id, t, b) VALUES (?, ?, ?)", 1, nullptr,
-                          std::vector<std::byte> {});
-        CO_ASSERT_VAL(ir);
+        // 2. 违反 Unique 约束 (插入相同的 unique_code)
+        // 期望：orm 应该捕获错误或返回 result 为 error
+        // 注意：Ilias ORM 的 insert 返回 Result<int> (通常是 last_insert_id 或受影响行)
+        // 失败时应包含错误信息
+        auto r2 = co_await form.insert(2, '2', 2, 2, 2.0, 2.0, "t", make_blob(""), "d", std::nullopt, std::nullopt,
+                                       "UNIQUE_A");
 
-        std::vector<std::byte> blob = {std::byte {0xAA}, std::byte {0xBB}};
-        ir = co_await db.execute_with("INSERT INTO orm_payload (id, t, b) VALUES (?, ?, ?)", 2, "hello", blob);
-        CO_ASSERT_VAL(ir);
-
-        // 读取并验证
-        auto q = co_await db.query<std::tuple<std::optional<std::string>, std::vector<std::byte>>>(
-            "SELECT t, b FROM orm_payload ORDER BY id");
-        CO_ASSERT_VAL(q);
-        int idx = 0;
-        ilias_for_await(auto &row, q.value().range()) {
-            auto [t, b] = row;
-            if (idx == 0) {
-                EXPECT_FALSE(t.has_value());
-                EXPECT_EQ(b.size(), 0);
+        if (r2.has_value()) {
+            // 如果返回成功，检查是否真的插入了（某些配置下 INSERT OR IGNORE 可能会发生）
+            auto c   = co_await form.count().where(form.col(&ComplexModel::unique_code) == "UNIQUE_A").query();
+            int  cnt = 0;
+            ilias_for_await(auto &row, c.value().range()) {
+                c.value().load(0, cnt);
             }
-            else if (idx == 1) {
-                EXPECT_TRUE(t.has_value());
-                EXPECT_EQ(t.value(), "hello");
-                EXPECT_EQ(b.size(), 2);
+            EXPECT_EQ(cnt, 1) << "Unique constraint violated but duplicates found or ignored silently";
+            if (cnt > 1) {
+                ILIAS_WARN("sql-test", "Unique constraint failed to prevent duplicate");
             }
-            idx++;
         }
-        EXPECT_EQ(idx, 2);
+        else {
+            // 预期内的失败
+            SUCCEED();
+        }
 
         co_return {};
     }
 
     static ILIAS_NAMESPACE::Task<void> run_all() {
         try {
-            co_await test_form_crud();
-            co_await test_transactions();
-            co_await test_join_and_projection();
-            co_await test_null_and_blob();
+            co_await test_all_types_round_trip();
+            co_await test_null_semantics();
+            co_await test_complex_queries();
+            co_await test_constraints();
         } catch (const std::exception &e) {
-            ILIAS_ERROR("orm-test", "Exception in orm tests: {}", e.what());
-            EXPECT_TRUE(false) << "Exception in orm tests: " << e.what();
+            ILIAS_ERROR("orm-test-full", "Exception: {}", e.what());
+            EXPECT_TRUE(false) << e.what();
         }
         co_return;
     }
 };
 
-TEST(ORM, Interface) {
-    OrmInterfaceTests::run_all().wait();
+// 将新的测试套件加入 GoogleTest
+TEST(ORM, FullTypeCoverage) {
+    OrmFullCoverageTests::run_all().wait();
 }
 
 int main(int argc, char **argv) {

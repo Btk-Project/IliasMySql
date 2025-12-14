@@ -100,6 +100,7 @@ SqliteStatement::~SqliteStatement() {
 }
 
 auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
+    ILIAS_TRACE("ilias-sqlite", "sqlite({}) Binding index {} value {}", (void *)mSqlite.get(), index, value);
     if (!mSqlite || !mSqliteStmt) {
         ILIAS_TRACE("ilias-sqlite", "{} bind failed: not connected", index);
         return Unexpected(SqlError::Code::NotConnected);

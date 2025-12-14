@@ -72,5 +72,26 @@ constexpr bool is_sql_null(const T& val) {
     }
 }
 
+template <size_t N, typename ...Ts>
+struct select_type_helper;
+
+template <size_t N, typename T, typename ...Ts>
+struct select_type_helper<N, T, Ts...> {
+    using type = typename select_type_helper<N - 1, Ts...>::type;
+};
+
+template <typename T, typename ...Ts>
+struct select_type_helper<0, T, Ts...> {
+    using type = T;
+};
+
+template <size_t N>
+struct select_type_helper<N> {
+    using type = void;
+};
+
+template <size_t N, typename ...Ts>
+using select_type_t = typename select_type_helper<N, Ts...>::type;
+
 } // namespace detail
 ILIAS_SQL_NS_END

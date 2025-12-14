@@ -51,11 +51,10 @@ public:
 
         int bindIndex = 1;
         for (const auto &item : items) {
-            NEKO_NAMESPACE::Reflect<T>::forEach(
-                item, [&](const auto &field) {
-                    using FieldType = std::decay_t<decltype(field)>;
-                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
-                });
+            NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field) {
+                using FieldType = std::decay_t<decltype(field)>;
+                SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
+            });
         }
 
         co_return co_await ret->execute();
@@ -65,9 +64,20 @@ public:
     template <typename... Args>
         requires(std::is_constructible_v<T, Args...> && sizeof...(Args) > 0)
     auto insert(Args &&...args) -> IoTask<size_t> {
-        std::vector<T> vec;
-        vec.emplace_back(std::forward<Args>(args)...);
-        co_return co_await insert(vec);
+        std::string placeholders;
+        size_t      colCount       = derived().getColumnNames().size();
+        std::string rowPlaceholder = "(";
+        for (size_t i = 0; i < colCount; ++i) {
+            rowPlaceholder += (i == 0 ? "?" : ", ?");
+        }
+        rowPlaceholder += ")";
+        std::string sql = "INSERT INTO " + derived().getTableName() + " (" +
+                          detail::join_strs(derived().getColumnNames(), ", ") + ") VALUES " + rowPlaceholder;
+        auto ret = co_await derived().db().template prepare<T>(sql);
+        if (!ret)
+            co_return Unexpected(ret.error());
+        ret->bind(std::forward<Args>(args)...);
+        co_return co_await ret->execute();
     }
 
     auto insert() {
@@ -89,7 +99,12 @@ public:
         return detail::ProjectedSelectBuilder<Ts...>(derived().db(), derived().tableRef(), args...);
     }
 
-    auto select(const std::string &columns = "") const {
+    auto select() const {
+        auto builder = detail::ProjectedSelectBuilder<T>(derived().db(), derived().tableRef());
+        return builder;
+    }
+
+    auto select(const std::string &columns) const {
         auto builder = detail::SelectBuilder(derived().db(), derived().tableRef());
         if (!columns.empty())
             builder.select(columns);
@@ -162,7 +177,7 @@ public:
             ILIAS_ERROR("ilias-sql", "Print failed: {}", ret.error().message());
             co_return;
         }
-        detail::ConsoleTable table(derived().getColumnNames());
+        detail::ConsoleTable table(derived().tableRef(), derived().getColumnNames());
         SqlResult<T>         res = std::move(ret.value());
         ilias_for_await([[maybe_unused]] auto obj, res.range()) {
             std::vector<std::string> rowStrings;
@@ -173,15 +188,6 @@ public:
                 }
                 else if constexpr (requires(FieldType field) { detail::to_string_view(field); }) {
                     rowStrings.push_back(detail::to_string_view(field));
-                }
-                else if constexpr (requires(FieldType field) {
-                                       field.has_value();
-                                       detail::to_string_view(field.value());
-                                   }) {
-                    if (field.has_value())
-                        rowStrings.push_back(detail::to_string_view(field.value()));
-                    else
-                        rowStrings.push_back("NULL");
                 }
                 else {
                     static_assert(std::is_void_v<FieldType>, "Field type is not convertible to string");
