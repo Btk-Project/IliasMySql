@@ -235,7 +235,7 @@ auto to_sql_value_view(T &&t) -> SqlValueView {
 }
 
 template <typename T>
-    requires ISqlValue<T>
+    requires(ISqlValue<T> && !std::is_integral_v<T>)
 auto to_sql_pointer(T &t) -> SqlValuePointer {
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
@@ -256,7 +256,7 @@ auto to_sql_pointer(T &t) -> SqlValuePointer {
 }
 
 template <typename T>
-    requires ISqlValue<T>
+    requires(ISqlValue<T> && !std::is_integral_v<T>)
 auto to_sql_pointer(const T &t) -> SqlValuePointer {
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
@@ -273,6 +273,26 @@ auto to_sql_pointer(const T &t) -> SqlValuePointer {
     }
     else {
         return const_cast<T *>(std::addressof(t));
+    }
+}
+
+template <typename T>
+    requires(std::is_integral_v<T> && sizeof(T) <= sizeof(int64_t))
+auto to_sql_pointer(T &t) -> SqlValuePointer {
+    if constexpr (std::is_same_v<T, bool>) {
+        return SqlValuePointer {(char *)std::addressof(t)};
+    }
+    else if constexpr (sizeof(T) <= sizeof(char) && std::is_signed_v<T>) {
+        return SqlValuePointer {(char *)std::addressof(t)};
+    }
+    else if constexpr ((sizeof(T) <= sizeof(int32_t) && std::is_signed_v<T>) || sizeof(T) < sizeof(int32_t)) {
+        return SqlValuePointer {(int32_t *)std::addressof(t)};
+    }
+    else if constexpr ((sizeof(T) <= sizeof(int64_t) && std::is_signed_v<T>) || sizeof(T) < sizeof(int64_t)) {
+        return SqlValuePointer {(int64_t *)std::addressof(t)};
+    }
+    else {
+        static_assert(sizeof(T) <= sizeof(int32_t), "Integral type too large");
     }
 }
 

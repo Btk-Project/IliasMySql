@@ -527,7 +527,7 @@ private:
         }
     }
     void addAssignment(const SqlAssignment &assign) {
-        // assign 里面的sql存放 name = ?, 提取name 构造NamedBinder
+        // assign 里面的sql存放 name = ? 或 name = :name, 提取name 构造NamedBinder
         auto assign_pos = assign.sql.find('=');
         if (assign_pos == std::string::npos) {
             throw std::runtime_error("Invalid assignment: " + assign.sql);
@@ -536,7 +536,7 @@ private:
         name.erase(std::remove(name.begin(), name.end(), ' '), name.end());
         std::string value = assign.sql.substr(assign_pos + 1);
         value.erase(std::remove(value.begin(), value.end(), ' '), value.end());
-        if (value != "?" || assign.binders.size() != 1) {
+        if (assign.binders.size() != 1) {
             throw std::runtime_error("Invalid assignment: value: " + value + " with: " + name);
         }
         for (auto &binder : assign.binders) {

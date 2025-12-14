@@ -27,28 +27,17 @@ public:
     auto insert(const Range &items) -> IoTask<size_t> {
         if (std::empty(items))
             co_return 0;
-
         std::string placeholders;
-        size_t      colCount = derived().getColumnNames().size();
-
-        // 单行的占位符: (?, ?, ?)
-        std::string rowPlaceholder = "(";
-        for (size_t i = 0; i < colCount; ++i) {
-            rowPlaceholder += (i == 0 ? "?" : ", ?");
-        }
-        rowPlaceholder += ")";
-
+        auto        columns        = derived().getColumnNames();
+        std::string rowPlaceholder = "(" + detail::join_strs(columns, ", ", ":") + ")";
         // 拼接所有行
         std::vector<std::string> allRowsPlaceholder(std::size(items), rowPlaceholder);
-
         std::string sql = "INSERT INTO " + derived().getTableName() + " (" +
                           detail::join_strs(derived().getColumnNames(), ", ") + ") VALUES " +
                           detail::join_strs(allRowsPlaceholder, ", ");
-
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
             co_return Unexpected(ret.error());
-
         int bindIndex = 1;
         for (const auto &item : items) {
             NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field) {
@@ -56,7 +45,6 @@ public:
                 SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
             });
         }
-
         co_return co_await ret->execute();
     }
 
@@ -65,27 +53,21 @@ public:
         requires(std::is_constructible_v<T, Args...> && sizeof...(Args) > 0)
     auto insert(Args &&...args) -> IoTask<size_t> {
         std::string placeholders;
-        size_t      colCount       = derived().getColumnNames().size();
-        std::string rowPlaceholder = "(";
-        for (size_t i = 0; i < colCount; ++i) {
-            rowPlaceholder += (i == 0 ? "?" : ", ?");
-        }
-        rowPlaceholder += ")";
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" +
-                          detail::join_strs(derived().getColumnNames(), ", ") + ") VALUES " + rowPlaceholder;
+        auto        columns        = derived().getColumnNames();
+        std::string rowPlaceholder = "(" + detail::join_strs(columns, ", ", ":") + ")";
+        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columns, ", ") +
+                          ") VALUES " + rowPlaceholder;
         auto ret = co_await derived().db().template prepare<T>(sql);
         if (!ret)
             co_return Unexpected(ret.error());
         ret->bind(std::forward<Args>(args)...);
         co_return co_await ret->execute();
     }
-
     auto insert() {
         return detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
     }
     // Update Builder
     auto update() { return detail::UpdateBuilder(derived().db(), derived().getTableName()); }
-
     // Remove Builder
     auto remove() { return detail::DeleteBuilder(derived().db(), derived().getTableName()); }
 

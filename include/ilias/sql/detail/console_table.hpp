@@ -34,9 +34,14 @@ public:
             return;
         mRows.push_back(row);
         for (size_t i = 0; i < row.size(); ++i) {
+            // 处理换行符
+            std::string &tmp = mRows.back()[i];
+            size_t       pos = 0;
+            while ((pos = tmp.find('\n', pos)) != std::string::npos)
+                tmp.replace(pos, 1, "\\n"), pos += 2; // 换行符替换为 \n
             // 更新每一列的最大宽度
             // 注意：这里假设是 ASCII，如果是中文，对齐可能会有偏差，需要专门的 utf8 长度计算库
-            mColumnWidths[i] = std::max(mColumnWidths[i], row[i].length());
+            mColumnWidths[i] = std::max(mColumnWidths[i], tmp.length());
         }
     }
 

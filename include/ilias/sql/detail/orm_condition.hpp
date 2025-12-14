@@ -200,7 +200,7 @@ public:
     SqlAssignment operator=(T &&value) const {
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<T>>>(std::forward<T>(value)));
-        return SqlAssignment {.sql = mName + " = ?", .binders = std::move(binders)};
+        return SqlAssignment {.sql = mName + " = :" + mName, .binders = std::move(binders)};
     }
 
     template <typename T>
@@ -210,7 +210,7 @@ public:
         using ResultT = std::invoke_result_t<T>;
         static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(u)));
-        return SqlAssignment {.sql = mName + " = ?", .binders = std::move(binders)};
+        return SqlAssignment {.sql = mName + " = :" + mName, .binders = std::move(binders)};
     }
 
     template <typename T>

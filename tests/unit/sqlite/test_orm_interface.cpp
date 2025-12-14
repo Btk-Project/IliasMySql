@@ -128,7 +128,7 @@ public:
         m.id          = 0;
         m.tiny_val    = 127;
         m.int_val     = 123456;
-        m.big_val     = 9223372036854775807L; // Max Int64
+        m.big_val     = std::numeric_limits<int64_t>::max(); // Max Int64
         m.float_val   = 3.14159f;
         m.double_val  = 1.23456789012345;
         m.text_val    = "Hello \n 'World' \"Quote\"";  // 特殊字符测试
@@ -148,9 +148,6 @@ public:
 
         int count = 0;
         ilias_for_await(auto &row, query_ret.value().range()) {
-            ComplexModel res;
-            // 假设 load 支持自动解包到 struct，或手动解包
-            // 这里演示手动解包以验证值
             auto [id, t, i, b, f, d, txt, blb, dt, oi, ot, uc] = row;
 
             EXPECT_EQ(t, m.tiny_val);
@@ -170,6 +167,7 @@ public:
             count++;
         }
         EXPECT_EQ(count, 1);
+        co_await form.print();
         co_return {};
     }
 
@@ -179,7 +177,7 @@ public:
         auto form = (co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models")).value();
 
         // 插入包含 std::nullopt 的数据
-        auto ins_ret = co_await form.insert(1, 'c', 100, 1000L, 1.1f, 2.2, "Text", make_blob("b"), "2023-01-01",
+        auto ins_ret = co_await form.insert(1, 'c', 100, 1000, 1.1f, 2.2, "Text", make_blob("b"), "2023-01-01",
                                             std::nullopt, // opt_int is NULL
                                             std::nullopt, // opt_text is NULL
                                             "U_NULL_TEST");
