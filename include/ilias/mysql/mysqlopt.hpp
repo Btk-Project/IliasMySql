@@ -53,7 +53,8 @@ ILIAS_MYSQL_NS_BEGIN
     MYSQL_OPTION_ROW(Schema, MARIADB_OPT_SCHEMA, std::string)                                                          \
     MYSQL_OPTION_ROW(FoundRows, MARIADB_OPT_FOUND_ROWS, int)                                                           \
     MYSQL_OPTION_ROW(MultiREsults, MARIADB_OPT_MULTI_RESULTS, int)                                                     \
-    MYSQL_OPTION_ROW(MultiStatements, MARIADB_OPT_MULTI_STATEMENTS, std::string)
+    MYSQL_OPTION_ROW(MultiStatements, MARIADB_OPT_MULTI_STATEMENTS, std::string)                                       \
+    MYSQL_OPTION_ROW(DefaultAuth, MYSQL_DEFAULT_AUTH, std::string)
 
 namespace sqlopt {
 namespace detail {

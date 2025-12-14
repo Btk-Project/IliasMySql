@@ -126,6 +126,9 @@ public:
 
         // 2. 禁用 SSL 强制校验 (防止握手阶段因证书问题断开)
         options.extra.insert(std::make_pair("SslEnforce", "false"));
+        options.extra.insert(std::make_pair("SslVerifyServerCert", "false"));
+        options.extra.insert(std::make_pair("DefaultAuth", "mysql_native_password"));
+
         return options;
     }
 
