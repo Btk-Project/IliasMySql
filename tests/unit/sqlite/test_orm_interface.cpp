@@ -221,8 +221,8 @@ public:
         // 准备数据
         for (int k = 0; k < 10; ++k) {
             data.emplace_back(std::nullopt, 'a' + k, k * 10, k * 100, (float)k, (double)k,
-                                 "Group" + std::to_string(k % 2), // Group0 or Group1
-                                 make_blob(""), "2023", std::nullopt, std::nullopt, "CODE_" + std::to_string(k));
+                              "Group" + std::to_string(k % 2), // Group0 or Group1
+                              make_blob(""), "2023", std::nullopt, std::nullopt, "CODE_" + std::to_string(k));
         }
         auto ret = co_await form.insert(data);
         CO_ASSERT_VAL(ret);
@@ -251,7 +251,7 @@ public:
         CO_ASSERT_VAL(qB);
         // k=1,3,5,7,9 are Group1. k>5 are 7,9.
         int countB = 0;
-        ilias_for_await(auto &r, qB.value().range()) {
+        ilias_for_await([[maybe_unused]] auto &r, qB.value().range()) {
             countB++;
         }
         EXPECT_EQ(countB, 2);
@@ -301,6 +301,7 @@ public:
             auto c   = co_await form.count().where(form.col(&ComplexModel::unique_code) == "UNIQUE_A").query();
             int  cnt = 0;
             ilias_for_await(auto &row, c.value().range()) {
+                CO_ASSERT_VAL(row);
                 c.value().load(0, cnt);
             }
             EXPECT_EQ(cnt, 1) << "Unique constraint violated but duplicates found or ignored silently";

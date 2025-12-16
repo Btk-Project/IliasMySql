@@ -30,7 +30,7 @@ public:
         std::string placeholders;
         auto        columns        = derived().getColumnNames();
         std::string rowPlaceholder = "(";
-        for (const auto &column : columns) {
+        for ([[maybe_unused]] int i = 0; i < (int)columns.size(); ++i) {
             if (rowPlaceholder.back() != '(')
                 rowPlaceholder += ", ";
             rowPlaceholder += "?";

@@ -13,16 +13,23 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
 
     -- If this file require a specific configuration, load it, and skip the auto target creation
     if os.exists(conf_path) then 
+        print("include " .. conf_path)
         includes(conf_path)
         goto continue
     end
+    sql_backend = string.match(dir, "unit/(%w+)")
+    if sql_backend == nil then
+        print("skip " .. dir .. "/" .. name)
+        goto continue
+    end
 
-    -- if not has_config("enable_" .. string.sub(name, 6, -1)) then 
-    --     goto continue
-    -- end
+    if not has_config("enable_" .. sql_backend) then
+        print("skip " .. dir .. "/" .. name .. " because " .. sql_backend .. " is disabled")
+        goto continue
+    end
 
     -- Otherwise, create a target for this file, in most case, it should enough
-    target(name)
+    target(name .. "_" .. sql_backend)
         set_kind("binary")
         set_default(false)
         add_deps("ilias_sql")

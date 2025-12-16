@@ -681,7 +681,7 @@ public:
             std::vector<resultType> true_rows = {{"Alice", "Apple", 500}, {"Bob", "TV", 900}};
             int                     idx       = 0;
             ilias_for_await(auto &row, result.range()) {
-                if (idx >= true_rows.size()) {
+                if (idx >= (int)true_rows.size()) {
                     ILIAS_ERROR("mysql-test", ">>> test_join_features FAILED: result size mismatch");
                     co_return {};
                 }
@@ -715,7 +715,7 @@ public:
                                                  {SimpleUser {1, "Alice", 100}, SimpleOrder {102, 1, 50, "Banana"}}};
             int                     idx       = 0;
             ilias_for_await(auto &row, result.range()) {
-                if (idx >= true_rows.size()) {
+                if (idx >= (int)true_rows.size()) {
                     ILIAS_ERROR("mysql-test", ">>> test_join_features FAILED: result size mismatch");
                     co_return {};
                 }

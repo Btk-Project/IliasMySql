@@ -19,6 +19,13 @@ add_requireconfs("**.neko-proto-tools", {override = true, version = "dev", confi
 includes("lua/hidetargets.lua")
 set_warnings("allextra")
 
+option("enable_test")
+    set_default(false)
+    set_showmenu(true)
+    set_category("test")
+    set_description("enable test")
+option_end()
+
 option("enable_mysql")
     set_default(true)
     set_showmenu(true)
@@ -77,4 +84,6 @@ target("ilias_sql")
     end)
 target_end()
 
-includes("./tests")
+if has_config("enable_test") then
+    includes("./tests")
+end
