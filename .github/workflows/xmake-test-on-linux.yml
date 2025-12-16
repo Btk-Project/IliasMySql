@@ -47,7 +47,7 @@ jobs:
 
     - name: Configure XMake
       # We configure for Release (or Debug) and ensure we check for dependencies
-      run: xmake f -m asan -y
+      run: xmake f -m asan --enable_test=y -y
 
     - name: Build
       run: xmake -y
