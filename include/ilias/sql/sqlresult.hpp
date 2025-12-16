@@ -158,9 +158,6 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
                 using ObjT = std::decay_t<decltype(value)>;
                 NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret](auto &field, std::string_view name) {
                     ret = ret ? load(name, field) : ret;
-                    if (!ret) {
-                        ILIAS_TRACE("ilias-sql", "Failed to load field '{}': {}", name, ret.error().message());
-                    }
                 });
             };
             [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {

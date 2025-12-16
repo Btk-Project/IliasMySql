@@ -287,9 +287,7 @@ public:
         ilias_for_await(auto &u, res.range()) {
             found = true;
             EXPECT_EQ(u.id, 999);
-            // 假设库策略：NULL -> 0 (需要根据实际 ilias 实现调整预期)
-            // EXPECT_EQ(u.score, 0);
-            ILIAS_INFO("test", "Got user with score: {}", u.score.value_or(-1));
+            EXPECT_FALSE(u.score);
         }
         EXPECT_TRUE(found);
 

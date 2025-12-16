@@ -45,6 +45,10 @@ ILIAS_MYSQL_NS_BEGIN
 auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
     -> Result<SqlValue, std::error_code> {
     SqlValue result;
+    if (buffer == nullptr) {
+        result.emplace<sql::SqlNull>();
+        return result;
+    }
     switch (field->type) {
         case MYSQL_TYPE_TINY: // char
             result.emplace<char>(*reinterpret_cast<int32_t *>(buffer));
@@ -101,6 +105,10 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
 auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize)
     -> Result<SqlValue, std::error_code> {
     SqlValue result;
+    if (buffer == nullptr) {
+        result.emplace<sql::SqlNull>();
+        return result;
+    }
     switch (field->type) {
         case MYSQL_TYPE_TINY: { // char
             int res;

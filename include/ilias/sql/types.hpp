@@ -351,8 +351,12 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
     auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValue & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
+            case SqlValueType::kNull:
+                return format_to(ctx.out(), "{}", "NULL");
+            case SqlValueType::kChar:
+                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
-                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kInt>(value));
+                return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
             case SqlValueType::kBigInt:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kBigInt>(value));
             case SqlValueType::kFloat:
@@ -379,6 +383,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
     auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueView & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
+            case SqlValueType::kNull:
+                return format_to(ctx.out(), "{}", "NULL");
             case SqlValueType::kChar:
                 return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
@@ -409,6 +415,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
     auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValuePointer & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
+            case SqlValueType::kNull:
+                return format_to(ctx.out(), "{}", "NULL");
             case SqlValueType::kChar:
                 return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:

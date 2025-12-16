@@ -47,9 +47,9 @@ using namespace ILIAS_NAMESPACE;
 
 // 用于简单 CRUD 测试
 struct SimpleUser {
-    int         id;
-    std::string name;
-    int         score;
+    int                id;
+    std::string        name;
+    std::optional<int> score;
 };
 
 struct SimpleOrder {
@@ -379,10 +379,8 @@ public:
 
         ilias_for_await(auto &u, q.value().range()) {
             EXPECT_EQ(u.id, 999);
-            // 这里的行为取决于库实现，通常 int 类型的 NULL 会被转为 0，或者如果库支持 std::optional 则为空
-            // 假设库策略是如果不报错，则默认构造 (int -> 0)
-            // EXPECT_EQ(u.score, 0);
-            ILIAS_INFO("mysql-test", "Read NULL int as: {}", u.score);
+            EXPECT_FALSE(u.score.has_value());
+            ILIAS_INFO("mysql-test", "Read NULL int as: {}", u.score.has_value());
         }
         ILIAS_INFO("mysql-test", ">>> test_null_handling PASSED");
         co_return {};
@@ -393,16 +391,16 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_transaction_rollback");
 
-        // 1. 开启事务
+        // 开启事务
         auto tx = (co_await db.transaction()).value();
 
-        // 2. 在事务中插入一条“脏数据”
+        // 在事务中插入一条“脏数据”
         // 使用 ID 8888 标记这条应该被回滚的数据
         auto exec_ret =
             co_await tx.execute("INSERT INTO simple_users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
         CO_ASSERT_VAL(exec_ret);
 
-        // (可选验证) 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
+        // 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
         // 但我们要验证的是回滚后的最终一致性
         auto query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 8888");
         CO_ASSERT_VAL(query_ret);
@@ -485,7 +483,7 @@ public:
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
 
         {
-            auto ret = co_await users.select("count(*)")
+            auto ret = co_await users.count()
                            .where(users.sql(&SimpleUser::score) > 500 && users.sql(&SimpleUser::id) < 60)
                            .query();
             CO_ASSERT_VAL(ret);
@@ -499,7 +497,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)").where("id"_sql < 5 || "id"_sql >= 95).query();
+            auto ret = co_await users.count().where("id"_sql < 5 || "id"_sql >= 95).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -511,7 +509,7 @@ public:
         }
 
         {
-            auto ret = co_await users.select("count(*)")
+            auto ret = co_await users.count()
                            .where(users.sql(&SimpleUser::id) < 5 ||
                                   (users.sql(&SimpleUser::id) >= 95 && users.sql(&SimpleUser::score) > 970))
                            .query();
@@ -713,7 +711,8 @@ public:
             auto result = std::move(ret.value());
 
             using resultType                  = std::tuple<SimpleUser, SimpleOrder>;
-            std::vector<resultType> true_rows = {{SimpleUser {1, "Alice", 100}, SimpleOrder {101, 1, 500, "Apple"}}};
+            std::vector<resultType> true_rows = {{SimpleUser {1, "Alice", 100}, SimpleOrder {101, 1, 500, "Apple"}},
+                                                 {SimpleUser {1, "Alice", 100}, SimpleOrder {102, 1, 50, "Banana"}}};
             int                     idx       = 0;
             ilias_for_await(auto &row, result.range()) {
                 if (idx >= true_rows.size()) {
@@ -760,7 +759,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
 }
 
 TEST(SQL, MySqlSuite) {
-    // run_all_tests().wait();
+    run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {
@@ -768,7 +767,6 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
-    run_all_tests().wait();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
