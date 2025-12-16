@@ -19,6 +19,9 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
     end
     sql_backend = string.match(dir, "unit/(%w+)")
     if sql_backend == nil then
+        sql_backend = string.match(dir, "unit\\(%w+)")
+    end
+    if sql_backend == nil then
         print("skip " .. dir .. "/" .. name)
         goto continue
     end
