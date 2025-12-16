@@ -80,8 +80,16 @@ SelectBuilder &SelectBuilder::select(const std::string &columns) {
     return *this;
 }
 
-SelectBuilder &SelectBuilder::count() {
-    mSelectColumns = "COUNT(*)";
+SelectBuilder &SelectBuilder::count(const std::string &column) {
+    std::string column_ = column;
+    std::transform(column_.begin(), column_.end(), column_.begin(), ::toupper);
+    if (column == "*" || column_ == "COUNT(*)" || column.empty()) {
+        mSelectColumns = "COUNT(*)";
+    } else if (column_.starts_with("COUNT")) {
+        mSelectColumns = column;
+    } else {
+        mSelectColumns = "COUNT(" + column + ")";
+    }
     return *this;
 }
 

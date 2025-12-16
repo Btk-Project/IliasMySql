@@ -72,7 +72,7 @@ public:
     SelectBuilder(SqlDatabase &db, std::string tableName);
 
     SelectBuilder &select(const std::string &columns);
-    SelectBuilder &count();
+    SelectBuilder &count(const std::string &column);
     SelectBuilder &where(const SqlCondition &cond);
     SelectBuilder &orderBy(const std::string &column, bool desc = false);
     SelectBuilder &limit(int limit);

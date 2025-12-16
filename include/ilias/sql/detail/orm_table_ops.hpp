@@ -29,12 +29,16 @@ public:
             co_return 0;
         std::string placeholders;
         auto        columns        = derived().getColumnNames();
-        std::string rowPlaceholder = "(" + detail::join_strs(columns, ", ", ":") + ")";
-        // 拼接所有行
+        std::string rowPlaceholder = "(";
+        for (const auto &column : columns) {
+            if (rowPlaceholder.back() != '(')
+                rowPlaceholder += ", ";
+            rowPlaceholder += "?";
+        }
+        rowPlaceholder += ")";
         std::vector<std::string> allRowsPlaceholder(std::size(items), rowPlaceholder);
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" +
-                          detail::join_strs(derived().getColumnNames(), ", ") + ") VALUES " +
-                          detail::join_strs(allRowsPlaceholder, ", ");
+        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columns, ", ") +
+                          ") VALUES " + detail::join_strs(allRowsPlaceholder, ", ");
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
             co_return Unexpected(ret.error());
@@ -93,7 +97,16 @@ public:
         return builder;
     }
 
-    auto count() const { return detail::SelectBuilder(derived().db(), derived().tableRef()).count(); }
+    auto count() const { return detail::SelectBuilder(derived().db(), derived().tableRef()).count("*"); }
+
+    auto count(const std::string &column) const {
+        return detail::SelectBuilder(derived().db(), derived().tableRef()).count(column);
+    }
+
+    template <typename U>
+    auto count(detail::TypedColumn<U> column) const {
+        return detail::SelectBuilder(derived().db(), derived().tableRef()).count(column.sql());
+    }
 
     // =========================================================
     // 3. 联表操作 (Join)

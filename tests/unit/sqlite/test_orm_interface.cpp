@@ -200,6 +200,11 @@ public:
         int null_cnt = 0;
         ilias_for_await(auto &row, q2.value().range()) {
             null_cnt++;
+            auto [id, t, i, b, f, d, txt, blb, dt, oi, ot, uc] = row;
+            EXPECT_FALSE(oi.has_value()); // 应该是 nullopt
+            EXPECT_FALSE(ot.has_value()); // 应该是 nullopt
+            EXPECT_EQ(id, 1);
+            EXPECT_EQ(t, 'c');
         }
         EXPECT_EQ(null_cnt, 1);
 
@@ -211,12 +216,16 @@ public:
         auto db   = (co_await setup_db()).value();
         auto form = (co_await Form<ComplexModel, SqliteTag>::create(db, "complex_models")).value();
 
+        std::vector<ComplexModel> data;
+
         // 准备数据
         for (int k = 0; k < 10; ++k) {
-            co_await form.insert(std::nullopt, 'a' + k, k * 10, k * 100, (float)k, (double)k,
+            data.emplace_back(std::nullopt, 'a' + k, k * 10, k * 100, (float)k, (double)k,
                                  "Group" + std::to_string(k % 2), // Group0 or Group1
                                  make_blob(""), "2023", std::nullopt, std::nullopt, "CODE_" + std::to_string(k));
         }
+        auto ret = co_await form.insert(data);
+        CO_ASSERT_VAL(ret);
 
         // 场景 A: 范围 + 逻辑与 (int_val >= 30 AND int_val <= 70)
         auto qA = co_await form.select()
@@ -224,8 +233,14 @@ public:
                       .query();
         CO_ASSERT_VAL(qA);
         int countA = 0;
-        ilias_for_await(auto &r, qA.value().range()) {
+        ilias_for_await(auto &row, qA.value().range()) {
             countA++;
+            auto [id, t, i, b, f, d, txt, blb, dt, oi, ot, uc] = row;
+            EXPECT_EQ(t, 'a' + (*id - 1));
+            EXPECT_EQ(i, 10 * (*id - 1));
+            EXPECT_EQ(b, 100 * (*id - 1)); // blob is empty
+            EXPECT_EQ(txt, "Group" + std::to_string((*id - 1) % 2));
+            EXPECT_EQ(uc, "CODE_" + std::to_string(*id - 1));
         }
         EXPECT_EQ(countA, 5); // 30, 40, 50, 60, 70
 
@@ -248,7 +263,8 @@ public:
                       .query();
         CO_ASSERT_VAL(qC);
         std::vector<int64_t> ids;
-        ilias_for_await(auto &row, qC.value().range()) {
+        ilias_for_await(auto &ret, qC.value().range()) {
+            CO_ASSERT_VAL(ret);
             int64_t id;
             qC.value().load(0, id);
             ids.push_back(id);

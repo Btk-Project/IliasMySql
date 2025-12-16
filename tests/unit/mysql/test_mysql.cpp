@@ -592,7 +592,7 @@ public:
             EXPECT_EQ(remove_ret.value(), 1);
 
             // 验证不存在
-            auto ret   = co_await users.select("count(*)").where(users.sql(&SimpleUser::id) == 20).query();
+            auto ret   = co_await users.count().where(users.sql(&SimpleUser::id) == 20).query();
             auto res   = std::move(ret.value());
             int  count = -1;
             ilias_for_await([[maybe_unused]] auto &row, res.range()) {
