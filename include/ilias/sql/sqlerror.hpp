@@ -29,7 +29,8 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(UnsupportedApi, "unsupported api")                                                                 \
     SQL_ERROR_ENTRY(DialectNotSupported, "Dialect not supported")                                                      \
     SQL_ERROR_ENTRY(InvalidParameter, "Invalid parameter")                                                             \
-    SQL_ERROR_ENTRY(NullValue, "Null value")
+    SQL_ERROR_ENTRY(NullValue, "Null value")                                                                           \
+    SQL_ERROR_ENTRY(DriverAlreadyRegistered, "Driver already registered")
 
 class ILIAS_SQL_API SqlError {
 public:

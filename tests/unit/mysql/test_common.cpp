@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include "ilias/sql/driver_registry.hpp"
-#include "ilias/sql/orm_form.hpp"
+#include "ilias/sql_orm/orm_form.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"

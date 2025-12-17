@@ -6,9 +6,10 @@
 #include <optional>
 
 #include <ilias/platform.hpp>
-#include "ilias/sql/orm_form.hpp"
+#include "ilias/sql_orm/orm_form.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
+#include "ilias/sqlite/sqlite.hpp"
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;

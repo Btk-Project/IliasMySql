@@ -10,25 +10,17 @@
 
 ILIAS_SQL_NS_BEGIN
 
-struct ConnectOptions {
-    std::string                        host;
-    uint16_t                           port = 0;
-    std::string                        user;
-    std::string                        password;
-    std::string                        database;
-    std::string                        filename;
-    std::map<std::string, std::string> extra;
-};
-
 // 驱动创建函数原型
 using DriverFactoryFn = std::function<std::unique_ptr<IConnection>(const ConnectOptions &)>;
 
 class ILIAS_SQL_API DriverManager {
 public:
     static auto instance() -> DriverManager &;
-    void        registerDriver(std::string_view name, DriverFactoryFn factory);
+    auto        registerDriver(std::string_view name, DriverFactoryFn factory) -> IoResult<void>;
     auto        createConnection(std::string_view driverName, const ConnectOptions &opts)
         -> IoResult<std::unique_ptr<IConnection>>;
+    auto loadPlugin(std::string_view path) -> IoResult<void>;
+    auto pluginNames() const -> std::vector<std::string>;
 
 private:
     DriverManager();
@@ -40,6 +32,7 @@ private:
 
 private:
     std::map<std::string, DriverFactoryFn> drivers_;
+    std::vector<void *>                    plugins_;
 };
 
 ILIAS_SQL_NS_END

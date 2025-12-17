@@ -9,7 +9,7 @@
 #include "ilias/sql/driver_registry.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql/sqlstatement.hpp"
-#include "ilias/sql/global/type_traits.hpp"
+#include "ilias/sql/detail/type_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
 

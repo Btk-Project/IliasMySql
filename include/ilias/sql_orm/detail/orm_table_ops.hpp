@@ -2,11 +2,11 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
-#include "ilias/sql/detail/console_table.hpp"
+#include "ilias/sql_orm/detail/console_table.hpp"
 
-#include "ilias/sql/detail/orm_types.hpp"
-#include "ilias/sql/detail/orm_condition.hpp"
-#include "ilias/sql/detail/orm_builder.hpp"
+#include "ilias/sql_orm/detail/orm_types.hpp"
+#include "ilias/sql_orm/detail/orm_condition.hpp"
+#include "ilias/sql_orm/detail/orm_builder.hpp"
 
 ILIAS_SQL_NS_BEGIN
 

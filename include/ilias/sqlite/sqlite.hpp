@@ -22,12 +22,7 @@
 #include <ilias/task/when_any.hpp>
 #include <sqlite3.h>
 
-#include "ilias/sql/driver_registry.hpp"
 #include "ilias/sql/interfaces.hpp"
-
-ILIAS_SQL_NS_BEGIN
-class DriverManager;
-ILIAS_SQL_NS_END
 
 ILIAS_SQLITE_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
@@ -117,8 +112,5 @@ private:
     std::shared_ptr<sqlite3> mSqlite = nullptr;
     ConnectOptions           mOptions;
 };
-
-ILIAS_SQL_USE_NAMESPACE
-ILIAS_SQL_API void ilias_register_sql_plugin(DriverManager *manager);
 
 ILIAS_SQLITE_NS_END

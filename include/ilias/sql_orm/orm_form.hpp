@@ -2,12 +2,12 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
-#include "ilias/sql/dialect.hpp"
+#include "ilias/sql_orm/dialect.hpp"
 
-#include "ilias/sql/detail/orm_types.hpp"
-#include "ilias/sql/detail/orm_condition.hpp"
-#include "ilias/sql/detail/orm_builder.hpp"
-#include "ilias/sql/detail/orm_table_ops.hpp"
+#include "ilias/sql_orm/detail/orm_types.hpp"
+#include "ilias/sql_orm/detail/orm_condition.hpp"
+#include "ilias/sql_orm/detail/orm_builder.hpp"
+#include "ilias/sql_orm/detail/orm_table_ops.hpp"
 
 ILIAS_SQL_NS_BEGIN
 

@@ -6,11 +6,22 @@
 #include <ilias/io/context.hpp>
 #include <memory>
 #include <string_view>
+#include <map>
 
 #include "ilias/sql/global/global.hpp"
 #include "types.hpp"
 
 ILIAS_SQL_NS_BEGIN
+
+struct ConnectOptions {
+    std::string                        host;
+    uint16_t                           port = 0;
+    std::string                        user;
+    std::string                        password;
+    std::string                        database;
+    std::string                        filename;
+    std::map<std::string, std::string> extra;
+};
 
 // 前置声明
 class IStatement;

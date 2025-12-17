@@ -2,6 +2,7 @@
 
 #include "ilias/sql/sqlerror.hpp"
 #include "ilias/sqlite/sqliteopt.hpp"
+#include "ilias/sql/sql_plugin.hpp"
 
 ILIAS_SQLITE_NS_BEGIN
 
@@ -444,7 +445,6 @@ auto Sqlite::syncRollback() -> bool {
 auto Sqlite::lastInsertId() const -> int64_t {
     return sqlite3_last_insert_rowid(mSqlite.get());
 }
-
 auto Sqlite::ping() -> IoTask<bool> {
     if (!mSqlite) {
         co_return Unexpected(SqlError::Code::NotConnected);
@@ -452,11 +452,8 @@ auto Sqlite::ping() -> IoTask<bool> {
     co_return true;
 }
 
-void ilias_register_sql_plugin(DriverManager *manager) {
-    manager->registerDriver("sqlite", [](const ConnectOptions &options) -> std::unique_ptr<IConnection> {
-        auto connection = std::make_unique<Sqlite>(options);
-        return connection;
-    });
-}
-
 ILIAS_SQLITE_NS_END
+
+ILIAS_SQL_REGISTER_PLUGIN(sqlite) {
+    return new ILIAS_SQLITE_COMPLETE_NAMESPACE::Sqlite(options);
+}

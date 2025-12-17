@@ -6,8 +6,8 @@
 #include <string_view>
 #include "ilias/sql/sqlstatement.hpp"
 #include <nekoproto/serialization/types/struct_unwrap.hpp>
-#include "ilias/sql/detail/orm_types.hpp"
-#include "ilias/sql/detail/orm_traits.hpp"
+#include "ilias/sql_orm/detail/orm_types.hpp"
+#include "ilias/sql_orm/detail/orm_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {

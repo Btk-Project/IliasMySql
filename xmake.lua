@@ -9,6 +9,7 @@ add_repositories("btk-repo https://github.com/Btk-Project/xmake-repo.git")
 
 add_configfiles("include/ilias/sql/global/config.h.in")
 set_configdir("include/ilias/sql/global")
+set_configvar("API_VERSION", 1)
 
 add_requires("ilias", {version = "0.3.2", configs = {log = true, cpp20 = true}})
 add_requires("neko-proto-tools", {version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false}})
@@ -42,6 +43,22 @@ option("enable_sqlite")
     set_configvar("ENABLE_SQLITE_PLUGINS", true)
 option_end()
 
+option("enable_orm_interface")
+    set_default(true)
+    set_showmenu(true)
+    set_category("module")
+    set_description("enable orm interface")
+    set_configvar("ENABLE_ORM_INTERFACE", true)
+option_end()
+
+option("dynamic_plugin")
+    set_default(false)
+    set_showmenu(true)
+    set_category("module")
+    set_description("Build dynamic plugins using this library")
+    set_configvar("BUILD_AS_DYNAMIC_PLUGIN", true)
+option_end()
+
 if has_config("enable_mysql") then
     add_requires("mariadb-connector-c")
 end
@@ -60,23 +77,41 @@ if is_mode("debug") and is_plat("linux") then
 end
 
 target("ilias_sql")
-    add_headerfiles("include/(ilias/sql/**.hpp)")
-    add_files("src/sql/**.cpp")
-    add_options("enable_mysql", "enable_sqlite")
-    if has_config("enable_mysql") then
-        add_headerfiles("include/(ilias/mysql/**.hpp)")
-        add_files("src/mysql/**.cpp")
-    end
-    if has_config("enable_sqlite") then
-        add_headerfiles("include/(ilias/sqlite/**.hpp)")
-        add_files("src/sqlite/**.cpp")
-    end
-    if is_kind("shared") then
+    add_options("enable_mysql", "enable_sqlite", "enable_orm_interface", "dynamic_plugin")
+    if has_config("dynamic_plugin") then
         set_kind("shared")
-        add_defines("ILIAS_SQL_LIBRARY")
+        add_headerfiles("include/(ilias/sql/interfaces.hpp)")
+        add_headerfiles("include/(ilias/sql/sql_plugin.hpp)")
+        add_headerfiles("include/(ilias/sql/global/**.h)")
+        add_headerfiles("include/(ilias/sql/global/**.hpp)")
+        add_files("src/sql/**.cpp")
+        if has_config("enable_sqlite") then
+            add_headerfiles("include/(ilias/sqlite/**.hpp)")
+            add_files("src/sqlite/**.cpp")
+        end
     else
-        set_kind("static")
-        set_configvar("ILIAS_SQL_STATIC", true)
+        add_headerfiles("include/(ilias/sql/**.hpp)")
+        add_headerfiles("include/(ilias/sql/**.h)")
+        add_files("src/sql/**.cpp")
+        if has_config("enable_mysql") then
+            add_headerfiles("include/(ilias/mysql/**.hpp)")
+            add_files("src/mysql/**.cpp")
+        end
+        if has_config("enable_sqlite") then
+            add_headerfiles("include/(ilias/sqlite/**.hpp)")
+            add_files("src/sqlite/**.cpp")
+        end
+        if has_config("enable_orm_interface") then
+            add_headerfiles("include/(ilias/sql/orm/**.hpp)")
+            add_files("src/sql_orm/**.cpp")
+        end
+        if is_kind("shared") then
+            set_kind("shared")
+            add_defines("ILIAS_SQL_LIBRARY")
+        else
+            set_kind("static")
+            set_configvar("ILIAS_SQL_STATIC", true)
+        end
     end
     on_load(function (target)
         import("lua.auto", {rootdir = os.projectdir()})

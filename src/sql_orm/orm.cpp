@@ -1,5 +1,5 @@
-#include "ilias/sql/detail/orm_condition.hpp"
-#include "ilias/sql/detail/orm_builder.hpp"
+#include "ilias/sql_orm/detail/orm_condition.hpp"
+#include "ilias/sql_orm/detail/orm_builder.hpp"
 
 ILIAS_SQL_NS_BEGIN
 

@@ -3,7 +3,7 @@
 #include <type_traits>
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
-#include "ilias/sql/detail/orm_traits.hpp"
+#include "ilias/sql_orm/detail/orm_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
 

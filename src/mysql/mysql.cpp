@@ -3,6 +3,7 @@
 #include "ilias/mysql/mysql.hpp"
 #include "ilias/mysql/mysqlresult.hpp"
 #include "ilias/mysql/mysqlopt.hpp"
+#include "ilias/sql/sql_plugin.hpp"
 
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
@@ -979,11 +980,9 @@ auto MysqlConnection::ping() -> IoTask<bool> {
     co_return true;
 }
 
-void ilias_register_sql_plugin(DriverManager *manager) {
-    manager->registerDriver("mysql", [](const ConnectOptions &options) -> std::unique_ptr<IConnection> {
-        auto connection = std::make_unique<MysqlConnection>(std::make_shared<MySql>(), options);
-        return connection;
-    });
-}
-
 ILIAS_MYSQL_NS_END
+
+ILIAS_SQL_REGISTER_PLUGIN(mysql) {
+    return new ILIAS_MYSQL_COMPLETE_NAMESPACE::MysqlConnection(
+        std::make_shared<ILIAS_MYSQL_COMPLETE_NAMESPACE::MySql>(), options);
+}

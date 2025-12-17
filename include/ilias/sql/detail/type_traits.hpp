@@ -1,6 +1,6 @@
 #pragma once
 
-#include "global.hpp"
+#include "ilias/sql/global/global.hpp"
 
 #include <string_view>
 #include <array>

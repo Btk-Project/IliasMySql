@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
-#include "ilias/sql/global/type_traits.hpp"
+#include "ilias/sql/detail/type_traits.hpp"
 #include "ilias/sql/interfaces.hpp"
 #include "ilias/sql/sqlresult.hpp"
 

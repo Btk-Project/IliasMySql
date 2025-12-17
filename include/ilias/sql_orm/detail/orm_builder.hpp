@@ -2,7 +2,7 @@
 
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
-#include "ilias/sql/detail/orm_condition.hpp"
+#include "ilias/sql_orm/detail/orm_condition.hpp"
 #include <tuple>
 
 ILIAS_SQL_NS_BEGIN

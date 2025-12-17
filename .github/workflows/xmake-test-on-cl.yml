@@ -50,7 +50,7 @@ jobs:
     # 4. 配置构建 (使用 MSVC 编译器)
     # 这里的 -y 自动确认包安装 (如果有 add_requires 的话)
     - name: Configure XMake
-      run: xmake f -p windows -a x64 -m debug --enable_test=y -y
+      run: xmake f -p windows -a x64 -m debug -k shared --enable_test=y -y
 
     # 5. 构建项目
     - name: Build

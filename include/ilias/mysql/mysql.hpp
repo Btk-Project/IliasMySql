@@ -22,11 +22,6 @@
 #include "global.hpp"
 #include "mysqlopt.hpp"
 #include "ilias/sql/types.hpp"
-#include "ilias/sql/driver_registry.hpp"
-
-ILIAS_SQL_NS_BEGIN
-class DriverManager;
-ILIAS_SQL_NS_END
 
 ILIAS_MYSQL_NS_BEGIN
 
@@ -104,8 +99,5 @@ private:
     MYSQL      mMysql;
     Poller     mPoller;
 };
-
-ILIAS_SQL_USE_NAMESPACE
-ILIAS_SQL_API void ilias_register_sql_plugin(DriverManager *manager);
 
 ILIAS_MYSQL_NS_END
