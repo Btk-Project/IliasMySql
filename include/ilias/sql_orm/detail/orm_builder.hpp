@@ -9,8 +9,8 @@ ILIAS_SQL_NS_BEGIN
 namespace detail {
 
 // 工具函数声明
-std::string join_strs(const std::vector<std::string> &vec, const std::string &sep, const std::string &prefix = "",
-                      const std::string &suffix = "");
+ILIAS_SQL_API std::string join_strs(const std::vector<std::string> &vec, const std::string &sep,
+                                    const std::string &prefix = "", const std::string &suffix = "");
 
 struct JoinNode {
     std::string              tableName;
@@ -64,7 +64,7 @@ static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
 }
 
 // ================== SelectBuilder (基类) ==================
-class SelectBuilder {
+class ILIAS_SQL_API SelectBuilder {
     template <typename T, typename ResultType>
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 

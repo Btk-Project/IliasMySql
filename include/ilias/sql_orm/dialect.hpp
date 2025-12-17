@@ -1,6 +1,8 @@
 #pragma once
 
 #include <type_traits>
+#include <algorithm>
+
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"

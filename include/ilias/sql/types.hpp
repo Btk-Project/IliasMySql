@@ -364,7 +364,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
             case SqlValueType::kDouble:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
             case SqlValueType::kText:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kText>(value));
+                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
             case SqlValueType::kBlob:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
             case SqlValueType::kDate:
@@ -396,7 +396,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
             case SqlValueType::kDouble:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
             case SqlValueType::kText:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kText>(value));
+                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
             case SqlValueType::kBlob:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
             case SqlValueType::kDate:
@@ -428,7 +428,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
             case SqlValueType::kDouble:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
             case SqlValueType::kText:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kText>(value));
+                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
             case SqlValueType::kBlob:
                 return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
             case SqlValueType::kDate:

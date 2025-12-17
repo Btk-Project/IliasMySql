@@ -1,6 +1,7 @@
 #include "ilias/sql/driver_registry.hpp"
 #include "ilias/sql/global/config.h"
 #include "ilias/sql/sql_plugin.hpp"
+#include <filesystem>
 
 #ifdef ENABLE_MYSQL_PLUGINS
 #include "ilias/mysql/mysql.hpp"
@@ -30,6 +31,16 @@ DriverManager::DriverManager() {
 #endif
 }
 
+DriverManager::~DriverManager() {
+    for (auto plugin : plugins_) {
+#ifdef _WIN32
+        FreeLibrary((HMODULE)plugin);
+#else
+        dlclose(plugin);
+#endif
+    }
+}
+
 auto DriverManager::instance() -> DriverManager & {
     static DriverManager inst;
     return inst;
@@ -55,11 +66,12 @@ auto DriverManager::createConnection(std::string_view driverName, const ConnectO
 }
 
 auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
-    std::string path = std::string(path_);
 #ifdef _WIN32
-    HMODULE handle = LoadLibraryA(path.c_str());
+    std::filesystem::path path(path_);
+    HMODULE               handle = LoadLibraryW(path.c_str());
 #else
-    void *handle = dlopen(path.c_str(), RTLD_LAZY);
+    std::string path   = std::string(path_);
+    void       *handle = dlopen(path.c_str(), RTLD_LAZY);
 #endif
 
     if (!handle) {
@@ -73,9 +85,10 @@ auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
     using getPluginApiVersion = int (*)();
 
 #ifdef _WIN32
-    createDriver        create_driver          = (createDriver)dlsym(handle, "ilias_sql_plugin_create_driver");
-    getPluginName       get_plugin_name        = (getPluginName)dlsym(handle, "ilias_sql_plugin_get_name");
-    getPluginApiVersion get_plugin_api_version = (getPluginApiVersion)dlsym(handle, "ilias_sql_plugin_get_api_version");
+    createDriver        create_driver   = (createDriver)GetProcAddress(handle, "ilias_sql_plugin_create_driver");
+    getPluginName       get_plugin_name = (getPluginName)GetProcAddress(handle, "ilias_sql_plugin_get_name");
+    getPluginApiVersion get_plugin_api_version =
+        (getPluginApiVersion)GetProcAddress(handle, "ilias_sql_plugin_get_api_version");
 #else
     createDriver        create_driver          = (createDriver)dlsym(handle, "ilias_sql_plugin_create_driver");
     getPluginName       get_plugin_name        = (getPluginName)dlsym(handle, "ilias_sql_plugin_get_name");

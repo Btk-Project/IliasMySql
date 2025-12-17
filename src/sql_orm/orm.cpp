@@ -4,6 +4,7 @@
 ILIAS_SQL_NS_BEGIN
 
 // ================= Utils =================
+ILIAS_SQL_API
 std::string detail::join_strs(const std::vector<std::string> &vec, const std::string &sep, const std::string &prefix,
                               const std::string &suffix) {
     std::string res;
@@ -85,9 +86,11 @@ SelectBuilder &SelectBuilder::count(const std::string &column) {
     std::transform(column_.begin(), column_.end(), column_.begin(), ::toupper);
     if (column == "*" || column_ == "COUNT(*)" || column.empty()) {
         mSelectColumns = "COUNT(*)";
-    } else if (column_.starts_with("COUNT")) {
+    }
+    else if (column_.starts_with("COUNT")) {
         mSelectColumns = column;
-    } else {
+    }
+    else {
         mSelectColumns = "COUNT(" + column + ")";
     }
     return *this;

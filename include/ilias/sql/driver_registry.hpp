@@ -24,7 +24,7 @@ public:
 
 private:
     DriverManager();
-    ~DriverManager()                                = default;
+    ~DriverManager();
     DriverManager(const DriverManager &)            = delete;
     DriverManager &operator=(const DriverManager &) = delete;
     DriverManager(DriverManager &&)                 = delete;

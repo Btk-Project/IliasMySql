@@ -104,7 +104,7 @@ private:
     std::function<T()> mValueFunc;
 };
 
-class SqlCondition {
+class ILIAS_SQL_API SqlCondition {
 public:
     SqlCondition() = default;
     SqlCondition(std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders);
@@ -128,7 +128,7 @@ struct SqlAssignment {
     std::vector<std::shared_ptr<SqlStatementBinder>> binders;
 };
 
-class SqlVariable {
+class ILIAS_SQL_API SqlVariable {
 public:
     explicit SqlVariable(std::string_view name);
 
@@ -297,6 +297,6 @@ public:
 } // namespace detail
 
 // 用户字面量声明
-detail::SqlVariable operator""_sql(const char *str, size_t len);
+ILIAS_SQL_API detail::SqlVariable operator""_sql(const char *str, size_t len);
 
 ILIAS_SQL_NS_END
