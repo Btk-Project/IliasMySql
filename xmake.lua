@@ -36,11 +36,20 @@ option("enable_mysql")
 option_end()
 
 option("enable_sqlite")
-    set_default(true)
+    set_default("sqlite")
     set_showmenu(true)
+    set_values("disable", "sqlite", "sqlcipher")
     set_category("module")
     set_description("add sqlite support, need sqlite3")
-    set_configvar("ENABLE_SQLITE_PLUGINS", true)
+    after_check(function (option)
+        if option:value() == "sqlite" then
+            option:set("configvar", "ENABLE_SQLITE_PLUGINS", true)
+        end
+        if option:value() == "sqlcipher" then
+            option:set("configvar", "ENABLE_SQLITE_PLUGINS", true)
+            option:set("configvar", "ENABLE_SQLCIPHER_PLUGINS", true)
+        end
+    end)
 option_end()
 
 option("enable_postgres")
@@ -72,7 +81,11 @@ if has_config("enable_mysql") then
 end
 
 if has_config("enable_sqlite") then
-    add_requires("sqlite3")
+    if get_config("enable_sqlite") == "sqlite" then
+        add_requires("sqlite3")
+    elseif get_config("enable_sqlite") == "sqlcipher" then
+        add_requires("sqlcipher")
+    end
 end
 
 if has_config("enable_postgres") then

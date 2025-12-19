@@ -280,7 +280,30 @@ auto Sqlite::connect() -> IoTask<void> {
             }
             return ret;
         }
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+        if (auto it = mOptions.extra.find("key"); it != mOptions.extra.end()) {
+            auto cipher = it->second;
+            ret         = sqlite3_key(sql, cipher.c_str(), cipher.size());
+            if (ret != SQLITE_OK) {
+                sqlite3_close(sql);
+                return ret;
+            }
+        }
+
+        if (auto it = mOptions.extra.find("rekey"); it != mOptions.extra.end()) {
+            auto cipher_pass = it->second;
+            ret              = sqlite3_rekey(sql, cipher_pass.c_str(), cipher_pass.size());
+            if (ret != SQLITE_OK) {
+                sqlite3_close(sql);
+                return ret;
+            }
+        }
+#endif
         for (const auto &[key, value] : mOptions.extra) {
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+            if (key == "key" || key == "rekey")
+                continue;
+#endif
             // 跳过已处理的特殊 key
             if (key == "flags" || key == "vfs")
                 continue;

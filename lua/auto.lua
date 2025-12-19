@@ -22,7 +22,11 @@ function autofunc.auto_add_packages(target)
     end
 
     if has_config("enable_sqlite") then
-        target:add("packages", "sqlite3", {public = true})
+        if get_config("enable_sqlite") == "sqlite" then
+            target:add("packages", "sqlite3", {public = true})
+        elseif get_config("enable_sqlite") == "sqlcipher" then
+            target:add("packages", "sqlcipher", {public = true})
+        end
     end
 
     if has_config("enable_postgres") then

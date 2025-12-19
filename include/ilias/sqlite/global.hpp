@@ -11,10 +11,10 @@
 #define ILIAS_SQLITE_COMPLETE_NAMESPACE ILIAS_NAMESPACE::ILIAS_SQLITE_NAMESPACE
 #define ILIAS_SQLITE_USE_NAMESPACE using namespace ILIAS_SQLITE_COMPLETE_NAMESPACE;
 
-#define ILIAS_SQLITE_NS_BEGIN                                                                                           \
+#define ILIAS_SQLITE_NS_BEGIN                                                                                          \
     namespace ILIAS_NAMESPACE {                                                                                        \
     namespace ILIAS_SQLITE_NAMESPACE {
 
-#define ILIAS_SQLITE_NS_END                                                                                             \
+#define ILIAS_SQLITE_NS_END                                                                                            \
     }                                                                                                                  \
     }

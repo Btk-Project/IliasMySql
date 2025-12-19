@@ -219,7 +219,7 @@ docker run --name ilias-test-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE
 
 ## TODO
 *   [ ] 支持更多数据库驱动
-    - 目前仅支持 SQLite 和 MySQL（mariaDB）
+    - 目前支持 SQLite 和 MySQL（mariaDB）, Sqlcipher, PostgreSQL
     - 允许绑定到c++对象并使用loop执行
 *   [ ] 完善loop逻辑，允许组合loop和事务。
     - loop中允许使用事务时需要保持变量到事务提交，如果绑定到变量并持续更改会有问题，需要考虑设计。

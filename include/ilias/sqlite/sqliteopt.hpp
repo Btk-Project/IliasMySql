@@ -4,7 +4,6 @@
 
 #include <sqlite3.h>
 #include <ilias/io/error.hpp>
-#include <array>
 #include <charconv>
 #include <cstring>
 #include <string>
