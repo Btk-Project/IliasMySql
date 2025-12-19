@@ -13,10 +13,15 @@
 
 ILIAS_SQL_NS_BEGIN
 
-// 统一的时间类型，不依赖 MYSQL_TIME
+// 统一的时间类型
 struct ILIAS_SQL_API SqlDate {
+    /**
+     * @brief 时间类型枚举类
+     *
+     * 定义了不同时间格式的枚举值，用于表示和区分不同的时间类型
+     */
     enum TimeType {
-        kErrorTime = 0, // 错误时间
+        kErrorTime = 0, // 错误时间 - 表示无效或错误的时间类型
         kDate,          // 2022-01-01
         kDateTime,      // 2022-01-01 00:00:00.000000
         kTime,          // 00:00:00.000000
@@ -27,8 +32,8 @@ struct ILIAS_SQL_API SqlDate {
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }
     explicit SqlDate(std::chrono::system_clock::time_point tp) { setTime(tp); }
     explicit SqlDate(std::chrono::milliseconds timestamp) { setTime(timestamp); }
-    explicit SqlDate(std::string_view str, std::string_view fmt = "%Y-%m-%d %H:%M:%S") { setTime(str, fmt); }
-    explicit SqlDate(const std::string str, std::string_view fmt = "%Y-%m-%d %H:%M:%S") { setTime(str, fmt); }
+    explicit SqlDate(std::string_view str) { setTime(str); }
+    explicit SqlDate(const std::string str) { setTime(str); }
 
     auto setTime(std::chrono::system_clock::time_point tp) -> void;
     auto setTime(std::chrono::milliseconds timestamp) -> void;
@@ -36,7 +41,7 @@ struct ILIAS_SQL_API SqlDate {
     auto setDate(int year, int month, int day) -> void;
     auto setTime(int hour, int minute, int second) -> void;
     auto setTime(struct tm *timeinfo) -> void;
-    auto setTime(std::string_view str, std::string_view fmt = "%Y-%m-%d %H:%M:%S") -> void;
+    auto setTime(std::string_view str) -> void;
     auto setTimeType(TimeType type) -> void;
 
     auto toString() const -> std::string;
@@ -66,6 +71,7 @@ using SqlBlob = std::vector<std::byte>;
 
 // 数据库值的通用变体
 using SqlValue = std::variant<SqlNull,     // NULL
+                              bool,        // Bool
                               char,        // TinyInt
                               int32_t,     // Int
                               int64_t,     // BigInt
@@ -76,16 +82,16 @@ using SqlValue = std::variant<SqlNull,     // NULL
                               SqlDate      // Timestamp/Date
                               >;
 // 类型索引对应的枚举
-enum class SqlValueType { kNull = 0, kChar, kInt, kBigInt, kFloat, kDouble, kText, kBlob, kDate, kMax };
+enum class SqlValueType { kNull = 0, kBool, kChar, kInt, kBigInt, kFloat, kDouble, kText, kBlob, kDate, kMax };
 
 // 用于参数绑定的轻量级变体 (避免拷贝 string/blob)
 using SqlValueView =
-    std::variant<SqlNull, char, int32_t, int64_t, float, double, std::string_view, SqlBlobView, SqlDate>;
+    std::variant<SqlNull, bool, char, int32_t, int64_t, float, double, std::string_view, SqlBlobView, SqlDate>;
 
 using SqlValuePointer =
-    std::variant<SqlNull *, char *, int32_t *, int64_t *, float *, double *, std::string_view, SqlBlobView, SqlDate *>;
+    std::variant<SqlNull *, bool *, char *, int32_t *, int64_t *, float *, double *, std::string_view, SqlBlobView, SqlDate *>;
 using SqlValueRef =
-    std::variant<SqlNull, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
+    std::variant<SqlNull, bool &, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
 
 // 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
 inline auto to_sql_pointer(std::nullptr_t &) -> SqlValuePointer {
@@ -111,6 +117,13 @@ struct SqlValueTraits<SqlValueType::kNull, void> {
     using type                              = SqlNull;
     using viewType                          = SqlNull;
     constexpr static SqlValueType valueType = SqlValueType::kNull;
+};
+
+template <>
+struct SqlValueTraits<SqlValueType::kBool, void> {
+    using type                              = bool;
+    using viewType                          = bool;
+    constexpr static SqlValueType valueType = SqlValueType::kBool;
 };
 
 template <>

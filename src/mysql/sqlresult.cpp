@@ -77,7 +77,7 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
             std::get<sql::SqlDate>(result).type = sql::SqlDate::kDate;
             break;
         case MYSQL_TYPE_TIME:
-            result.emplace<sql::SqlDate>(std::string_view((char *)buffer, bufferSize), "%H:%M:%S");
+            result.emplace<sql::SqlDate>(std::string_view((char *)buffer, bufferSize));
             std::get<sql::SqlDate>(result).type = sql::SqlDate::kTime;
             break;
         case MYSQL_TYPE_LONGLONG: // long long
@@ -161,7 +161,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             std::get<sql::SqlDate>(result).type = sql::SqlDate::kDate;
             break;
         case MYSQL_TYPE_TIME:
-            result.emplace<sql::SqlDate>(std::string_view(buffer), "%H:%M:%S");
+            result.emplace<sql::SqlDate>(std::string_view(buffer));
             std::get<sql::SqlDate>(result).type = sql::SqlDate::kTime;
             break;
         case MYSQL_TYPE_LONGLONG: // long long

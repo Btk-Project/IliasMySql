@@ -43,6 +43,14 @@ option("enable_sqlite")
     set_configvar("ENABLE_SQLITE_PLUGINS", true)
 option_end()
 
+option("enable_postgres")
+    set_default(false)
+    set_showmenu(true)
+    set_category("module")
+    set_description("add postgres support, need libpq")
+    set_configvar("ENABLE_POSTGRES_PLUGINS", true)
+option_end()
+
 option("enable_orm_interface")
     set_default(true)
     set_showmenu(true)
@@ -67,6 +75,10 @@ if has_config("enable_sqlite") then
     add_requires("sqlite3")
 end
 
+if has_config("enable_postgres") then
+    add_requires("libpq")
+end
+
 if is_plat("windows") then 
     add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
@@ -77,7 +89,7 @@ if is_mode("debug") and is_plat("linux") then
 end
 
 target("ilias_sql")
-    add_options("enable_mysql", "enable_sqlite", "enable_orm_interface", "dynamic_plugin")
+    add_options("enable_mysql", "enable_sqlite", "enable_orm_interface", "dynamic_plugin", "enable_postgres")
     if has_config("dynamic_plugin") then
         set_kind("shared")
         add_headerfiles("include/(ilias/sql/interfaces.hpp)")
@@ -100,6 +112,10 @@ target("ilias_sql")
         if has_config("enable_sqlite") then
             add_headerfiles("include/(ilias/sqlite/**.hpp)")
             add_files("src/sqlite/**.cpp")
+        end
+        if has_config("enable_postgres") then
+            add_headerfiles("include/(ilias/postgres/**.hpp)")
+            add_files("src/postgres/**.cpp")
         end
         if has_config("enable_orm_interface") then
             add_headerfiles("include/(ilias/sql/orm/**.hpp)")

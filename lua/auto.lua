@@ -25,6 +25,10 @@ function autofunc.auto_add_packages(target)
         target:add("packages", "sqlite3", {public = true})
     end
 
+    if has_config("enable_postgres") then
+        target:add("packages", "libpq", {public = true})
+    end
+
     target:add("packages", "ilias", {public = true})
     target:add("packages", "neko-proto-tools", {public = true})
 end

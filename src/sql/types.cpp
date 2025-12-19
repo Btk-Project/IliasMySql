@@ -1,40 +1,78 @@
 #include "ilias/sql/types.hpp"
 
+#include <sstream>
+#include <regex>
+
 ILIAS_SQL_NS_BEGIN
 auto SqlDate::toString() const -> std::string {
+    std::ostringstream oss;
+    oss << std::setfill('0');
+
+    auto print_us = [&](std::ostringstream &s) {
+        if (microsecond > 0) {
+            s << '.' << std::setw(6) << microsecond;
+        }
+    };
     switch (type) {
         case kDateTime:
-            return std::to_string(year) + "-" + std::to_string(month) + "-" + std::to_string(day) + " " +
-                   std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) +
-                   (microsecond > 0 ? "." + std::to_string(microsecond) : "");
+            oss << std::setw(4) << year << '-' << std::setw(2) << month << '-' << std::setw(2) << day << ' '
+                << std::setw(2) << hour << ':' << std::setw(2) << minute << ':' << std::setw(2) << second;
+            print_us(oss);
+            break;
         case kDate:
-            return std::to_string(year) + "-" + std::to_string(month) + "-" + std::to_string(day);
+            oss << std::setw(4) << year << '-' << std::setw(2) << month << '-' << std::setw(2) << day;
+            break;
         case kTime:
-            return std::to_string(hour) + ":" + std::to_string(minute) + ":" + std::to_string(second) +
-                   (microsecond > 0 ? "." + std::to_string(microsecond) : "");
+            oss << std::setw(2) << hour << ':' << std::setw(2) << minute << ':' << std::setw(2) << second;
+            print_us(oss);
+            break;
         default:
-            return "error time";
+            return "invalid_time";
     }
+    return oss.str();
 }
 
 auto SqlDate::toTimestamp() const -> uint64_t {
-    switch (type) {
-        case kDateTime:
-            return year * 31536000 + month * 2592000 + day * 86400 + hour * 3600 + minute * 60 + second +
-                   microsecond / 1000000;
-        case kDate:
-            return year * 31536000 + month * 2592000 + day * 86400;
-        case kTime:
-            return hour * 3600 + minute * 60 + second + microsecond / 1000000;
-        default:
-            return 0;
+    if (type == kErrorTime)
+        return 0;
+
+    std::tm t {};
+    t.tm_year  = year - 1900;
+    t.tm_mon   = month - 1;
+    t.tm_mday  = day;
+    t.tm_hour  = hour;
+    t.tm_min   = minute;
+    t.tm_sec   = second;
+    t.tm_isdst = -1;
+
+#ifdef _WIN32
+    time_t seconds_since_epoch = _mkgmtime(&t);
+#else
+    time_t seconds_since_epoch = timegm(&t);
+#endif
+
+    if (seconds_since_epoch == -1) {
+        return 0;
     }
+
+    return static_cast<uint64_t>(seconds_since_epoch) * 1000000 + microsecond;
 }
 
 auto SqlDate::setTime(std::chrono::system_clock::time_point tp) -> void {
-    auto     tt  = std::chrono::system_clock::to_time_t(tp);
-    std::tm *now = gmtime(&tt);
-    setTime(now);
+auto us_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch());
+    auto sec_since_epoch = std::chrono::duration_cast<std::chrono::seconds>(us_since_epoch);
+    
+    time_t tt = sec_since_epoch.count();
+    std::tm *utc_tm = gmtime(&tt); // 使用 gmtime 获取 UTC 时间
+    
+    year = utc_tm->tm_year + 1900;
+    month = utc_tm->tm_mon + 1;
+    day = utc_tm->tm_mday;
+    hour = utc_tm->tm_hour;
+    minute = utc_tm->tm_min;
+    second = utc_tm->tm_sec;
+    microsecond = us_since_epoch.count() % 1000000;
+    type = kDateTime;
 }
 
 auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
@@ -101,17 +139,51 @@ auto SqlDate::setTimeType(TimeType type) -> void {
     this->type = type;
 }
 
-auto SqlDate::setTime(std::string_view str, std::string_view fmt) -> void {
-    if (fmt == "") {
-        fmt = "%Y-%m-%d %H:%M:%S";
+auto SqlDate::setTime(std::string_view str) -> void {
+clear();
+    // 使用正则表达式来灵活解析常见的 SQL 时间格式
+    // 格式1: YYYY-MM-DD HH:MM:SS.FFFFFF (DateTime)
+    static const std::regex re_datetime(R"((\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?.*)");
+    // 格式2: YYYY-MM-DD (Date)
+    static const std::regex re_date(R"(^(\d{4})-(\d{2})-(\d{2})$)");
+    // 格式3: HH:MM:SS.FFFFFF (Time)
+    static const std::regex re_time(R"(^(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?.*)");
+
+    std::cmatch match;
+    std::string s_str(str); // regex需要C-string
+
+    if (std::regex_match(s_str.c_str(), match, re_datetime)) {
+        type = kDateTime;
+        year = std::stoul(match[1].str());
+        month = std::stoul(match[2].str());
+        day = std::stoul(match[3].str());
+        hour = std::stoul(match[4].str());
+        minute = std::stoul(match[5].str());
+        second = std::stoul(match[6].str());
+        if (match[7].matched) {
+            std::string us_str = match[7].str();
+            us_str.resize(6, '0'); // 补全到6位微秒
+            microsecond = std::stoul(us_str);
+        }
+    } else if (std::regex_match(s_str.c_str(), match, re_date)) {
+        type = kDate;
+        year = std::stoul(match[1].str());
+        month = std::stoul(match[2].str());
+        day = std::stoul(match[3].str());
+    } else if (std::regex_match(s_str.c_str(), match, re_time)) {
+        type = kTime;
+        hour = std::stoul(match[1].str());
+        minute = std::stoul(match[2].str());
+        second = std::stoul(match[3].str());
+        if (match[7].matched) {
+            std::string us_str = match[7].str();
+            us_str.resize(6, '0'); // 补全到6位微秒
+            microsecond = std::stoul(us_str);
+        }
+    } else {
+        type = kErrorTime;
+        ILIAS_WARN("sql", "Failed to parse time string: {}", str);
     }
-    struct tm timeinfo;
-    memset(&timeinfo, 0, sizeof(struct tm));
-    std::istringstream istr((std::string(str)));
-    istr >> std::get_time(&timeinfo, std::string(fmt).c_str());
-    timeinfo.tm_year += 1900;
-    timeinfo.tm_mon += 1;
-    setTime(&timeinfo);
 }
 
 void SqlDate::clear() {
