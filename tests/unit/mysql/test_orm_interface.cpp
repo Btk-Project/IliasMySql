@@ -1106,7 +1106,6 @@ int main(int argc, char **argv) {
     // 输出测试环境信息
     ILIAS_INFO("orm-test", "=== ORM Interface Test Environment ===");
     ILIAS_INFO("orm-test", "Platform: Linux");
-    ILIAS_INFO("orm-test", "Compiler: {}", __VERSION__);
     ILIAS_INFO("orm-test", "C++ Standard: {}", __cplusplus);
 
     // 检查环境变量

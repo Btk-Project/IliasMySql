@@ -25,30 +25,6 @@ target("test_orm_interface_mysql")
         add_cxflags("-O0", "-g")  -- 禁用优化，启用调试信息
     end
     
-    -- 性能优化标志
-    if is_mode("release") then
-        add_cxflags("-O2", "-DNDEBUG")
-    end
-    
-    -- 内存检测 (Debug 模式)
-    if is_mode("debug") and is_plat("linux") then
-        add_cxflags("-fsanitize=address", "-fsanitize=undefined")
-        add_ldflags("-fsanitize=address", "-fsanitize=undefined")
-    end
-    
-    -- 线程安全检测
-    if has_config("enable_thread_sanitizer") then
-        add_cxflags("-fsanitize=thread")
-        add_ldflags("-fsanitize=thread")
-    end
-    
-    -- 设置测试环境变量
-    set_runenv("DB_HOST", "127.0.0.1")
-    set_runenv("DB_PORT", "3306")
-    set_runenv("DB_USER", "root")
-    set_runenv("DB_PASS", "123456")
-    set_runenv("DB_NAME", "test")
-    
     -- 测试前后钩子
     before_run(function (target)
         print("=== Starting ORM Interface Tests ===")
