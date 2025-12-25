@@ -148,6 +148,8 @@ public:
         options.user     = get_env("DB_USER", "root");
         options.password = get_env("DB_PASS", "123456");
         options.database = get_env("DB_NAME", "test");
+        ILIAS_INFO("mysql-test", "Connecting to MySQL: host={}, port={}, user={}, password={}, database={}",
+                   options.host, options.port, options.user, options.password, options.database);
 
         // MySQL 优化配置
         options.extra.insert(std::make_pair("InitCommand", "SET NAMES 'utf8mb4'"));
