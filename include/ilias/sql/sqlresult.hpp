@@ -52,7 +52,7 @@ public:
 
 private:
     template <typename U>
-    auto unpack(SqlValue &value, U &u) -> IoResult<void>;
+    auto unpack(SqlValueView &value, U &u) -> IoResult<void>;
 
     template <typename U>
     friend class SqlResult;
@@ -97,7 +97,7 @@ public:
 };
 
 template <typename U>
-auto SqlResult<void>::unpack(SqlValue &ret, U &value) -> IoResult<void> {
+auto SqlResult<void>::unpack(SqlValueView &ret, U &value) -> IoResult<void> {
     return SqlValueConverter<std::decay_t<U>>::convert(ret, value);
 }
 
@@ -108,6 +108,7 @@ auto SqlResult<void>::load(int index, U &value) -> IoResult<void> {
         ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", index, ret.error().message());
         return Unexpected(ret.error());
     }
+    // ILIAS_TRACE("ilias-sql", "load {} : {}", index, ret.value());
     return unpack(*ret, value);
 }
 
@@ -118,6 +119,7 @@ auto SqlResult<void>::load(std::string_view name, U &value) -> IoResult<void> {
         ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
         return Unexpected(ret.error());
     }
+    // ILIAS_TRACE("ilias-sql", "load {} : {}", name, ret.value());
     return unpack(*ret, value);
 }
 
@@ -191,6 +193,7 @@ auto SqlResult<T>::range() -> Generator<T> {
                         std::apply([this](auto &...args) { return (SqlResult<void>::range(args...)); }, value)) {
             if (rc) {
                 co_yield value;
+                value = T{};
             } else {
                 ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }
@@ -200,6 +203,7 @@ auto SqlResult<T>::range() -> Generator<T> {
         ilias_for_await(auto rc, SqlResult<void>::range(value)) {
             if (rc) {
                 co_yield value;
+                value = T{};
             } else {
                 ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }

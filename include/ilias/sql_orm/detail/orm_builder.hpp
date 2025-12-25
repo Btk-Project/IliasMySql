@@ -111,11 +111,9 @@ class ProjectedSelectBuilder : public SelectBuilder {
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
 public:
-    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, TypedColumn<ResultTypes>... cols)
+    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols)
         : SelectBuilder(db, std::move(tableName)) {
-        // 使用 cpp 中的 join_strs
-        std::vector<std::string> colSqls = {cols.sql()...};
-        SelectBuilder::select(join_strs(colSqls, ", "));
+        SelectBuilder::select(join_strs(cols, ", "));
     }
 
     // 专门用于 select * 的构造函数

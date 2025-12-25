@@ -375,8 +375,8 @@ public:
     auto rowCount() const -> size_t override;
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
-    auto getValue(size_t index) -> IoResult<SqlValue> override;
-    auto getValue(std::string_view name) -> IoResult<SqlValue> override;
+    auto getValue(size_t index) -> IoResult<SqlValueView> override;
+    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
     auto native() -> MYSQL_RES *;
 
 private:
@@ -402,10 +402,10 @@ auto MysqlResultSet::columnCount() const -> size_t {
 auto MysqlResultSet::columnName(size_t index) const -> std::string_view {
     return mImp->fieldName(index);
 }
-auto MysqlResultSet::getValue(size_t index) -> IoResult<SqlValue> {
+auto MysqlResultSet::getValue(size_t index) -> IoResult<SqlValueView> {
     return mImp->get(index);
 }
-auto MysqlResultSet::getValue(std::string_view name) -> IoResult<SqlValue> {
+auto MysqlResultSet::getValue(std::string_view name) -> IoResult<SqlValueView> {
     return mImp->get(name);
 }
 
@@ -498,6 +498,11 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
             bind.is_null_value = true;
             bind.buffer_length = 0;
             break;
+        case SqlValueType::kBool:            
+            bind.buffer_type   = MYSQL_TYPE_TINY;
+            bind.buffer        = std::get<(int)SqlValueType::kBool>(value);
+            bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kBool>::type);
+            break;
         case SqlValueType::kChar:
             bind.buffer_type   = MYSQL_TYPE_TINY;
             bind.buffer        = std::get<(int)SqlValueType::kChar>(value);
@@ -558,7 +563,7 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
 }
 
 auto MysqlStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    ILIAS_TRACE("ilias-mysql", "bind {} with {}", index, value);
+    ILIAS_TRACE("ilias-mysql", "bind {} with(type {}) {}", index, value.index(), value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NotPrepared);
     }

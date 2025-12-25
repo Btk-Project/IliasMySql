@@ -88,8 +88,8 @@ enum class SqlValueType { kNull = 0, kBool, kChar, kInt, kBigInt, kFloat, kDoubl
 using SqlValueView =
     std::variant<SqlNull, bool, char, int32_t, int64_t, float, double, std::string_view, SqlBlobView, SqlDate>;
 
-using SqlValuePointer =
-    std::variant<SqlNull *, bool *, char *, int32_t *, int64_t *, float *, double *, std::string_view, SqlBlobView, SqlDate *>;
+using SqlValuePointer = std::variant<SqlNull *, bool *, char *, int32_t *, int64_t *, float *, double *,
+                                     std::string_view, SqlBlobView, SqlDate *>;
 using SqlValueRef =
     std::variant<SqlNull, bool &, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
 
@@ -292,16 +292,17 @@ auto to_sql_pointer(const T &t) -> SqlValuePointer {
 template <typename T>
     requires(std::is_integral_v<T> && sizeof(T) <= sizeof(int64_t))
 auto to_sql_pointer(T &t) -> SqlValuePointer {
-    if constexpr (std::is_same_v<T, bool>) {
+    using type = std::decay_t<T>;
+    if constexpr (std::is_same_v<type, bool>) {
+        return SqlValuePointer {(bool *)std::addressof(t)};
+    }
+    else if constexpr (sizeof(T) <= sizeof(char) && std::is_signed_v<type>) {
         return SqlValuePointer {(char *)std::addressof(t)};
     }
-    else if constexpr (sizeof(T) <= sizeof(char) && std::is_signed_v<T>) {
-        return SqlValuePointer {(char *)std::addressof(t)};
-    }
-    else if constexpr ((sizeof(T) <= sizeof(int32_t) && std::is_signed_v<T>) || sizeof(T) < sizeof(int32_t)) {
+    else if constexpr ((sizeof(T) <= sizeof(int32_t) && std::is_signed_v<type>) || sizeof(T) < sizeof(int32_t)) {
         return SqlValuePointer {(int32_t *)std::addressof(t)};
     }
-    else if constexpr ((sizeof(T) <= sizeof(int64_t) && std::is_signed_v<T>) || sizeof(T) < sizeof(int64_t)) {
+    else if constexpr ((sizeof(T) <= sizeof(int64_t) && std::is_signed_v<type>) || sizeof(T) < sizeof(int64_t)) {
         return SqlValuePointer {(int64_t *)std::addressof(t)};
     }
     else {
@@ -366,6 +367,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
                 return format_to(ctx.out(), "{}", "NULL");
+            case SqlValueType::kBool:
+                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
             case SqlValueType::kChar:
                 return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
@@ -398,6 +401,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
                 return format_to(ctx.out(), "{}", "NULL");
+            case SqlValueType::kBool:
+                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
             case SqlValueType::kChar:
                 return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:
@@ -430,6 +435,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
                 return format_to(ctx.out(), "{}", "NULL");
+            case SqlValueType::kBool:
+                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
             case SqlValueType::kChar:
                 return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
             case SqlValueType::kInt:

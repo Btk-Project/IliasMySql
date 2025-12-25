@@ -26,8 +26,8 @@ public:
     auto rowCount() const -> size_t override;
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
-    auto getValue(size_t index) -> IoResult<SqlValue> override;
-    auto getValue(std::string_view name) -> IoResult<SqlValue> override;
+    auto getValue(size_t index) -> IoResult<SqlValueView> override;
+    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
     auto native() -> PGresult *;
 
 private:

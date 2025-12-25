@@ -64,10 +64,10 @@ public:
 
     // 获取当前行的某一列数据 (零拷贝尽可能)
     // 如果是 Text/Blob，返回的 View 有效期通常仅在下一次 next() 之前
-    auto getValue(size_t index) -> IoResult<SqlValue> override;
+    auto getValue(size_t index) -> IoResult<SqlValueView> override;
 
     // 按列名获取
-    auto getValue(std::string_view name) -> IoResult<SqlValue> override;
+    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
     auto setPrivate(std::unique_ptr<SqliteStatement> mp);
 
 private:

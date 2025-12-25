@@ -51,15 +51,15 @@ auto SqliteStmtResultSet::columnName(size_t index) const -> std::string_view {
     return sqlite3_column_name(mSqliteStmt.get(), index);
 }
 
-auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValue> {
+auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValueView> {
     if (!mSqlite || !mSqliteStmt) {
         return Unexpected(SqlError::Code::NotConnected);
     }
     if (index >= columnCount()) {
         return Unexpected(std::make_error_code(std::errc::result_out_of_range));
     }
-    int      type_code = sqlite3_column_type(mSqliteStmt.get(), index);
-    SqlValue value;
+    int          type_code = sqlite3_column_type(mSqliteStmt.get(), index);
+    SqlValueView value;
     value.emplace<SqlNull>();
     switch (type_code) {
         case SQLITE_INTEGER:
@@ -69,18 +69,18 @@ auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValue> {
             value.emplace<double>(sqlite3_column_double(mSqliteStmt.get(), index));
             break;
         case SQLITE_TEXT:
-            value.emplace<std::string>(reinterpret_cast<const char *>(sqlite3_column_text(mSqliteStmt.get(), index)));
+            value.emplace<std::string_view>(
+                reinterpret_cast<const char *>(sqlite3_column_text(mSqliteStmt.get(), index)));
             break;
         case SQLITE_BLOB:
             const void *blob_ptr   = sqlite3_column_blob(mSqliteStmt.get(), index);
             int         blob_bytes = sqlite3_column_bytes(mSqliteStmt.get(), index);
-            value.emplace<std::vector<std::byte>>(reinterpret_cast<const std::byte *>(blob_ptr),
-                                                  reinterpret_cast<const std::byte *>(blob_ptr) + blob_bytes);
+            value.emplace<std::span<const std::byte>>(reinterpret_cast<const std::byte *>(blob_ptr), blob_bytes);
     }
     return value;
 }
 
-auto SqliteStmtResultSet::getValue(std::string_view name) -> IoResult<SqlValue> {
+auto SqliteStmtResultSet::getValue(std::string_view name) -> IoResult<SqlValueView> {
     auto index = mIndexs.find(std::string(name));
     if (index != mIndexs.end()) {
         return getValue(index->second);

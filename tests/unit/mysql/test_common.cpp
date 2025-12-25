@@ -153,11 +153,11 @@ public:
         auto db = std::move(open_ret.value());
 
         // 清理旧表 (Drop Table if exists)
-        co_await db.execute("DROP TABLE IF EXISTS simple_users");
-        co_await db.execute("DROP TABLE IF EXISTS complex_persons");
+        co_await db.execute("DROP TABLE IF EXISTS common_simple_users");
+        co_await db.execute("DROP TABLE IF EXISTS common_complex_persons");
 
         // 创建 SimpleUser 表
-        const char *create_simple = "CREATE TABLE simple_users ("
+        const char *create_simple = "CREATE TABLE common_simple_users ("
                                     "id INTEGER PRIMARY KEY, "
                                     "name VARCHAR(100) NOT NULL, "
                                     "score INTEGER"
@@ -168,7 +168,7 @@ public:
 
         // 创建 Person 表
         // 注意：email 使用 VARCHAR(255) 以支持 UNIQUE 索引
-        const char *create_complex = "CREATE TABLE complex_persons ("
+        const char *create_complex = "CREATE TABLE common_complex_persons ("
                                      "id INTEGER PRIMARY KEY, "
                                      "name VARCHAR(100) NOT NULL, "
                                      "age INTEGER, "
@@ -180,7 +180,7 @@ public:
                                      ")";
         auto        r2             = co_await db.execute(create_complex);
         if (!r2)
-            ILIAS_ERROR("mysql-test", "Create complex_persons failed: {}", r2.error().message());
+            ILIAS_ERROR("mysql-test", "Create common_complex_persons failed: {}", r2.error().message());
 
         co_return db;
     }
@@ -202,7 +202,7 @@ public:
             {2, "Bob", 20, "bob@test.com", SqlDate(2024, 1, 1), {std::byte {0xBE}, std::byte {0xEF}}, 'B', 200}};
 
         // 1. 插入 (Prepare with Struct)
-        const char *insert_sql = "INSERT INTO complex_persons (id, name, age, email, born, promise, val1, val2) "
+        const char *insert_sql = "INSERT INTO common_complex_persons (id, name, age, email, born, promise, val1, val2) "
                                  "VALUES (:id, :name, :age, :email, :born, :promise, :val1, :val2)";
         auto        stmt_ret   = co_await db.prepare<Person>(insert_sql);
         CO_ASSERT_VAL(stmt_ret);
@@ -217,7 +217,7 @@ public:
         }
 
         // 2. 查询验证
-        auto query_ret = co_await db.query<Person>("SELECT * FROM complex_persons ORDER BY id");
+        auto query_ret = co_await db.query<Person>("SELECT * FROM common_complex_persons ORDER BY id");
         CO_ASSERT_VAL(query_ret);
         auto result = std::move(query_ret.value());
         int  count  = 0;
@@ -245,7 +245,7 @@ public:
 
         auto tx = (co_await db.transaction()).value();
         auto stmt =
-            (co_await tx.prepare("INSERT INTO simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
+            (co_await tx.prepare("INSERT INTO common_simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
 
         const int TOTAL_ROWS = 50;
         for (int i = 0; i < TOTAL_ROWS; ++i) {
@@ -263,7 +263,7 @@ public:
         CO_EXPECT_RESULT(commit_ret);
 
         // 验证数量
-        auto count_ret = co_await db.query<std::tuple<int>>("SELECT count(*) FROM simple_users");
+        auto count_ret = co_await db.query<std::tuple<int>>("SELECT count(*) FROM common_simple_users");
         int  count     = 0;
         ilias_for_await(auto val, count_ret.value().range()) {
             count = std::get<0>(val);
@@ -280,7 +280,7 @@ public:
 
         // 插入 20 条数据
         auto tx   = (co_await db.transaction()).value();
-        auto stmt = (co_await tx.prepare("INSERT INTO simple_users VALUES (:id, :name, :score)")).value();
+        auto stmt = (co_await tx.prepare("INSERT INTO common_simple_users VALUES (:id, :name, :score)")).value();
         for (int i = 0; i < 20; ++i) {
             stmt.reset();
             stmt.bind(i, "U" + std::to_string(i), i); // score = id
@@ -291,7 +291,7 @@ public:
         // MySQL 支持 LIMIT ?, ? 或 LIMIT :lim OFFSET :off
         // 查询 score 倒序 (19, 18, ...), 取 5 条, 偏移 5 条 -> 应该得到 14, 13, 12, 11, 10
         auto ret_query =
-            co_await db.query_with("SELECT score FROM simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
+            co_await db.query_with("SELECT score FROM common_simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
         CO_ASSERT_VAL(ret_query);
 
         std::vector<int> scores;
@@ -316,7 +316,7 @@ public:
         ILIAS_INFO("mysql-test", ">>> Running test_bulk_update_delete");
 
         // 准备数据
-        auto stmt = (co_await db.prepare("INSERT INTO simple_users VALUES (?, 'init', 10)")).value();
+        auto stmt = (co_await db.prepare("INSERT INTO common_simple_users VALUES (?, 'init', 10)")).value();
         for (int i = 0; i < 10; ++i) {
             stmt.reset();
             stmt.bind(i);
@@ -324,17 +324,17 @@ public:
         }
 
         // 更新 id >= 5 的
-        auto ret_up = co_await db.execute_with("UPDATE simple_users SET score = 999 WHERE id >= :id", 5);
+        auto ret_up = co_await db.execute_with("UPDATE common_simple_users SET score = 999 WHERE id >= :id", 5);
         CO_ASSERT_VAL(ret_up);
         EXPECT_EQ(ret_up.value(), 5); // 5,6,7,8,9
 
         // 删除 score = 999 的
-        auto ret_del = co_await db.execute("DELETE FROM simple_users WHERE score = 999");
+        auto ret_del = co_await db.execute("DELETE FROM common_simple_users WHERE score = 999");
         CO_ASSERT_VAL(ret_del);
         EXPECT_EQ(ret_del.value(), 5);
 
         // 检查剩余
-        auto ret_count = co_await db.query<int>("SELECT count(*) FROM simple_users");
+        auto ret_count = co_await db.query<int>("SELECT count(*) FROM common_simple_users");
         int  count     = 0;
         ilias_for_await(auto v, ret_count.value().range()) {
             count = std::get<0>(v);
@@ -355,9 +355,9 @@ public:
         CO_EXPECT_NOT_RESULT(ret1); // 应该报错
 
         // 2. 唯一键冲突
-        // complex_persons 的 email 是 UNIQUE 的
-        co_await db.execute("INSERT INTO complex_persons (id, name, email) VALUES (1, 'A', 'u@test.com')");
-        auto ret2 = co_await db.execute("INSERT INTO complex_persons (id, name, email) VALUES (2, 'B', 'u@test.com')");
+        // common_complex_persons 的 email 是 UNIQUE 的
+        co_await db.execute("INSERT INTO common_complex_persons (id, name, email) VALUES (1, 'A', 'u@test.com')");
+        auto ret2 = co_await db.execute("INSERT INTO common_complex_persons (id, name, email) VALUES (2, 'B', 'u@test.com')");
         CO_EXPECT_NOT_RESULT(ret2); // 应该报错
         // ILIAS_INFO("mysql-test", "Expected error: {}", ret2.error().message());
 
@@ -371,10 +371,10 @@ public:
         ILIAS_INFO("mysql-test", ">>> Running test_null_handling");
 
         // 插入 score 为 NULL
-        auto ret = co_await db.execute("INSERT INTO simple_users (id, name, score) VALUES (999, 'NullGuy', NULL)");
+        auto ret = co_await db.execute("INSERT INTO common_simple_users (id, name, score) VALUES (999, 'NullGuy', NULL)");
         CO_ASSERT_VAL(ret);
 
-        auto q = co_await db.query<SimpleUser>("SELECT * FROM simple_users WHERE id = 999");
+        auto q = co_await db.query<SimpleUser>("SELECT * FROM common_simple_users WHERE id = 999");
         CO_ASSERT_VAL(q);
 
         ilias_for_await(auto &u, q.value().range()) {
@@ -397,12 +397,12 @@ public:
         // 在事务中插入一条“脏数据”
         // 使用 ID 8888 标记这条应该被回滚的数据
         auto exec_ret =
-            co_await tx.execute("INSERT INTO simple_users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
+            co_await tx.execute("INSERT INTO common_simple_users (id, name, score) VALUES (8888, 'ShouldVanish', 0)");
         CO_ASSERT_VAL(exec_ret);
 
         // 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
         // 但我们要验证的是回滚后的最终一致性
-        auto query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 8888");
+        auto query_ret = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 8888");
         CO_ASSERT_VAL(query_ret);
 
         int count = -1;
@@ -417,7 +417,7 @@ public:
         EXPECT_TRUE(rb_ret);
 
         // 4. 验证数据确实不存在了
-        query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 8888");
+        query_ret = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 8888");
         CO_ASSERT_VAL(query_ret);
 
         count = -1;
@@ -440,10 +440,10 @@ public:
         {
             // 作用域开始
             auto tx = (co_await db.transaction()).value();
-            co_await tx.execute("INSERT INTO simple_users (id, name, score) VALUES (7777, 'RAII_Test', 0)");
+            co_await tx.execute("INSERT INTO common_simple_users (id, name, score) VALUES (7777, 'RAII_Test', 0)");
             // 注意：这里故意不调用 tx.commit()，直接离开作用域
 
-            auto query_ret = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 7777");
+            auto query_ret = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 7777");
             CO_ASSERT_VAL(query_ret);
 
             int count = -1;
@@ -456,7 +456,7 @@ public:
         // 此时 tx 被析构，应该触发 syncRollback 或类似的机制
 
         // 验证数据不存在
-        auto q     = co_await db.query<int>("SELECT count(*) FROM simple_users WHERE id = 7777");
+        auto q     = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 7777");
         int  count = 0;
         ilias_for_await(auto val, q.value().range()) {
             count = std::get<0>(val);
@@ -470,9 +470,9 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_form_full_coverage");
         // 如果存在上次的测试数据，先清空
-        co_await db.execute("DROP TABLE IF EXISTS users_full_test");
+        co_await db.execute("DROP TABLE IF EXISTS common_users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "users_full_test");
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "common_users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -628,11 +628,11 @@ public:
         ILIAS_INFO("mysql-test", ">>> Running test_join_features");
 
         // 1. 清理并创建表
-        co_await db.execute("DROP TABLE IF EXISTS test_users_join");
-        co_await db.execute("DROP TABLE IF EXISTS test_orders_join");
+        co_await db.execute("DROP TABLE IF EXISTS common_test_users_join");
+        co_await db.execute("DROP TABLE IF EXISTS common_test_orders_join");
 
-        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create(db, "test_users_join");
-        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create(db, "test_orders_join");
+        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create(db, "common_test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create(db, "common_test_orders_join");
         CO_ASSERT_VAL(users_ret);
         CO_ASSERT_VAL(orders_ret);
 

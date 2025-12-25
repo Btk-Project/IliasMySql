@@ -80,9 +80,16 @@ public:
     // =========================================================
 
     // Select
+    template <typename... Us, template <typename U> typename... Ts>
+        requires(detail::HasSqlMethod<Ts<Us>> && ...)
+    auto select(Ts<Us>... args) const {
+        return detail::ProjectedSelectBuilder<Us...>(derived().db(), derived().tableRef(), {args.sql()...});
+    }
+
     template <typename... Ts>
-    auto select(detail::TypedColumn<Ts>... args) const {
-        return detail::ProjectedSelectBuilder<Ts...>(derived().db(), derived().tableRef(), args...);
+        requires(detail::HasSqlMethod<Ts> && ...)
+    auto select(Ts... args) const {
+        return detail::ProjectedSelectBuilder<Ts...>(derived().db(), derived().tableRef(), {args.sql()...});
     }
 
     auto select() const {

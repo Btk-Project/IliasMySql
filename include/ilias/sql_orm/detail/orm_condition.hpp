@@ -164,34 +164,34 @@ public:
     }
 
     template <typename T>
-    auto operator<(T &&v) {
+    auto operator<(T &&v) const {
         return compare("<", std::forward<T>(v));
     }
     template <typename T>
-    auto operator<=(T &&v) {
+    auto operator<=(T &&v) const {
         return compare("<=", std::forward<T>(v));
     }
     template <typename T>
-    auto operator>(T &&v) {
+    auto operator>(T &&v) const {
         return compare(">", std::forward<T>(v));
     }
     template <typename T>
-    auto operator>=(T &&v) {
+    auto operator>=(T &&v) const {
         return compare(">=", std::forward<T>(v));
     }
     template <typename T>
-    auto operator==(T &&v) {
+    auto operator==(T &&v) const {
         return compare("=", std::forward<T>(v));
     }
     template <typename T>
-    auto operator!=(T &&v) {
+    auto operator!=(T &&v) const {
         return compare("!=", std::forward<T>(v));
     }
 
     std::string sql() const { return mName; }
 
     template <typename T>
-    SqlCondition like(T &&v) {
+    SqlCondition like(T &&v) const {
         return compare("LIKE", std::forward<T>(v));
     }
 
@@ -235,32 +235,32 @@ public:
 
     template <typename U>
         requires IsValidOperand<U>
-    auto operator<(U &&v) {
+    auto operator<(U &&v) const {
         return SqlVariable::compare("<", std::forward<U>(v));
     }
     template <typename U>
         requires IsValidOperand<U>
-    auto operator<=(U &&v) {
+    auto operator<=(U &&v) const {
         return SqlVariable::compare("<=", std::forward<U>(v));
     }
     template <typename U>
         requires IsValidOperand<U>
-    auto operator>(U &&v) {
+    auto operator>(U &&v) const {
         return SqlVariable::compare(">", std::forward<U>(v));
     }
     template <typename U>
         requires IsValidOperand<U>
-    auto operator>=(U &&v) {
+    auto operator>=(U &&v) const {
         return SqlVariable::compare(">=", std::forward<U>(v));
     }
     template <typename U>
         requires IsValidOperand<U>
-    auto operator==(U &&v) {
+    auto operator==(U &&v) const {
         return SqlVariable::compare("=", std::forward<U>(v));
     }
     template <typename U>
         requires IsValidOperand<U>
-    auto operator!=(U &&v) {
+    auto operator!=(U &&v) const {
         return SqlVariable::compare("!=", std::forward<U>(v));
     }
 
@@ -269,14 +269,15 @@ public:
     template <typename U>
         requires(IsCompatible<T, U> && SqlBindable<U>) || std::is_same_v<std::decay_t<U>, std::string> ||
                 std::is_convertible_v<std::decay_t<U>, std::string_view>
-    SqlCondition like(U &&v) {
+    SqlCondition like(U &&v) const {
         return SqlVariable::compare("LIKE", std::forward<U>(v));
     }
 
     template <typename U>
     SqlAssignment operator=(U &&value) const {
         if constexpr (ISqlValue<std::decay_t<U>> || ISqlValueView<std::decay_t<U>>) {
-            static_assert(std::is_same_v<std::decay_t<U>, std::decay_t<T>>, "raw value type mismatch");
+            static_assert(std::is_same_v<std::decay_t<U>, std::decay_t<typename OptionalLikeType<T>::type>>,
+                          "raw value type mismatch");
         }
         else if constexpr (std::is_invocable_v<U>) {
             using ResultT = std::invoke_result_t<U>;
@@ -292,7 +293,267 @@ public:
         }
         return SqlVariable::operator=(std::forward<U>(value));
     }
+
+    // 1. has_value() - 检查可选字段是否有值
+    template <typename U = T>
+        requires std::is_same_v<U, std::optional<typename U::value_type>>
+    SqlCondition has_value() const {
+        return SqlCondition(this->sql() + " IS NOT NULL", {});
+    }
+
+    // 2. is_null() - 检查字段是否为 NULL
+    SqlCondition is_null() const { return SqlCondition(this->sql() + " IS NULL", {}); }
+
+    // 3. is_not_null() - 检查字段是否不为 NULL
+    SqlCondition is_not_null() const { return SqlCondition(this->sql() + " IS NOT NULL", {}); }
+
+    // 4. in() - IN 操作符，支持多个值
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition in(std::initializer_list<U> values) const {
+        return in(std::vector<U>(values));
+    }
+
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition in(const std::vector<U> &values) const {
+        if (values.empty()) {
+            return SqlCondition("1 = 0", {}); // 永远为假
+        }
+
+        std::string                                      sql = this->sql() + " IN (";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0)
+                sql += ", ";
+            sql += "?";
+            binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(values[i]));
+        }
+        sql += ")";
+
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
+
+    // 5. not_in() - NOT IN 操作符
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition not_in(std::initializer_list<U> values) const {
+        return not_in(std::vector<U>(values));
+    }
+
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition not_in(const std::vector<U> &values) const {
+        if (values.empty()) {
+            return SqlCondition("1 = 1", {}); // 永远为真
+        }
+
+        std::string                                      sql = this->sql() + " NOT IN (";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0)
+                sql += ", ";
+            sql += "?";
+            binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(values[i]));
+        }
+        sql += ")";
+
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
+
+    // 6. between() - BETWEEN 操作符
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition between(U &&min_val, U &&max_val) const {
+        std::string                                      sql = this->sql() + " BETWEEN ? AND ?";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(min_val)));
+        binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(max_val)));
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
+
+    // 7. not_between() - NOT BETWEEN 操作符
+    template <typename U>
+        requires IsValidOperand<U>
+    SqlCondition not_between(U &&min_val, U &&max_val) const {
+        std::string                                      sql = this->sql() + " NOT BETWEEN ? AND ?";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(min_val)));
+        binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(max_val)));
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
+
+    // 8. starts_with() - 字符串开头匹配
+    template <typename U>
+        requires std::is_convertible_v<U, std::string>
+    SqlCondition starts_with(U &&prefix) const {
+        std::string pattern = std::string(prefix) + "%";
+        return like(std::move(pattern));
+    }
+
+    // 9. ends_with() - 字符串结尾匹配
+    template <typename U>
+        requires std::is_convertible_v<U, std::string>
+    SqlCondition ends_with(U &&suffix) const {
+        std::string pattern = "%" + std::string(suffix);
+        return like(std::move(pattern));
+    }
+
+    // 10. contains() - 字符串包含匹配
+    template <typename U>
+        requires std::is_convertible_v<U, std::string>
+    SqlCondition contains(U &&substring) const {
+        std::string pattern = "%" + std::string(substring) + "%";
+        return like(std::move(pattern));
+    }
+
+    // 11. ilike() - 大小写不敏感的 LIKE (PostgreSQL)
+    template <typename U>
+        requires std::is_convertible_v<U, std::string>
+    SqlCondition ilike(U &&pattern) const {
+        std::string                                      sql = this->sql() + " ILIKE ?";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<ValueBinder<std::string>>(std::string(pattern)));
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
+
+    // 12. regexp() - 正则表达式匹配
+    template <typename U>
+        requires std::is_convertible_v<U, std::string>
+    SqlCondition regexp(U &&pattern) const {
+        std::string                                      sql = this->sql() + " REGEXP ?";
+        std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<ValueBinder<std::string>>(std::string(pattern)));
+        return SqlCondition(std::move(sql), std::move(binders));
+    }
 };
+
+template <typename T>
+class AggregateColumn : public SqlVariable {
+public:
+    using Type = T;
+    explicit AggregateColumn(std::string sql) : SqlVariable(std::move(sql)) {}
+
+    // COUNT
+    static AggregateColumn<int> count(const TypedColumn<T> &col) {
+        return AggregateColumn<int>("COUNT(" + col.sql() + ")");
+    }
+
+    static AggregateColumn<int> count_distinct(const TypedColumn<T> &col) {
+        return AggregateColumn<int>("COUNT(DISTINCT " + col.sql() + ")");
+    }
+
+    // SUM (仅数值类型)
+    template <typename U = T>
+        requires std::is_arithmetic_v<U>
+    static AggregateColumn<T> sum(const TypedColumn<T> &col) {
+        return AggregateColumn<T>("SUM(" + col.sql() + ")");
+    }
+
+    // AVG (仅数值类型)
+    template <typename U = T>
+        requires std::is_arithmetic_v<U>
+    static AggregateColumn<double> avg(const TypedColumn<T> &col) {
+        return AggregateColumn<double>("AVG(" + col.sql() + ")");
+    }
+
+    // MIN/MAX
+    static AggregateColumn<T> min(const TypedColumn<T> &col) { return AggregateColumn<T>("MIN(" + col.sql() + ")"); }
+
+    static AggregateColumn<T> max(const TypedColumn<T> &col) { return AggregateColumn<T>("MAX(" + col.sql() + ")"); }
+};
+
+// 14. 便利的聚合函数
+template <typename T>
+auto count(const TypedColumn<T> &col) {
+    return AggregateColumn<int>::count(col);
+}
+
+template <typename T>
+auto count_distinct(const TypedColumn<T> &col) {
+    return AggregateColumn<int>::count_distinct(col);
+}
+
+template <typename T>
+    requires std::is_arithmetic_v<T>
+auto sum(const TypedColumn<T> &col) {
+    return AggregateColumn<T>::sum(col);
+}
+
+template <typename T>
+    requires std::is_arithmetic_v<T>
+auto avg(const TypedColumn<T> &col) {
+    return AggregateColumn<double>::avg(col);
+}
+
+template <typename T>
+auto min(const TypedColumn<T> &col) {
+    return AggregateColumn<T>::min(col);
+}
+
+template <typename T>
+auto max(const TypedColumn<T> &col) {
+    return AggregateColumn<T>::max(col);
+}
+
+// 15. 数学函数支持 (仅数值类型)
+template <typename T>
+    requires std::is_arithmetic_v<T>
+class MathColumn : public SqlVariable {
+public:
+    using Type = T;
+    explicit MathColumn(std::string sql) : SqlVariable(std::move(sql)) {}
+
+    // ABS
+    static MathColumn<T> abs(const TypedColumn<T> &col) { return MathColumn<T>("ABS(" + col.sql() + ")"); }
+
+    // ROUND (仅浮点类型)
+    template <typename U = T>
+        requires std::is_floating_point_v<U>
+    static MathColumn<T> round(const TypedColumn<T> &col, int precision = 0) {
+        return MathColumn<T>("ROUND(" + col.sql() + ", " + std::to_string(precision) + ")");
+    }
+
+    // CEIL/FLOOR (仅浮点类型)
+    template <typename U = T>
+        requires std::is_floating_point_v<U>
+    static MathColumn<T> ceil(const TypedColumn<T> &col) {
+        return MathColumn<T>("CEIL(" + col.sql() + ")");
+    }
+
+    template <typename U = T>
+        requires std::is_floating_point_v<U>
+    static MathColumn<T> floor(const TypedColumn<T> &col) {
+        return MathColumn<T>("FLOOR(" + col.sql() + ")");
+    }
+};
+
+// 便利的数学函数
+template <typename T>
+    requires std::is_arithmetic_v<T>
+auto abs(const TypedColumn<T> &col) {
+    return MathColumn<T>::abs(col);
+}
+
+template <typename T>
+    requires std::is_floating_point_v<T>
+auto round(const TypedColumn<T> &col, int precision = 0) {
+    return MathColumn<T>::round(col, precision);
+}
+
+template <typename T>
+    requires std::is_floating_point_v<T>
+auto ceil(const TypedColumn<T> &col) {
+    return MathColumn<T>::ceil(col);
+}
+
+template <typename T>
+    requires std::is_floating_point_v<T>
+auto floor(const TypedColumn<T> &col) {
+    return MathColumn<T>::floor(col);
+}
 
 } // namespace detail
 

@@ -16,11 +16,18 @@ ILIAS_SQL_USE_NAMESPACE;
 using namespace ILIAS_NAMESPACE;
 NEKO_USE_NAMESPACE
 
-// ... [原有宏定义 CO_ASSERT_VAL 保持不变] ...
+#define CO_EXPECT_RESULT(result)                                                                                       \
+    do {                                                                                                               \
+        EXPECT_TRUE(result.has_value());                                                                               \
+        if (!result.has_value()) {                                                                                     \
+            ILIAS_ERROR("sql-test", "failed: {}", result.error().message());                                           \
+        }                                                                                                              \
+    } while (0)
+
 #define CO_ASSERT_VAL(ret)                                                                                             \
     do {                                                                                                               \
+        EXPECT_TRUE(ret.has_value());                                                                                  \
         if (!ret.has_value()) {                                                                                        \
-            ILIAS_ERROR("orm-test", "assert failed: {}", ret.error().message());                                       \
             co_return {};                                                                                              \
         }                                                                                                              \
     } while (0)

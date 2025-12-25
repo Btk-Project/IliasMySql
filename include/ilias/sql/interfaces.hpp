@@ -44,10 +44,10 @@ public:
 
     // 获取当前行的某一列数据 (零拷贝尽可能)
     // 如果是 Text/Blob，返回的 View 有效期通常仅在下一次 next() 之前
-    virtual auto getValue(size_t index) -> IoResult<SqlValue> = 0;
+    virtual auto getValue(size_t index) -> IoResult<SqlValueView> = 0;
 
     // 按列名获取
-    virtual auto getValue(std::string_view name) -> IoResult<SqlValue> = 0;
+    virtual auto getValue(std::string_view name) -> IoResult<SqlValueView> = 0;
 };
 
 /**

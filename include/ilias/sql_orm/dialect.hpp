@@ -61,13 +61,28 @@ struct Dialect<MysqlTag> {
         if constexpr (std::is_same_v<DT, SqlNull>) {
             static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
         }
-        else if constexpr (std::is_same_v<DT, int64_t>) {
+        else if constexpr (std::is_same_v<DT, bool>) {
+            return "BOOLEAN";
+        }
+        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int8_t)) {
+            return "TINYINT";
+        }
+        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int16_t)) {
+            return "SMALLINT";
+        }
+        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int32_t)) {
+            return "INT";
+        }
+        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int64_t)) {
             return "BIGINT";
         }
         else if constexpr (std::is_integral_v<DT>) {
             return "INTEGER";
         }
-        else if constexpr (std::is_floating_point_v<DT>) {
+        else if constexpr (std::is_same_v<DT, float>) {
+            return "FLOAT";
+        }
+        else if constexpr (std::is_same_v<DT, double>) {
             return "DOUBLE";
         }
         else if constexpr (std::is_same_v<DT, SqlDate>) {

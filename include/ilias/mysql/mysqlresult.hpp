@@ -1,6 +1,5 @@
 #pragma once
 
-#include <unordered_map>
 #include <mariadb/mysql.h>
 #include <mariadb/mysqld_error.h>
 
@@ -12,6 +11,7 @@ ILIAS_MYSQL_NS_BEGIN
 class ILIAS_SQL_API MySqlResultBase {
 public:
     using SqlValue                                 = sql::SqlValue;
+    using SqlValueView                             = sql::SqlValueView;
     MySqlResultBase()                              = default;
     MySqlResultBase(MySqlResultBase &&)            = default;
     MySqlResultBase &operator=(MySqlResultBase &&) = default;
@@ -21,15 +21,15 @@ public:
     MySqlResultBase &operator=(const MySqlResultBase &) = delete;
 
     [[nodiscard("Don't forget to use co_await")]]
-    virtual auto next() -> IoTask<bool>                           = 0;
-    virtual auto countRows() -> size_t                            = 0;
-    virtual auto countFields() -> size_t                          = 0;
-    virtual auto fieldName(size_t index) -> std::string_view      = 0;
-    virtual auto get(size_t index) -> IoResult<SqlValue>          = 0;
-    virtual auto get(std::string_view name) -> IoResult<SqlValue> = 0;
-    static auto  stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
-        -> Result<SqlValue, std::error_code>;
-    static auto  toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> Result<SqlValue, std::error_code>;
+    virtual auto next() -> IoTask<bool>                               = 0;
+    virtual auto countRows() -> size_t                                = 0;
+    virtual auto countFields() -> size_t                              = 0;
+    virtual auto fieldName(size_t index) -> std::string_view          = 0;
+    virtual auto get(size_t index) -> IoResult<SqlValueView>          = 0;
+    virtual auto get(std::string_view name) -> IoResult<SqlValueView> = 0;
+    static auto  stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull)
+        -> Result<SqlValueView, std::error_code>;
+    static auto  toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> Result<SqlValueView, std::error_code>;
     virtual auto nativeResult() -> MYSQL_RES * = 0;
 };
 
@@ -44,8 +44,8 @@ public:
 
     [[nodiscard("Don't forget to use co_await")]]
     auto next() -> IoTask<bool> override;
-    auto get(size_t index) -> IoResult<SqlValue> override;
-    auto get(std::string_view name) -> IoResult<SqlValue> override;
+    auto get(size_t index) -> IoResult<SqlValueView> override;
+    auto get(std::string_view name) -> IoResult<SqlValueView> override;
     auto countRows() -> size_t override;
     auto countFields() -> size_t override;
     auto fieldName(size_t index) -> std::string_view override;
@@ -78,8 +78,8 @@ public:
     ~SqlStmtResult();
 
     auto next() -> IoTask<bool> override;
-    auto get(size_t index) -> IoResult<SqlValue> override;
-    auto get(std::string_view name) -> IoResult<SqlValue> override;
+    auto get(size_t index) -> IoResult<SqlValueView> override;
+    auto get(std::string_view name) -> IoResult<SqlValueView> override;
     auto countRows() -> size_t override;
     auto countFields() -> size_t override;
     auto fieldName(size_t index) -> std::string_view override;
@@ -107,5 +107,6 @@ private:
     std::vector<std::unique_ptr<uint8_t[]>>                      mFields;
     std::unique_ptr<MYSQL_BIND[]>                                mBinds;
     std::unique_ptr<unsigned long[]>                             mLengths;
+    std::unique_ptr<my_bool[]>                                   mIsNull;
 };
 ILIAS_MYSQL_NS_END

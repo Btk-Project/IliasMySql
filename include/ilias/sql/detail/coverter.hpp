@@ -22,6 +22,22 @@ concept DereferenceableAndNullable = requires(T &t) {
     { t.reset() };                                  // optional-like
     { *t };                                         // dereferenceable
 };
+template <typename T>
+struct OptionalLikeType;
+
+template <typename T>
+    requires(!DereferenceableAndNullable<T>)
+struct OptionalLikeType<T> {
+    using type = T;
+    static auto to_sql_pointer(T &&val) { return to_sql_pointer(val); }
+};
+
+template <typename T>
+    requires DereferenceableAndNullable<T>
+struct OptionalLikeType<T> {
+    using type = std::decay_t<decltype(*std::declval<T>())>;
+    static auto to_sql_pointer(T &&val) { return to_sql_pointer(*val); }
+};
 
 // ==========================================
 // 1. 默认转换器 (处理基础类型)
@@ -31,13 +47,15 @@ template <typename T>
     requires(!DereferenceableAndNullable<T> && !std::is_enum_v<T>)
 struct SqlValueConverter<T, void> {
     template <typename U>
-    static auto convert(SqlValue &ret, U &value) -> IoResult<void> {
+    static auto convert(SqlValueView &ret, U &value) -> IoResult<void> {
         // 如果目标类型不是 optional，但数据库返回了 Null，通常视为错误或忽略
         // 这里为了严谨，如果是非 optional 的类型遇到 null，报参数错误
         if (ret.index() == (size_t)SqlValueType::kNull) {
             if (std::is_same_v<SqlValueTraits<SqlValueType::kNull>::type, T> ||
                 std::is_constructible_v<T, SqlValueTraits<SqlValueType::kText>::type> ||
-                std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::type>) {
+                std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::type> ||
+                std::is_constructible_v<T, SqlValueTraits<SqlValueType::kText>::viewType> ||
+                std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::viewType>) {
                 value = T {};
                 return {};
             }
@@ -51,6 +69,12 @@ struct SqlValueConverter<T, void> {
                     return {};
                 }
                 break;
+            }
+            case SqlValueType::kBool: {
+                if constexpr (std::is_same_v<T, bool>) {
+                    value = get<SqlValueType::kBool>(ret);
+                    return {};
+                }
             }
             case SqlValueType::kInt: {
                 if constexpr (std::is_convertible_v<SqlValueTraits<SqlValueType::kInt>::type, T>) {
@@ -81,15 +105,24 @@ struct SqlValueConverter<T, void> {
                 break;
             }
             case SqlValueType::kText: {
-                if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kText>::type>) {
-                    value = T(std::move(get<SqlValueType::kText>(ret)));
+                if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kText>::viewType>) {
+                    value = T(get<SqlValueType::kText>(ret));
+                    return {};
+                }
+                else if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kText>::type>) {
+                    value = T(get<SqlValueType::kText>(ret));
                     return {};
                 }
                 break;
             }
             case SqlValueType::kBlob: {
-                if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::type>) {
-                    value = T(std::move(get<SqlValueType::kBlob>(ret)));
+                if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::viewType>) {
+                    value = T(get<SqlValueType::kBlob>(ret));
+                    return {};
+                }
+                else if constexpr (std::is_constructible_v<T, SqlValueTraits<SqlValueType::kBlob>::type>) {
+                    auto blob_data = get<SqlValueType::kBlob>(ret);
+                    value          = T(std::begin(blob_data), std::end(blob_data));
                     return {};
                 }
                 break;
@@ -116,7 +149,7 @@ template <typename T>
     requires DereferenceableAndNullable<T>
 struct SqlValueConverter<T, void> {
     using InnerType = std::decay_t<decltype(*std::declval<T>())>;
-    static auto convert(SqlValue &ret, T &value) -> IoResult<void> {
+    static auto convert(SqlValueView &ret, T &value) -> IoResult<void> {
         // 1. 处理 Null 情况
         if (ret.index() == (size_t)SqlValueType::kNull) {
             value.reset();
@@ -145,7 +178,7 @@ struct SqlValueConverter<T, void> {
 // 如果 T 是枚举，且不是 SqlValue 原生支持的类型，尝试将其作为底层类型(int/int64)处理
 template <typename T>
 struct SqlValueConverter<T, std::enable_if_t<std::is_enum_v<T>>> {
-    static auto convert(SqlValue &ret, T &value) -> IoResult<void> {
+    static auto convert(SqlValueView &ret, T &value) -> IoResult<void> {
         using UnderlyingType = std::underlying_type_t<T>;
         UnderlyingType temp_val;
         auto           res = SqlValueConverter<UnderlyingType>::convert(ret, temp_val);

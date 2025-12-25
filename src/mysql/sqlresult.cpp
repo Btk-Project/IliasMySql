@@ -42,9 +42,15 @@
     }
 
 ILIAS_MYSQL_NS_BEGIN
-auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize)
-    -> Result<SqlValue, std::error_code> {
-    SqlValue result;
+
+auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull)
+    -> Result<SqlValueView, std::error_code> {
+    SqlValueView result;
+    // Check the is_null indicator first - this is the proper way to detect NULL values
+    if (isNull) {
+        result.emplace<sql::SqlNull>();
+        return result;
+    }
     if (buffer == nullptr) {
         result.emplace<sql::SqlNull>();
         return result;
@@ -86,15 +92,13 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
         case MYSQL_TYPE_VARCHAR:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_STRING:
-            result.emplace<std::string>(reinterpret_cast<char *>(buffer), bufferSize);
+            result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
             break;
         case MYSQL_TYPE_BLOB:
         case MYSQL_TYPE_LONG_BLOB:
         case MYSQL_TYPE_MEDIUM_BLOB:
         case MYSQL_TYPE_TINY_BLOB:
-            result.emplace<std::vector<std::byte>>(
-                std::vector<std::byte> {reinterpret_cast<std::byte *>((char *)buffer),
-                                        reinterpret_cast<std::byte *>((char *)buffer) + bufferSize});
+            result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>((char *)buffer), bufferSize);
             break;
         default:
             return Unexpected(sql::SqlError::Code::UnknownError);
@@ -103,8 +107,8 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
 }
 
 auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize)
-    -> Result<SqlValue, std::error_code> {
-    SqlValue result;
+    -> Result<SqlValueView, std::error_code> {
+    SqlValueView result;
     if (buffer == nullptr) {
         result.emplace<sql::SqlNull>();
         return result;
@@ -170,14 +174,13 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
         case MYSQL_TYPE_VARCHAR:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_STRING:
-            result.emplace<std::string>(reinterpret_cast<char *>(buffer), bufferSize);
+            result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
             break;
         case MYSQL_TYPE_BLOB:
         case MYSQL_TYPE_LONG_BLOB:
         case MYSQL_TYPE_MEDIUM_BLOB:
         case MYSQL_TYPE_TINY_BLOB:
-            result.emplace<std::vector<std::byte>>(std::vector<std::byte> {
-                reinterpret_cast<std::byte *>(buffer), reinterpret_cast<std::byte *>(buffer) + bufferSize});
+            result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>(buffer), bufferSize);
             break;
         default:
             return Unexpected(sql::SqlError::Code::UnknownError);
@@ -284,7 +287,7 @@ auto SqlQueryResult::next() -> IoTask<bool> {
     }
 }
 
-auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
+auto SqlQueryResult::get(size_t index) -> IoResult<SqlValueView> {
     if (mCurrentRow == nullptr) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -307,7 +310,7 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValue> {
 }
 
 // TODO: optimize
-auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValue> {
+auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValueView> {
     if (mResult == nullptr || mCurrentRow == nullptr) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -485,7 +488,7 @@ auto SqlStmtResult::next() -> IoTask<bool> {
     }
 }
 
-auto SqlStmtResult::get(size_t index) -> IoResult<SqlValue> {
+auto SqlStmtResult::get(size_t index) -> IoResult<SqlValueView> {
     if (mFields.empty() || mFieldMetas.empty()) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -493,15 +496,13 @@ auto SqlStmtResult::get(size_t index) -> IoResult<SqlValue> {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
     auto &currentRow = mFields[index];
-    // ILIAS_TRACE("sql", "{}({}) raw data {}: {}",
-    //             std::string_view(mFieldMetas[index]->name, mFieldMetas[index]->name_length),
-    //             (int)mFieldMetas[index]->type, mLengths[index], (char *)currentRow.get());
-    auto result = stmtToValue(mFieldMetas[index], currentRow.get(), mLengths[index]);
+
+    auto result = stmtToValue(mFieldMetas[index], currentRow.get(), mLengths[index], mIsNull[index]);
     return result;
 }
 
 // TODO: optimize
-auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValue> {
+auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValueView> {
     if (mResult == nullptr || mFieldMetas.empty()) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -620,6 +621,7 @@ auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
         mFieldMetas.resize(numFields);
         mBinds   = std::make_unique<MYSQL_BIND[]>(numFields);
         mLengths = std::make_unique<unsigned long[]>(numFields);
+        mIsNull  = std::make_unique<my_bool[]>(numFields);
     }
     // 同样调整 Buffer 容器的大小
     if (mFields.size() != numFields) {
@@ -629,14 +631,17 @@ auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
     // 清零是个好习惯，防止野指针
     std::memset(mBinds.get(), 0, sizeof(MYSQL_BIND) * numFields);
     std::memset(mLengths.get(), 0, sizeof(unsigned long) * numFields);
+    std::memset(mIsNull.get(), 0, sizeof(my_bool) * numFields);
+    std::memset(mFieldMetas.data(), 0, sizeof(st_mysql_field *) * mFieldMetas.size());
 
     for (unsigned int i = 0; i < numFields; ++i) {
         mFieldMetas[i] = &rawFields[i];
-
         // 1. 获取类型配置
         auto cfgRet = getBindConfig(mFieldMetas[i]);
-        if (!cfgRet)
+        if (!cfgRet) {
+            ILIAS_TRACE("ilias-mysql", "error config {}", cfgRet.error().message());
             return Unexpected(cfgRet.error());
+        }
         auto cfg = cfgRet.value();
 
         // 2. 填充 MYSQL_BIND 结构
@@ -644,16 +649,14 @@ auto SqlStmtResult::allocateBindBuffers(MYSQL_RES *meta) -> IoResult<void> {
         mBinds[i].is_unsigned   = cfg.isUnsigned;
         mBinds[i].length        = &mLengths[i]; // 输出长度的指针
         mBinds[i].buffer_length = cfg.bufferSize;
-
+        mBinds[i].is_null       = &mIsNull[i]; // 设置 NULL 指示器
         // 3. 分配实际的数据缓冲区
-        if (cfg.bufferSize > 0) {
-            // 分配内存
-            mFields[i] = std::make_unique<uint8_t[]>(cfg.bufferSize + 1); // +1 为了字符串 safe
-            std::memset(mFields[i].get(), 0, cfg.bufferSize + 1);
+        // 分配内存
+        mFields[i] = std::make_unique<uint8_t[]>(cfg.bufferSize + 1); // +1 为了字符串 safe
+        std::memset(mFields[i].get(), 0, cfg.bufferSize + 1);
 
-            // 绑定 Buffer 指针
-            mBinds[i].buffer = mFields[i].get();
-        }
+        // 绑定 Buffer 指针
+        mBinds[i].buffer = mFields[i].get();
     }
     return {};
 }
