@@ -126,31 +126,6 @@ struct Meta<SimpleOrder, void> {
 };
 NEKO_END_NAMESPACE
 
-
-class ORMExtensionsTest : public ::testing::Test {
-protected:
-    static auto get_options() -> ConnectOptions {
-        ConnectOptions options;
-        options.host     = std::getenv("DB_HOST") ?: "127.0.0.1";
-        options.port     = std::atoi(std::getenv("DB_PORT") ?: "3306");
-        options.user     = std::getenv("DB_USER") ?: "root";
-        options.password = std::getenv("DB_PASS") ?: "123456";
-        options.database = std::getenv("DB_NAME") ?: "test";
-        return options;
-    }
-
-    static auto setup_db() -> IoTask<SqlDatabase> {
-        auto options  = get_options();
-        auto open_ret = co_await SqlDatabase::open("mysql", options);
-        if (!open_ret) {
-            throw std::runtime_error("Failed to connect to MySQL");
-        }
-        auto db = std::move(open_ret.value());
-        co_await db.execute("DROP TABLE IF EXISTS extended_users");
-        co_return db;
-    }
-};
-
 // ==========================================
 // 3. ORM 接口测试套件
 // ==========================================
@@ -198,8 +173,8 @@ public:
         auto db = std::move(open_ret.value());
 
         // 清理旧表
-        co_await db.execute("DROP TABLE IF EXISTS simple_orders");
         co_await db.execute("DROP TABLE IF EXISTS simple_users");
+        co_await db.execute("DROP TABLE IF EXISTS extended_users");
 
         co_return db;
     }
@@ -607,7 +582,7 @@ public:
             auto query_ret = co_await db.query<void>("SELECT null_int FROM type_test WHERE id = 4");
             CO_ASSERT_VAL(query_ret);
             int a;
-            ilias_for_await(auto& ret, query_ret->range(a)) {
+            ilias_for_await(auto &ret, query_ret->range(a)) {
                 CO_EXPECT_NOT_RESULT(ret);
             }
         }
@@ -640,12 +615,10 @@ public:
         auto users = std::move(users_ret.value());
 
         // 准备测试数据
-        std::vector<SimpleUser> test_users = {
-            {1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1), true, 1000.0},
-            {2, "Bob", 30, "bob@test.com", SqlDate(2024, 1, 2), false, 2000.0},
-            {3, "Charlie", 35, std::nullopt, SqlDate(2024, 1, 3), true, 1500.0}
-        };
-        auto insert_ret = co_await users.insert(test_users);
+        std::vector<SimpleUser> test_users = {{1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1), true, 1000.0},
+                                              {2, "Bob", 30, "bob@test.com", SqlDate(2024, 1, 2), false, 2000.0},
+                                              {3, "Charlie", 35, std::nullopt, SqlDate(2024, 1, 3), true, 1500.0}};
+        auto                    insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);
 
         // 1. 测试各种比较操作符
@@ -654,7 +627,7 @@ public:
             auto lt_ret = co_await users.select().where(users.sql(&SimpleUser::age) < 30).query();
             CO_ASSERT_VAL(lt_ret);
             auto lt_result = std::move(lt_ret.value());
-            
+
             int count = 0;
             ilias_for_await(auto &user, lt_result.range()) {
                 EXPECT_LT(user.age.value(), 30);
@@ -666,7 +639,7 @@ public:
             auto le_ret = co_await users.select().where(users.sql(&SimpleUser::age) <= 30).query();
             CO_ASSERT_VAL(le_ret);
             auto le_result = std::move(le_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, le_result.range()) {
                 EXPECT_LE(user.age.value(), 30);
@@ -678,7 +651,7 @@ public:
             auto gt_ret = co_await users.select().where(users.sql(&SimpleUser::age) > 30).query();
             CO_ASSERT_VAL(gt_ret);
             auto gt_result = std::move(gt_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, gt_result.range()) {
                 EXPECT_GT(user.age.value(), 30);
@@ -690,7 +663,7 @@ public:
             auto ge_ret = co_await users.select().where(users.sql(&SimpleUser::age) >= 30).query();
             CO_ASSERT_VAL(ge_ret);
             auto ge_result = std::move(ge_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, ge_result.range()) {
                 EXPECT_GE(user.age.value(), 30);
@@ -702,7 +675,7 @@ public:
             auto ne_ret = co_await users.select().where(users.sql(&SimpleUser::name) != "Alice").query();
             CO_ASSERT_VAL(ne_ret);
             auto ne_result = std::move(ne_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, ne_result.range()) {
                 EXPECT_NE(user.name, "Alice");
@@ -716,7 +689,7 @@ public:
             auto like_ret = co_await users.select().where(users.sql(&SimpleUser::name).like("A%")).query();
             CO_ASSERT_VAL(like_ret);
             auto like_result = std::move(like_ret.value());
-            
+
             int count = 0;
             ilias_for_await(auto &user, like_result.range()) {
                 EXPECT_EQ(user.name[0], 'A'); // 检查名字以A开头
@@ -731,7 +704,7 @@ public:
             auto null_ret = co_await users.select().where(users.sql(&SimpleUser::email) == nullptr).query();
             CO_ASSERT_VAL(null_ret);
             auto null_result = std::move(null_ret.value());
-            
+
             int count = 0;
             ilias_for_await(auto &user, null_result.range()) {
                 EXPECT_FALSE(user.email.has_value());
@@ -743,7 +716,7 @@ public:
             auto not_null_ret = co_await users.select().where(users.sql(&SimpleUser::email) != nullptr).query();
             CO_ASSERT_VAL(not_null_ret);
             auto not_null_result = std::move(not_null_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, not_null_result.range()) {
                 EXPECT_TRUE(user.email.has_value());
@@ -755,13 +728,13 @@ public:
         // 4. 测试逻辑操作符组合
         {
             // 测试 AND 操作符
-            auto and_ret = co_await users.select()
-                               .where((users.sql(&SimpleUser::is_active) == true) && 
-                                      (users.sql(&SimpleUser::balance) > 1200.0))
-                               .query();
+            auto and_ret =
+                co_await users.select()
+                    .where((users.sql(&SimpleUser::is_active) == true) && (users.sql(&SimpleUser::balance) > 1200.0))
+                    .query();
             CO_ASSERT_VAL(and_ret);
             auto and_result = std::move(and_ret.value());
-            
+
             int count = 0;
             ilias_for_await(auto &user, and_result.range()) {
                 EXPECT_TRUE(user.is_active);
@@ -771,13 +744,13 @@ public:
             EXPECT_EQ(count, 1); // Charlie
 
             // 测试 OR 操作符
-            auto or_ret = co_await users.select()
-                              .where((users.sql(&SimpleUser::name) == "Alice") || 
-                                     (users.sql(&SimpleUser::name) == "Bob"))
-                              .query();
+            auto or_ret =
+                co_await users.select()
+                    .where((users.sql(&SimpleUser::name) == "Alice") || (users.sql(&SimpleUser::name) == "Bob"))
+                    .query();
             CO_ASSERT_VAL(or_ret);
             auto or_result = std::move(or_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, or_result.range()) {
                 EXPECT_TRUE(user.name == "Alice" || user.name == "Bob");
@@ -786,12 +759,10 @@ public:
             EXPECT_EQ(count, 2); // Alice, Bob
 
             // 测试 NOT 操作符
-            auto not_ret = co_await users.select()
-                               .where(!(users.sql(&SimpleUser::is_active) == true))
-                               .query();
+            auto not_ret = co_await users.select().where(!(users.sql(&SimpleUser::is_active) == true)).query();
             CO_ASSERT_VAL(not_ret);
             auto not_result = std::move(not_ret.value());
-            
+
             count = 0;
             ilias_for_await(auto &user, not_result.range()) {
                 EXPECT_FALSE(user.is_active);
@@ -822,42 +793,8 @@ public:
         ILIAS_INFO("orm-test", ">>> test_condition_builder_coverage PASSED");
         co_return {};
     }
-};
 
-// ==========================================
-// 4. 测试执行入口
-// ==========================================
-ILIAS_NAMESPACE::Task<void> run_all_orm_tests() {
-    try {
-        ILIAS_INFO("orm-test", "=== Starting ORM Interface Comprehensive Tests ===");
-
-        // 基础功能测试
-        co_await ORMInterfaceTestSuite::test_basic_crud_operations();
-        co_await ORMInterfaceTestSuite::test_advanced_query_features();
-
-        // 事务和错误处理
-        co_await ORMInterfaceTestSuite::test_transaction_management();
-        co_await ORMInterfaceTestSuite::test_error_handling();
-
-        // 覆盖率提升测试
-        co_await ORMInterfaceTestSuite::test_type_converter_coverage();
-        co_await ORMInterfaceTestSuite::test_condition_builder_coverage();
-
-        ILIAS_INFO("orm-test", "=== All ORM Interface Tests Completed Successfully ===");
-
-    } catch (const std::exception &e) {
-        ILIAS_ERROR("orm-test", "Exception caught in test runner: {}", e.what());
-        EXPECT_TRUE(false) << "Exception in ORM test runner: " << e.what();
-    }
-}
-
-// ==========================================
-// 5. Google Test 集成
-// ==========================================
-
-// 测试新的条件接口
-TEST_F(ORMExtensionsTest, TestNewConditionInterfaces) {
-    auto test_task = []() -> IoTask<void> {
+    static auto test_new_condition_interfaces() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
         auto users_ret = co_await Form<ExtendedUser, MysqlTag>::create(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
@@ -984,14 +921,9 @@ TEST_F(ORMExtensionsTest, TestNewConditionInterfaces) {
         }
 
         co_return {};
-    };
+    }
 
-    test_task().wait();
-}
-
-// 测试聚合函数
-TEST_F(ORMExtensionsTest, TestAggregateFunctions) {
-    auto test_task = []() -> IoTask<void> {
+    static auto test_aggregate_functions() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
         auto users_ret = co_await Form<ExtendedUser, MysqlTag>::create(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
@@ -1054,14 +986,9 @@ TEST_F(ORMExtensionsTest, TestAggregateFunctions) {
         }
 
         co_return {};
-    };
+    }
 
-    test_task().wait();
-}
-
-// 测试数学函数
-TEST_F(ORMExtensionsTest, TestMathFunctions) {
-    auto test_task = []() -> IoTask<void> {
+    static auto test_math_functions() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
         auto users_ret = co_await Form<ExtendedUser, MysqlTag>::create(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
@@ -1107,9 +1034,24 @@ TEST_F(ORMExtensionsTest, TestMathFunctions) {
         }
 
         co_return {};
-    };
+    }
+};
 
-    test_task().wait();
+// ==========================================
+// 5. Google Test 集成
+// ==========================================
+TEST(ORMExtensionsTest, TestNewConditionInterfaces) {
+    ORMInterfaceTestSuite::test_new_condition_interfaces().wait();
+}
+
+// 测试聚合函数
+TEST(ORMExtensionsTest, TestAggregateFunctions) {
+    ORMInterfaceTestSuite::test_aggregate_functions().wait();
+}
+
+// 测试数学函数
+TEST(ORMExtensionsTest, TestMathFunctions) {
+    ORMInterfaceTestSuite::test_math_functions().wait();
 }
 
 // 基础CRUD测试
@@ -1140,11 +1082,6 @@ TEST(ORMInterface, TypeConverterCoverage) {
 // 条件构建器覆盖率测试
 TEST(ORMInterface, ConditionBuilderCoverage) {
     ORMInterfaceTestSuite::test_condition_builder_coverage().wait();
-}
-
-// 完整测试套件
-TEST(ORMInterface, ComprehensiveTestSuite) {
-    run_all_orm_tests().wait();
 }
 
 // ==========================================
