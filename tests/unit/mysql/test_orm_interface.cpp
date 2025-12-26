@@ -182,7 +182,7 @@ public:
     }
 
     // ==========================================
-    // 测试场景 1: 基础 CRUD 操作
+    // 测试场景 1: 基础 CRUD 操作 + 数据正确性校验
     // ==========================================
     static auto test_basic_crud_operations() -> IoTask<void> {
         PERF_TIMER("test_basic_crud_operations");
@@ -194,17 +194,45 @@ public:
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
-        // 1. Create - 插入测试数据
+        // 1. Create - 插入测试数据 + 数据完整性验证
         {
             PERF_TIMER("insert_operations");
 
-            // 单条插入
+            // 单条插入 - 验证所有字段的精确性
             auto insert_ret =
                 co_await users.insert(1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1, 10, 0, 0), true, 1000.50);
             CO_ASSERT_VAL(insert_ret);
             EXPECT_EQ(insert_ret.value(), 1);
 
-            // 批量插入
+            // 立即验证插入的数据完整性
+            auto verify_alice = co_await users.select().where(users.sql(&SimpleUser::id) == 1).query();
+            CO_ASSERT_VAL(verify_alice);
+            auto alice_result = std::move(verify_alice.value());
+            
+            bool alice_found = false;
+            ilias_for_await(auto &user, alice_result.range()) {
+                alice_found = true;
+                // 验证每个字段的精确值
+                EXPECT_EQ(user.id, 1);
+                EXPECT_EQ(user.name, "Alice");
+                EXPECT_TRUE(user.age.has_value());
+                EXPECT_EQ(user.age.value(), 25);
+                EXPECT_TRUE(user.email.has_value());
+                EXPECT_EQ(user.email.value(), "alice@test.com");
+                EXPECT_TRUE(user.is_active);
+                EXPECT_DOUBLE_EQ(user.balance, 1000.50); // 精确的浮点数比较
+                
+                // 验证日期时间精度
+                EXPECT_EQ(user.created_at.year, 2024);
+                EXPECT_EQ(user.created_at.month, 1);
+                EXPECT_EQ(user.created_at.day, 1);
+                EXPECT_EQ(user.created_at.hour, 10);
+                EXPECT_EQ(user.created_at.minute, 0);
+                EXPECT_EQ(user.created_at.second, 0);
+            }
+            EXPECT_TRUE(alice_found) << "Alice record not found after insertion";
+
+            // 批量插入 - 包含边界值和NULL值测试
             std::vector<SimpleUser> batch_users = {
                 {2, "Bob", 30, std::nullopt, SqlDate(2024, 1, 2), true, 2000.0},
                 {3, "Charlie", std::nullopt, "charlie@test.com", SqlDate(2024, 1, 3), false, 500.0},
@@ -212,42 +240,117 @@ public:
             auto batch_ret = co_await users.insert(batch_users);
             CO_ASSERT_VAL(batch_ret);
             EXPECT_EQ(batch_ret.value(), 3);
+
+            // 验证批量插入的数据完整性
+            auto verify_batch = co_await users.select().where(users.sql(&SimpleUser::id) > 1).orderBy("id", false).query();
+            CO_ASSERT_VAL(verify_batch);
+            auto batch_result = std::move(verify_batch.value());
+            
+            std::vector<SimpleUser> retrieved_users;
+            ilias_for_await(auto &user, batch_result.range()) {
+                retrieved_users.push_back(user);
+            }
+            
+            EXPECT_EQ(retrieved_users.size(), 3);
+            
+            // 验证Bob的数据
+            auto& bob = retrieved_users[0];
+            EXPECT_EQ(bob.id, 2);
+            EXPECT_EQ(bob.name, "Bob");
+            EXPECT_TRUE(bob.age.has_value());
+            EXPECT_EQ(bob.age.value(), 30);
+            EXPECT_FALSE(bob.email.has_value()); // NULL值验证
+            EXPECT_TRUE(bob.is_active);
+            EXPECT_DOUBLE_EQ(bob.balance, 2000.0);
+            
+            // 验证Charlie的数据
+            auto& charlie = retrieved_users[1];
+            EXPECT_EQ(charlie.id, 3);
+            EXPECT_EQ(charlie.name, "Charlie");
+            EXPECT_FALSE(charlie.age.has_value()); // NULL值验证
+            EXPECT_TRUE(charlie.email.has_value());
+            EXPECT_EQ(charlie.email.value(), "charlie@test.com");
+            EXPECT_FALSE(charlie.is_active);
+            EXPECT_DOUBLE_EQ(charlie.balance, 500.0);
+            
+            // 验证Diana的数据
+            auto& diana = retrieved_users[2];
+            EXPECT_EQ(diana.id, 4);
+            EXPECT_EQ(diana.name, "Diana");
+            EXPECT_TRUE(diana.age.has_value());
+            EXPECT_EQ(diana.age.value(), 28);
+            EXPECT_TRUE(diana.email.has_value());
+            EXPECT_EQ(diana.email.value(), "diana@test.com");
+            EXPECT_TRUE(diana.is_active);
+            EXPECT_DOUBLE_EQ(diana.balance, 1500.75); // 精确的浮点数验证
+            
             co_await users.print();
         }
-        // 2. Read - 查询测试
+        
+        // 2. Read - 查询测试 + 数据一致性验证
         {
             PERF_TIMER("read_operations");
 
-            // 简单查询
-            auto query_ret = co_await users.select().query();
+            // 全表查询 - 验证数据完整性
+            auto query_ret = co_await users.select().orderBy("id", false).query();
             CO_ASSERT_VAL(query_ret);
             auto result = std::move(query_ret.value());
 
-            int count = 0;
+            std::vector<SimpleUser> all_users;
             ilias_for_await(auto &user, result.range()) {
+                all_users.push_back(user);
                 EXPECT_GT(user.id, 0);
                 EXPECT_FALSE(user.name.empty());
-                count++;
+                // 验证balance字段的精度
+                EXPECT_GE(user.balance, 0.0);
             }
-            EXPECT_EQ(count, 4);
+            EXPECT_EQ(all_users.size(), 4);
+            
+            // 验证数据的顺序和完整性
+            EXPECT_EQ(all_users[0].name, "Alice");
+            EXPECT_EQ(all_users[1].name, "Bob");
+            EXPECT_EQ(all_users[2].name, "Charlie");
+            EXPECT_EQ(all_users[3].name, "Diana");
 
-            // 条件查询
+            // 条件查询 - 验证过滤逻辑的正确性
             auto cond_ret = co_await users.select().where(users.sql(&SimpleUser::is_active) == true).query();
             CO_ASSERT_VAL(cond_ret);
             auto cond_result = std::move(cond_ret.value());
 
-            count = 0;
+            std::vector<std::string> active_users;
             ilias_for_await(auto &user, cond_result.range()) {
-                EXPECT_TRUE(user.is_active);
-                count++;
+                EXPECT_TRUE(user.is_active); // 验证过滤条件
+                active_users.push_back(user.name);
             }
-            EXPECT_GE(count, 1); // 至少有一些活跃用户
+            EXPECT_EQ(active_users.size(), 3); // Alice, Bob, Diana
+            
+            // 验证具体的活跃用户
+            std::sort(active_users.begin(), active_users.end());
+            EXPECT_EQ(active_users[0], "Alice");
+            EXPECT_EQ(active_users[1], "Bob");
+            EXPECT_EQ(active_users[2], "Diana");
         }
 
-        // 3. Update - 更新测试
+        // 3. Update - 更新测试 + 数据变更验证
         {
             PERF_TIMER("update_operations");
 
+            // 记录更新前的状态
+            auto before_update = co_await users.select().where(users.sql(&SimpleUser::name) == "Bob").query();
+            CO_ASSERT_VAL(before_update);
+            auto before_result = std::move(before_update.value());
+            
+            SimpleUser bob_before;
+            bool found_before = false;
+            ilias_for_await(auto &user, before_result.range()) {
+                bob_before = user;
+                found_before = true;
+            }
+            EXPECT_TRUE(found_before);
+            EXPECT_DOUBLE_EQ(bob_before.balance, 2000.0);
+            EXPECT_EQ(bob_before.age.value(), 30);
+
+            // 执行更新操作
             auto update_ret = co_await users.update()
                                   .set(users.sql(&SimpleUser::balance) = 3000.0, users.sql(&SimpleUser::age) = 31)
                                   .where(users.sql(&SimpleUser::name) == "Bob")
@@ -255,26 +358,80 @@ public:
             CO_ASSERT_VAL(update_ret);
             EXPECT_EQ(update_ret.value(), 1);
 
-            // 验证更新
+            // 验证更新后的数据完整性
             auto verify_ret = co_await users.select().where(users.sql(&SimpleUser::name) == "Bob").query();
             CO_ASSERT_VAL(verify_ret);
             auto verify_result = std::move(verify_ret.value());
 
+            bool found_after = false;
             ilias_for_await(auto &user, verify_result.range()) {
-                EXPECT_EQ(user.balance, 3000.0);
+                found_after = true;
+                // 验证更新的字段
+                EXPECT_DOUBLE_EQ(user.balance, 3000.0);
                 EXPECT_EQ(user.age.value(), 31);
+                
+                // 验证未更新的字段保持不变
+                EXPECT_EQ(user.id, bob_before.id);
+                EXPECT_EQ(user.name, bob_before.name);
+                EXPECT_EQ(user.email, bob_before.email);
+                EXPECT_EQ(user.is_active, bob_before.is_active);
+                EXPECT_EQ(user.created_at.year, bob_before.created_at.year);
+                EXPECT_EQ(user.created_at.month, bob_before.created_at.month);
+                EXPECT_EQ(user.created_at.day, bob_before.created_at.day);
             }
+            EXPECT_TRUE(found_after);
         }
 
-        // 4. Delete - 删除测试
+        // 4. Delete - 删除测试 + 数据一致性验证
         {
             PERF_TIMER("delete_operations");
 
+            // 记录删除前的状态
+            auto before_delete = co_await users.select().query();
+            CO_ASSERT_VAL(before_delete);
+            auto before_result = std::move(before_delete.value());
+            
+            std::vector<std::string> names_before;
+            ilias_for_await(auto &user, before_result.range()) {
+                names_before.push_back(user.name);
+            }
+            EXPECT_EQ(names_before.size(), 4);
+
+            // 执行删除操作
             auto delete_ret = co_await users.remove().where(users.sql(&SimpleUser::is_active) == false).execute();
             CO_ASSERT_VAL(delete_ret);
             EXPECT_EQ(delete_ret.value(), 1); // Charlie
 
-            // 验证删除
+            // 验证删除后的数据完整性
+            auto after_delete = co_await users.select().orderBy("id", false).query();
+            CO_ASSERT_VAL(after_delete);
+            auto after_result = std::move(after_delete.value());
+            
+            std::vector<std::string> names_after;
+            ilias_for_await(auto &user, after_result.range()) {
+                names_after.push_back(user.name);
+                // 验证剩余用户都是活跃的
+                EXPECT_TRUE(user.is_active);
+            }
+            
+            EXPECT_EQ(names_after.size(), 3);
+            // 验证Charlie被删除，其他用户保留
+            EXPECT_EQ(names_after[0], "Alice");
+            EXPECT_EQ(names_after[1], "Bob");
+            EXPECT_EQ(names_after[2], "Diana");
+            
+            // 确认Charlie确实被删除
+            auto charlie_check = co_await users.select().where(users.sql(&SimpleUser::name) == "Charlie").query();
+            CO_ASSERT_VAL(charlie_check);
+            auto charlie_result = std::move(charlie_check.value());
+            
+            int charlie_count = 0;
+            ilias_for_await([[maybe_unused]] auto &user, charlie_result.range()) {
+                charlie_count++;
+            }
+            EXPECT_EQ(charlie_count, 0);
+
+            // 验证最终计数
             auto count_ret = co_await users.count().query();
             CO_ASSERT_VAL(count_ret);
             auto count_result = std::move(count_ret.value());
@@ -605,8 +762,429 @@ public:
     }
 
     // ==========================================
-    // 测试场景 6: 条件构建器覆盖率测试
+    // 测试场景 7: 数据正确性和类型转换完整性测试
     // ==========================================
+    static auto test_data_integrity_and_type_conversion() -> IoTask<void> {
+        PERF_TIMER("test_data_integrity_and_type_conversion");
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("orm-test", ">>> Running test_data_integrity_and_type_conversion");
+
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "simple_users");
+        CO_ASSERT_VAL(users_ret);
+        auto users = std::move(users_ret.value());
+
+        // 1. 边界值测试
+        {
+            PERF_TIMER("boundary_value_testing");
+            
+            // 测试极值和特殊值
+            std::vector<SimpleUser> boundary_users = {
+                // 最小值测试
+                {1, "", std::nullopt, std::nullopt, SqlDate(1970, 1, 1), false, 0.0},
+                // 最大值测试  
+                {2, std::string(255, 'A'), 2147483647, std::string(244, 'B') + "@test.com", SqlDate(2099, 12, 31), true, 999999999.99},
+                // 精度测试
+                {3, "PrecisionTest", 42, "precision@test.com", SqlDate(2024, 2, 29, 23, 59, 59), true, 123.456789},
+                // Unicode测试
+                {4, "测试用户", 25, "测试@example.com", SqlDate(2024, 1, 1), true, 1000.0},
+                // 特殊字符测试
+                {5, "User'With\"Quotes", 30, "special+chars@test.com", SqlDate(2024, 1, 1), true, 2000.0}
+            };
+
+            auto insert_ret = co_await users.insert(boundary_users);
+            CO_ASSERT_VAL(insert_ret);
+            EXPECT_EQ(insert_ret.value(), 5);
+            co_await users.print(30);
+
+            // 验证边界值数据的完整性
+            auto verify_ret = co_await users.select().orderBy("id", false).query();
+            CO_ASSERT_VAL(verify_ret);
+            auto verify_result = std::move(verify_ret.value());
+
+            std::vector<SimpleUser> retrieved_users;
+            ilias_for_await(auto &user, verify_result.range()) {
+                retrieved_users.push_back(user);
+            }
+
+            EXPECT_EQ(retrieved_users.size(), 5);
+
+            // 验证空字符串用户
+            auto& empty_user = retrieved_users[0];
+            EXPECT_EQ(empty_user.id, 1);
+            EXPECT_EQ(empty_user.name, "");
+            EXPECT_FALSE(empty_user.age.has_value());
+            EXPECT_FALSE(empty_user.email.has_value());
+            EXPECT_FALSE(empty_user.is_active);
+            EXPECT_DOUBLE_EQ(empty_user.balance, 0.0);
+
+            // 验证最大值用户
+            auto& max_user = retrieved_users[1];
+            EXPECT_EQ(max_user.id, 2);
+            EXPECT_EQ(max_user.name.length(), 255);
+            EXPECT_EQ(max_user.age.value(), 2147483647);
+            EXPECT_TRUE(max_user.email.has_value());
+            EXPECT_TRUE(max_user.is_active);
+            EXPECT_DOUBLE_EQ(max_user.balance, 999999999.99);
+
+            // 验证精度用户
+            auto& precision_user = retrieved_users[2];
+            EXPECT_EQ(precision_user.id, 3);
+            EXPECT_EQ(precision_user.name, "PrecisionTest");
+            EXPECT_EQ(precision_user.age.value(), 42);
+            EXPECT_DOUBLE_EQ(precision_user.balance, 123.456789);
+            // 验证日期精度
+            EXPECT_EQ(precision_user.created_at.year, 2024);
+            EXPECT_EQ(precision_user.created_at.month, 2);
+            EXPECT_EQ(precision_user.created_at.day, 29);
+            EXPECT_EQ(precision_user.created_at.hour, 23);
+            EXPECT_EQ(precision_user.created_at.minute, 59);
+            EXPECT_EQ(precision_user.created_at.second, 59);
+
+            // 验证Unicode用户
+            auto& unicode_user = retrieved_users[3];
+            EXPECT_EQ(unicode_user.id, 4);
+            EXPECT_EQ(unicode_user.name, "测试用户");
+            EXPECT_EQ(unicode_user.email.value(), "测试@example.com");
+
+            // 验证特殊字符用户
+            auto& special_user = retrieved_users[4];
+            EXPECT_EQ(special_user.id, 5);
+            EXPECT_EQ(special_user.name, "User'With\"Quotes");
+            EXPECT_EQ(special_user.email.value(), "special+chars@test.com");
+        }
+
+        // 2. NULL值处理完整性测试
+        {
+            PERF_TIMER("null_value_handling");
+
+            // 测试NULL值的插入和检索
+            auto null_test_ret = co_await users.insert(6, "NullTest", std::nullopt, std::nullopt, SqlDate(2024, 1, 1), true, 0.0);
+            CO_ASSERT_VAL(null_test_ret);
+
+            auto null_verify = co_await users.select().where(users.sql(&SimpleUser::id) == 6).query();
+            CO_ASSERT_VAL(null_verify);
+            auto null_result = std::move(null_verify.value());
+
+            ilias_for_await(auto &user, null_result.range()) {
+                EXPECT_EQ(user.id, 6);
+                EXPECT_EQ(user.name, "NullTest");
+                EXPECT_FALSE(user.age.has_value());
+                EXPECT_FALSE(user.email.has_value());
+                EXPECT_TRUE(user.is_active);
+                EXPECT_DOUBLE_EQ(user.balance, 0.0);
+            }
+
+            // 测试NULL值的条件查询
+            auto null_age_query = co_await users.select().where(users.sql(&SimpleUser::age).is_null()).query();
+            CO_ASSERT_VAL(null_age_query);
+            auto null_age_result = std::move(null_age_query.value());
+
+            int null_age_count = 0;
+            ilias_for_await(auto &user, null_age_result.range()) {
+                EXPECT_FALSE(user.age.has_value());
+                null_age_count++;
+            }
+            EXPECT_GE(null_age_count, 2); // 至少有空字符串用户和NullTest用户
+        }
+
+        // 3. 浮点数精度测试
+        {
+            PERF_TIMER("floating_point_precision");
+
+            // 测试各种浮点数精度
+            std::vector<double> test_balances = {
+                0.01, 0.001, 0.0001, 0.00001,
+                123.456789, 999999.999999,
+                -123.456, -0.001,
+                1e-10, 1e10
+            };
+
+            for (size_t i = 0; i < test_balances.size(); ++i) {
+                int user_id = 100 + static_cast<int>(i);
+                auto balance = test_balances[i];
+                
+                auto insert_ret = co_await users.insert(user_id, "FloatTest" + std::to_string(i), 25, 
+                                                       "float" + std::to_string(i) + "@test.com", 
+                                                       SqlDate(2024, 1, 1), true, balance);
+                CO_ASSERT_VAL(insert_ret);
+
+                // 立即验证精度
+                auto verify_ret = co_await users.select().where(users.sql(&SimpleUser::id) == user_id).query();
+                CO_ASSERT_VAL(verify_ret);
+                auto verify_result = std::move(verify_ret.value());
+
+                ilias_for_await(auto &user, verify_result.range()) {
+                    // 使用适当的精度容差
+                    if (std::abs(balance) < 1e-6) {
+                        EXPECT_NEAR(user.balance, balance, 1e-10);
+                    } else {
+                        EXPECT_NEAR(user.balance, balance, std::abs(balance) * 1e-10);
+                    }
+                }
+            }
+        }
+
+        // 4. 字符串编码和长度测试
+        {
+            PERF_TIMER("string_encoding_length");
+
+            // 测试各种字符串编码
+            std::vector<std::pair<std::string, std::string>> test_strings = {
+                {"ASCII", "Simple ASCII Text"},
+                {"UTF8_Chinese", "中文测试字符串"},
+                {"UTF8_Japanese", "日本語テスト"},
+                {"UTF8_Emoji", "Test with 😀🎉🚀 emojis"},
+                {"Special_Chars", "!@#$%^&*()_+-=[]{}|;':\",./<>?"},
+                {"Mixed", "Mixed中文English日本語😀"}
+            };
+
+            for (size_t i = 0; i < test_strings.size(); ++i) {
+                int user_id = 200 + static_cast<int>(i);
+                auto& [test_name, test_string] = test_strings[i];
+                
+                auto insert_ret = co_await users.insert(user_id, test_string, 25, 
+                                                       test_name + "@test.com", 
+                                                       SqlDate(2024, 1, 1), true, 1000.0);
+                CO_ASSERT_VAL(insert_ret);
+
+                // 验证字符串完整性
+                auto verify_ret = co_await users.select().where(users.sql(&SimpleUser::id) == user_id).query();
+                CO_ASSERT_VAL(verify_ret);
+                auto verify_result = std::move(verify_ret.value());
+
+                ilias_for_await(auto &user, verify_result.range()) {
+                    EXPECT_EQ(user.name, test_string);
+                    EXPECT_EQ(user.name.length(), test_string.length());
+                    EXPECT_EQ(user.email.value(), test_name + "@test.com");
+                }
+            }
+        }
+
+        ILIAS_INFO("orm-test", ">>> test_data_integrity_and_type_conversion PASSED");
+        co_return {};
+    }
+
+    // ==========================================
+    // 测试场景 8: 复杂数据场景和一致性验证
+    // ==========================================
+    static auto test_complex_data_scenarios() -> IoTask<void> {
+        PERF_TIMER("test_complex_data_scenarios");
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("orm-test", ">>> Running test_complex_data_scenarios");
+
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "simple_users");
+        CO_ASSERT_VAL(users_ret);
+        auto users = std::move(users_ret.value());
+
+        // 1. 批量操作的数据一致性测试
+        {
+            PERF_TIMER("batch_operation_consistency");
+
+            // 准备大量测试数据
+            std::vector<SimpleUser> large_batch;
+            for (int i = 1; i <= 100; ++i) {
+                large_batch.push_back({
+                    i,
+                    "BatchUser" + std::to_string(i),
+                    20 + (i % 50), // 年龄在20-69之间
+                    "batch" + std::to_string(i) + "@test.com",
+                    SqlDate(2024, 1, (i % 28) + 1), // 分布在1月的不同日期
+                    i % 2 == 1, // 奇数ID为活跃用户
+                    100.0 * i   // 递增的余额
+                });
+            }
+
+            // 批量插入
+            auto batch_insert = co_await users.insert(large_batch);
+            CO_ASSERT_VAL(batch_insert);
+            EXPECT_EQ(batch_insert.value(), 100);
+
+            // 验证批量插入的完整性
+            auto verify_batch = co_await users.select().orderBy("id", false).query();
+            CO_ASSERT_VAL(verify_batch);
+            auto batch_result = std::move(verify_batch.value());
+
+            std::vector<SimpleUser> retrieved_batch;
+            ilias_for_await(auto &user, batch_result.range()) {
+                retrieved_batch.push_back(user);
+            }
+
+            EXPECT_EQ(retrieved_batch.size(), 100);
+
+            // 验证每条记录的数据完整性
+            for (size_t i = 0; i < retrieved_batch.size(); ++i) {
+                const auto& user = retrieved_batch[i];
+                const auto& expected = large_batch[i];
+
+                EXPECT_EQ(user.id, expected.id);
+                EXPECT_EQ(user.name, expected.name);
+                EXPECT_EQ(user.age.value(), expected.age.value());
+                EXPECT_EQ(user.email.value(), expected.email.value());
+                EXPECT_EQ(user.is_active, expected.is_active);
+                EXPECT_DOUBLE_EQ(user.balance, expected.balance);
+                
+                // 验证日期
+                EXPECT_EQ(user.created_at.year, expected.created_at.year);
+                EXPECT_EQ(user.created_at.month, expected.created_at.month);
+                EXPECT_EQ(user.created_at.day, expected.created_at.day);
+            }
+        }
+
+        // 2. 复杂条件查询的数据正确性
+        {
+            PERF_TIMER("complex_query_correctness");
+
+            // 复杂条件：活跃用户，年龄在30-40之间，余额大于3000
+            auto complex_query = co_await users.select()
+                .where((users.sql(&SimpleUser::is_active) == true) && 
+                       (users.sql(&SimpleUser::age) >= 30) && 
+                       (users.sql(&SimpleUser::age) <= 40) &&
+                       (users.sql(&SimpleUser::balance) > 3000.0))
+                .orderBy("balance", true) // 按余额降序
+                .query();
+            CO_ASSERT_VAL(complex_query);
+            auto complex_result = std::move(complex_query.value());
+
+            std::vector<SimpleUser> complex_users;
+            ilias_for_await(auto &user, complex_result.range()) {
+                complex_users.push_back(user);
+                
+                // 验证每条记录都满足查询条件
+                EXPECT_TRUE(user.is_active);
+                EXPECT_GE(user.age.value(), 30);
+                EXPECT_LE(user.age.value(), 40);
+                EXPECT_GT(user.balance, 3000.0);
+            }
+
+            // 验证排序正确性
+            for (size_t i = 1; i < complex_users.size(); ++i) {
+                EXPECT_GE(complex_users[i-1].balance, complex_users[i].balance);
+            }
+        }
+
+        // 3. 更新操作的数据一致性验证
+        {
+            PERF_TIMER("update_consistency_verification");
+
+            // 批量更新：给所有活跃用户加薪10% (使用原始SQL)
+            auto update_ret = co_await db.execute(
+                "UPDATE simple_users SET balance = balance * 1.1 WHERE is_active = true"
+            );
+            CO_ASSERT_VAL(update_ret);
+            EXPECT_EQ(update_ret.value(), 50); // 50个奇数ID用户
+
+            // 验证更新的正确性
+            auto verify_update = co_await users.select()
+                .where(users.sql(&SimpleUser::is_active) == true)
+                .orderBy("id", false)
+                .query();
+            CO_ASSERT_VAL(verify_update);
+            auto update_result = std::move(verify_update.value());
+
+            ilias_for_await(auto &user, update_result.range()) {
+                // 验证余额确实增加了10%
+                double expected_balance = (100.0 * user.id) * 1.1;
+                EXPECT_NEAR(user.balance, expected_balance, 0.01);
+                EXPECT_TRUE(user.is_active);
+            }
+
+            // 验证非活跃用户的余额没有变化
+            auto verify_inactive = co_await users.select()
+                .where(users.sql(&SimpleUser::is_active) == false)
+                .orderBy("id", false)
+                .query();
+            CO_ASSERT_VAL(verify_inactive);
+            auto inactive_result = std::move(verify_inactive.value());
+
+            ilias_for_await(auto &user, inactive_result.range()) {
+                // 验证余额没有变化
+                double expected_balance = 100.0 * user.id;
+                EXPECT_DOUBLE_EQ(user.balance, expected_balance);
+                EXPECT_FALSE(user.is_active);
+            }
+        }
+
+        // 4. 聚合查询的数据准确性
+        {
+            PERF_TIMER("aggregation_accuracy");
+
+            // 计算活跃用户的统计信息
+            auto stats_query = co_await users.select(
+                count(users.sql(&SimpleUser::id)),
+                sum(users.sql(&SimpleUser::balance)),
+                avg(users.sql(&SimpleUser::balance)),
+                min(users.sql(&SimpleUser::balance)),
+                max(users.sql(&SimpleUser::balance))
+            ).where(users.sql(&SimpleUser::is_active) == true).query();
+            CO_ASSERT_VAL(stats_query);
+            auto stats_result = std::move(stats_query.value());
+
+            ilias_for_await(auto &row, stats_result.range()) {
+                auto [count_val, sum_val, avg_val, min_val, max_val] = row;
+                
+                EXPECT_EQ(count_val, 50); // 50个活跃用户
+                
+                // 手动计算期望值进行验证
+                double expected_sum = 0.0;
+                double expected_min = std::numeric_limits<double>::max();
+                double expected_max = std::numeric_limits<double>::lowest();
+                
+                for (int i = 1; i <= 100; i += 2) { // 奇数ID用户
+                    double balance = (100.0 * i) * 1.1; // 加薪后的余额
+                    expected_sum += balance;
+                    expected_min = std::min(expected_min, balance);
+                    expected_max = std::max(expected_max, balance);
+                }
+                double expected_avg = expected_sum / 50.0;
+
+                EXPECT_NEAR(sum_val, expected_sum, 0.01);
+                EXPECT_NEAR(avg_val, expected_avg, 0.01);
+                EXPECT_NEAR(min_val, expected_min, 0.01);
+                EXPECT_NEAR(max_val, expected_max, 0.01);
+            }
+        }
+
+        // 5. 删除操作的数据完整性验证
+        {
+            PERF_TIMER("delete_integrity_verification");
+
+            // 记录删除前的状态
+            auto before_delete = co_await users.count().query();
+            CO_ASSERT_VAL(before_delete);
+            auto before_result = std::move(before_delete.value());
+            
+            int count_before = 0;
+            ilias_for_await([[maybe_unused]] auto &row, before_result.range()) {
+                before_result.load(0, count_before);
+            }
+            EXPECT_EQ(count_before, 100);
+
+            // 删除余额小于1000的用户
+            auto delete_ret = co_await users.remove()
+                .where(users.sql(&SimpleUser::balance) < 1000.0)
+                .execute();
+            CO_ASSERT_VAL(delete_ret);
+            
+            // 验证删除后的数据完整性
+            auto after_delete = co_await users.select().query();
+            CO_ASSERT_VAL(after_delete);
+            auto after_result = std::move(after_delete.value());
+            
+            std::vector<SimpleUser> remaining_users;
+            ilias_for_await(auto &user, after_result.range()) {
+                remaining_users.push_back(user);
+                // 验证剩余用户的余额都大于等于1000
+                EXPECT_GE(user.balance, 1000.0);
+            }
+
+            // 验证删除的数量和剩余数量
+            int expected_remaining = count_before - delete_ret.value();
+            EXPECT_EQ(static_cast<int>(remaining_users.size()), expected_remaining);
+        }
+
+        ILIAS_INFO("orm-test", ">>> test_complex_data_scenarios PASSED");
+        co_return {};
+    }
     static auto test_condition_builder_coverage() -> IoTask<void> {
         PERF_TIMER("test_condition_builder_coverage");
         auto db = (co_await setup_db()).value();
@@ -703,7 +1281,7 @@ public:
         // 3. 测试 NULL 值比较
         {
             // 测试 IS NULL
-            auto null_ret = co_await users.select().where(users.sql(&SimpleUser::email) == nullptr).query();
+            auto null_ret = co_await users.select().where(users.sql(&SimpleUser::email).is_null()).query();
             CO_ASSERT_VAL(null_ret);
             auto null_result = std::move(null_ret.value());
 
@@ -715,7 +1293,7 @@ public:
             EXPECT_EQ(count, 1); // Charlie
 
             // 测试 IS NOT NULL
-            auto not_null_ret = co_await users.select().where(users.sql(&SimpleUser::email) != nullptr).query();
+            auto not_null_ret = co_await users.select().where(users.sql(&SimpleUser::email).is_not_null()).query();
             CO_ASSERT_VAL(not_null_ret);
             auto not_null_result = std::move(not_null_ret.value());
 
@@ -1056,6 +1634,11 @@ TEST(ORMExtensionsTest, TestMathFunctions) {
     ORMInterfaceTestSuite::test_math_functions().wait();
 }
 
+// 数据正确性和类型转换测试
+TEST(ORMInterface, DataIntegrityAndTypeConversion) {
+    ORMInterfaceTestSuite::test_data_integrity_and_type_conversion().wait();
+}
+
 // 基础CRUD测试
 TEST(ORMInterface, BasicCRUDOperations) {
     ORMInterfaceTestSuite::test_basic_crud_operations().wait();
@@ -1079,6 +1662,11 @@ TEST(ORMInterface, ErrorHandling) {
 // 类型转换器覆盖率测试
 TEST(ORMInterface, TypeConverterCoverage) {
     ORMInterfaceTestSuite::test_type_converter_coverage().wait();
+}
+
+// 复杂数据场景测试
+TEST(ORMInterface, ComplexDataScenarios) {
+    ORMInterfaceTestSuite::test_complex_data_scenarios().wait();
 }
 
 // 条件构建器覆盖率测试

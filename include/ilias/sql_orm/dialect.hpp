@@ -89,7 +89,7 @@ struct Dialect<MysqlTag> {
             return "DOUBLE";
         }
         else if constexpr (std::is_same_v<DT, SqlDate>) {
-            return "DATE";
+            return "DATETIME";
         }
         else if constexpr (std::is_same_v<DT, SqlBlob>) {
             return "BLOB";

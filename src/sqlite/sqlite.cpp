@@ -22,6 +22,7 @@ auto SqliteStmtResultSet::next() -> IoTask<bool> {
     if (!mSqlite || !mSqliteStmt) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
+    ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing next", (void *)mSqlite.get());
     auto ret = co_await blocking([this]() -> int { return sqlite3_step(mSqliteStmt.get()); });
     if (ret == SQLITE_DONE) {
         co_return false;
@@ -109,6 +110,9 @@ auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, 
     switch ((SqlValueType)value.index()) {
         case SqlValueType::kNull:
             sqlite3_bind_null(mSqliteStmt.get(), index);
+            break;
+        case SqlValueType::kBool:
+            sqlite3_bind_int(mSqliteStmt.get(), index, get<SqlValueType::kBool>(value));
             break;
         case SqlValueType::kChar:
             sqlite3_bind_int(mSqliteStmt.get(), index, get<SqlValueType::kChar>(value));

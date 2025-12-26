@@ -59,6 +59,7 @@ public:
     void bind([[maybe_unused]] std::string_view name, SqlStatement<void> &stmt) const override {
         mbinder->bind(mName, stmt);
     }
+    auto binds() const { return std::vector {mbinder}; }
 
 private:
     std::shared_ptr<SqlStatementBinder> mbinder;
@@ -117,6 +118,7 @@ public:
     const std::string &sql() const;
     int                bindTo(SqlStatement<void> &stmt, int startIndex = 1) const;
     bool               empty() const;
+    auto               binds() const { return mBinders; }
 
 private:
     std::string                                      mSql;
@@ -124,6 +126,8 @@ private:
 };
 
 struct SqlAssignment {
+    auto binds() const { return std::vector {binders}; }
+
     std::string                                      sql;
     std::vector<std::shared_ptr<SqlStatementBinder>> binders;
 };
@@ -143,6 +147,7 @@ public:
         }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using StorageT = StorageType_t<T>;
+        ILIAS_TRACE("ilias-sql", "compare {} by {}", op, StorageSelector<T>::debug());
         binders.push_back(std::make_shared<ValueBinder<StorageT>>(std::forward<T>(value)));
         return SqlCondition(mName + " " + op + " ?", std::move(binders));
     }
@@ -258,6 +263,7 @@ public:
     auto operator==(U &&v) const {
         return SqlVariable::compare("=", std::forward<U>(v));
     }
+    auto operator==(std::nullptr_t /*unused */) const { return SqlVariable::compare("=", std::nullptr_t {}); }
     template <typename U>
         requires IsValidOperand<U>
     auto operator!=(U &&v) const {

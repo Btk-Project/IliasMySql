@@ -175,12 +175,16 @@ public:
     }
 
     auto print() -> Task<void> {
+        co_return co_await print(50); // 默认列宽限制为50字符
+    }
+
+    auto print(size_t maxColumnWidth) -> Task<void> {
         auto ret = co_await select().query();
         if (!ret) {
             ILIAS_ERROR("ilias-sql", "Print failed: {}", ret.error().message());
             co_return;
         }
-        detail::ConsoleTable table(derived().tableRef(), derived().getColumnNames());
+        detail::ConsoleTable table(derived().tableRef(), derived().getColumnNames(), maxColumnWidth);
         SqlResult<T>         res = std::move(ret.value());
         ilias_for_await([[maybe_unused]] auto obj, res.range()) {
             std::vector<std::string> rowStrings;

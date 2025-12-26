@@ -104,7 +104,12 @@ IoTask<SqlResult<void>> SelectBuilder::query() const {
         co_return Unexpected(ret.error());
 
     bind(ret.value());
-    co_return co_await ret->query();
+    auto res = co_await ret->query();
+    if (!res) {
+        co_return Unexpected(res.error());
+    }
+    storage(res.value());
+    co_return res;
 }
 
 IoTask<SqlStatement<void>> SelectBuilder::prepare() const {
@@ -119,6 +124,12 @@ IoTask<SqlStatement<void>> SelectBuilder::prepare() const {
 
 void SelectBuilder::bind(SqlStatement<void> &stmt) const {
     mWhereCondition.bindTo(stmt);
+}
+
+void SelectBuilder::storage(SqlResult<void> &res) const {
+    for (auto &binder : mWhereCondition.binds()) {
+        res.storage(binder);
+    }
 }
 
 IoGenerator<SqlResult<void>> SelectBuilder::loop(int count) {

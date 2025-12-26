@@ -26,7 +26,7 @@ struct ILIAS_SQL_API SqlDate {
         kDateTime,      // 2022-01-01 00:00:00.000000
         kTime,          // 00:00:00.000000
     };
-    SqlDate(int year = 0, int month = 0, int day = 0, int hour = 0, int minute = 0, int second = 0) {
+    SqlDate(int year = 0, int month = 1, int day = 1, int hour = 0, int minute = 0, int second = 0) {
         setTime(year, month, day, hour, minute, second);
     }
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }

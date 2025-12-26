@@ -59,20 +59,20 @@ auto SqlDate::toTimestamp() const -> uint64_t {
 }
 
 auto SqlDate::setTime(std::chrono::system_clock::time_point tp) -> void {
-auto us_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch());
+    auto us_since_epoch  = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch());
     auto sec_since_epoch = std::chrono::duration_cast<std::chrono::seconds>(us_since_epoch);
-    
-    time_t tt = sec_since_epoch.count();
+
+    time_t   tt     = sec_since_epoch.count();
     std::tm *utc_tm = gmtime(&tt); // 使用 gmtime 获取 UTC 时间
-    
-    year = utc_tm->tm_year + 1900;
-    month = utc_tm->tm_mon + 1;
-    day = utc_tm->tm_mday;
-    hour = utc_tm->tm_hour;
-    minute = utc_tm->tm_min;
-    second = utc_tm->tm_sec;
+
+    year        = utc_tm->tm_year + 1900;
+    month       = utc_tm->tm_mon + 1;
+    day         = utc_tm->tm_mday;
+    hour        = utc_tm->tm_hour;
+    minute      = utc_tm->tm_min;
+    second      = utc_tm->tm_sec;
     microsecond = us_since_epoch.count() % 1000000;
-    type = kDateTime;
+    type        = kDateTime;
 }
 
 auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
@@ -85,7 +85,7 @@ auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
 
 auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, int second_, int microsecond_) -> void {
     clear();
-    if (year_ < 0 || month_ < 0 || month_ > 12 || day_ < 0 || day_ > 31 || hour_ < 0 || hour_ > 23 || minute_ < 0 ||
+    if (year_ < 0 || month_ < 1 || month_ > 12 || day_ < 1 || day_ > 31 || hour_ < 0 || hour_ > 23 || minute_ < 0 ||
         minute_ > 59 || second_ < 0 || second_ > 59 || microsecond_ < 0 || microsecond_ > 999999) {
         ILIAS_ERROR("sql", "error date time set {}-{}-{} {}:{}:{}", year_, month_, day_, hour_, minute_, second_);
         return;
@@ -102,7 +102,7 @@ auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, i
 
 auto SqlDate::setDate(int year, int month, int day) -> void {
     clear();
-    if (year < 0 || month < 0 || month > 12 || day < 0 || day > 31) {
+    if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31) {
         ILIAS_ERROR("sql", "error date set {}-{}-{}", year, month, day);
         return;
     }
@@ -140,7 +140,7 @@ auto SqlDate::setTimeType(TimeType type) -> void {
 }
 
 auto SqlDate::setTime(std::string_view str) -> void {
-clear();
+    clear();
     // 使用正则表达式来灵活解析常见的 SQL 时间格式
     // 格式1: YYYY-MM-DD HH:MM:SS.FFFFFF (DateTime)
     static const std::regex re_datetime(R"((\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?.*)");
@@ -151,13 +151,14 @@ clear();
 
     std::cmatch match;
     std::string s_str(str); // regex需要C-string
+    ILIAS_TRACE("ilias-sql", "parser time {}", str);
 
     if (std::regex_match(s_str.c_str(), match, re_datetime)) {
-        type = kDateTime;
-        year = std::stoul(match[1].str());
-        month = std::stoul(match[2].str());
-        day = std::stoul(match[3].str());
-        hour = std::stoul(match[4].str());
+        type   = kDateTime;
+        year   = std::stoul(match[1].str());
+        month  = std::stoul(match[2].str());
+        day    = std::stoul(match[3].str());
+        hour   = std::stoul(match[4].str());
         minute = std::stoul(match[5].str());
         second = std::stoul(match[6].str());
         if (match[7].matched) {
@@ -165,14 +166,16 @@ clear();
             us_str.resize(6, '0'); // 补全到6位微秒
             microsecond = std::stoul(us_str);
         }
-    } else if (std::regex_match(s_str.c_str(), match, re_date)) {
-        type = kDate;
-        year = std::stoul(match[1].str());
+    }
+    else if (std::regex_match(s_str.c_str(), match, re_date)) {
+        type  = kDate;
+        year  = std::stoul(match[1].str());
         month = std::stoul(match[2].str());
-        day = std::stoul(match[3].str());
-    } else if (std::regex_match(s_str.c_str(), match, re_time)) {
-        type = kTime;
-        hour = std::stoul(match[1].str());
+        day   = std::stoul(match[3].str());
+    }
+    else if (std::regex_match(s_str.c_str(), match, re_time)) {
+        type   = kTime;
+        hour   = std::stoul(match[1].str());
         minute = std::stoul(match[2].str());
         second = std::stoul(match[3].str());
         if (match[7].matched) {
@@ -180,7 +183,8 @@ clear();
             us_str.resize(6, '0'); // 补全到6位微秒
             microsecond = std::stoul(us_str);
         }
-    } else {
+    }
+    else {
         type = kErrorTime;
         ILIAS_WARN("sql", "Failed to parse time string: {}", str);
     }

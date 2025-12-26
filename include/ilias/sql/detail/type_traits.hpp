@@ -174,11 +174,17 @@ struct SqlCheck {
 template <typename T>
 struct StorageSelector {
     using type = std::remove_reference_t<T>;
+    static constexpr std::string_view debug() {
+        return "copy";
+    }
 };
 
 template <typename T>
 struct StorageSelector<T&> {
     using type = T&;
+    static constexpr std::string_view debug() {
+        return "reference";
+    }
 };
 
 template <typename T>

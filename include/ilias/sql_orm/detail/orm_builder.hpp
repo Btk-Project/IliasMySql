@@ -83,6 +83,7 @@ public:
 protected:
     auto prepare() const -> IoTask<SqlStatement<void>>;
     void bind(SqlStatement<void> &stmt) const;
+    void storage(SqlResult<void> &res) const;
 
 protected:
     SqlDatabase &mDb;
@@ -143,7 +144,9 @@ public:
         auto ret = co_await stmt->query();
         if (!ret)
             co_return Unexpected(ret.error());
-        co_return std::move(ret.value());
+        SqlResult<ResultType> res = std::move(ret.value());
+        storage(res);
+        co_return res;
     }
 
     IoGenerator<SqlResult<ResultType>> loop(int count) {
@@ -177,6 +180,13 @@ private:
         else {
             SelectBuilder::bind(stmt);
         }
+    }
+
+    void storage(SqlResult<ResultType> &res) const {
+        for (auto &b : mBinders) {
+            res.storage(b);
+        }
+        SelectBuilder::storage(res);
     }
 
 private:
@@ -289,7 +299,9 @@ public:
         auto queryRet = co_await stmt->query();
         if (!queryRet)
             co_return Unexpected(queryRet.error());
-        co_return std::move(queryRet.value());
+        SqlResult<ResultType> res = std::move(queryRet.value());
+        storage(res);
+        co_return res;
     }
 
     IoGenerator<SqlResult<ResultType>> loop(int count) {
@@ -333,6 +345,17 @@ private:
             index = node.onCondition.bindTo(stmt, index);
         }
         mWhereCondition.bindTo(stmt, index);
+    }
+
+    void storage(SqlResult<ResultType> &res) const {
+        for (const auto &node : mNodes) {
+            for (const auto &binder : node.onCondition.binds()) {
+                res.storage(binder);
+            }
+        }
+        for (const auto &binder : mWhereCondition.binds()) {
+            res.storage(binder);
+        }
     }
 
 private:

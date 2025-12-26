@@ -50,6 +50,12 @@ public:
     auto operator*() -> IResultSet & { return *mImp; }
     auto operator*() const -> const IResultSet & { return *mImp; }
 
+    void storage(std::shared_ptr<void> ptr) { mStorage.push_back(std::move(ptr)); }
+    void storage(std::initializer_list<std::shared_ptr<void>> ptrs) {
+        mStorage.insert(mStorage.end(), ptrs.begin(), ptrs.end());
+    }
+    void cleanStorage() { mStorage.clear(); }
+
 private:
     template <typename U>
     auto unpack(SqlValueView &value, U &u) -> IoResult<void>;
@@ -58,7 +64,9 @@ private:
     friend class SqlResult;
 
 protected:
-    std::unique_ptr<IResultSet> mImp;
+    // sqlite need binders lifetime after result
+    std::vector<std::shared_ptr<void>> mStorage;
+    std::unique_ptr<IResultSet>        mImp;
 };
 
 template <typename T>
@@ -158,9 +166,8 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
         if constexpr (sizeof...(Args) == 1) {
             auto handler = [this, &ret](auto &value) {
                 using ObjT = std::decay_t<decltype(value)>;
-                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret](auto &field, std::string_view name) {
-                    ret = ret ? load(name, field) : ret;
-                });
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(
+                    value, [this, &ret](auto &field, std::string_view name) { ret = ret ? load(name, field) : ret; });
             };
             [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {
                 (handler(std::get<I>(tuple)), ...);
@@ -193,8 +200,9 @@ auto SqlResult<T>::range() -> Generator<T> {
                         std::apply([this](auto &...args) { return (SqlResult<void>::range(args...)); }, value)) {
             if (rc) {
                 co_yield value;
-                value = T{};
-            } else {
+                value = T {};
+            }
+            else {
                 ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }
         }
@@ -203,8 +211,9 @@ auto SqlResult<T>::range() -> Generator<T> {
         ilias_for_await(auto rc, SqlResult<void>::range(value)) {
             if (rc) {
                 co_yield value;
-                value = T{};
-            } else {
+                value = T {};
+            }
+            else {
                 ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
             }
         }
