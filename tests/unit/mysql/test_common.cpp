@@ -60,22 +60,24 @@ struct SimpleOrder {
 };
 
 NEKO_BEGIN_NAMESPACE
+// clang-format off
 template <>
 struct Meta<SimpleUser, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
-               "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
-               make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
+    constexpr static auto value = Object(
+        "id",   make_tags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id),
+        "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), 
+        "score",make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
 };
 
 template <>
 struct Meta<SimpleOrder, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), "user_id",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), "amount",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), "product",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
+    constexpr static auto value = Object(
+        "id",       make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), 
+        "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
+        "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), 
+        "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
 };
+// clang-format on
 NEKO_END_NAMESPACE
 
 // 用于复杂类型测试 (Date, Blob, etc.)
@@ -245,7 +247,8 @@ public:
 
         auto tx = (co_await db.transaction()).value();
         auto stmt =
-            (co_await tx.prepare("INSERT INTO common_simple_users (id, name, score) VALUES (:id, :name, :score)")).value();
+            (co_await tx.prepare("INSERT INTO common_simple_users (id, name, score) VALUES (:id, :name, :score)"))
+                .value();
 
         const int TOTAL_ROWS = 50;
         for (int i = 0; i < TOTAL_ROWS; ++i) {
@@ -290,8 +293,8 @@ public:
 
         // MySQL 支持 LIMIT ?, ? 或 LIMIT :lim OFFSET :off
         // 查询 score 倒序 (19, 18, ...), 取 5 条, 偏移 5 条 -> 应该得到 14, 13, 12, 11, 10
-        auto ret_query =
-            co_await db.query_with("SELECT score FROM common_simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
+        auto ret_query = co_await db.query_with(
+            "SELECT score FROM common_simple_users ORDER BY score DESC LIMIT :lim OFFSET :off", 5, 5);
         CO_ASSERT_VAL(ret_query);
 
         std::vector<int> scores;
@@ -357,7 +360,8 @@ public:
         // 2. 唯一键冲突
         // common_complex_persons 的 email 是 UNIQUE 的
         co_await db.execute("INSERT INTO common_complex_persons (id, name, email) VALUES (1, 'A', 'u@test.com')");
-        auto ret2 = co_await db.execute("INSERT INTO common_complex_persons (id, name, email) VALUES (2, 'B', 'u@test.com')");
+        auto ret2 =
+            co_await db.execute("INSERT INTO common_complex_persons (id, name, email) VALUES (2, 'B', 'u@test.com')");
         CO_EXPECT_NOT_RESULT(ret2); // 应该报错
         // ILIAS_INFO("mysql-test", "Expected error: {}", ret2.error().message());
 
@@ -371,7 +375,8 @@ public:
         ILIAS_INFO("mysql-test", ">>> Running test_null_handling");
 
         // 插入 score 为 NULL
-        auto ret = co_await db.execute("INSERT INTO common_simple_users (id, name, score) VALUES (999, 'NullGuy', NULL)");
+        auto ret =
+            co_await db.execute("INSERT INTO common_simple_users (id, name, score) VALUES (999, 'NullGuy', NULL)");
         CO_ASSERT_VAL(ret);
 
         auto q = co_await db.query<SimpleUser>("SELECT * FROM common_simple_users WHERE id = 999");

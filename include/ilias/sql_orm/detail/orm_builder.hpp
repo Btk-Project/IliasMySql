@@ -8,10 +8,6 @@
 ILIAS_SQL_NS_BEGIN
 namespace detail {
 
-// 工具函数声明
-ILIAS_SQL_API std::string join_strs(const std::vector<std::string> &vec, const std::string &sep,
-                                    const std::string &prefix = "", const std::string &suffix = "");
-
 struct JoinNode {
     std::string              tableName;
     std::vector<std::string> columns;

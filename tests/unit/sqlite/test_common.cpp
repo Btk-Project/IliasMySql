@@ -60,22 +60,24 @@ struct SimpleOrder {
 };
 
 NEKO_BEGIN_NAMESPACE
+// clang-format off
 template <>
 struct Meta<SimpleUser, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.unique = true, .not_null = true, .primary_key = true}>(&SimpleUser::id),
-               "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
-               make_tags<SqlTags {}>(&SimpleUser::score));
+    constexpr static auto value = Object(
+        "id",   make_tags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id),
+        "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
+        "score",make_tags<SqlTags {}>(&SimpleUser::score));
 };
 
 template <>
 struct Meta<SimpleOrder, void> {
-    constexpr static auto value = // NOLINT
-        Object("id", make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), "user_id",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), "amount",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), "product",
-               make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
+    constexpr static auto value = Object(
+            "id",       make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), 
+            "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
+            "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
+            "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
 };
+// clang-format on
 NEKO_END_NAMESPACE
 
 // ==========================================
@@ -423,7 +425,7 @@ public:
             user = SimpleUser {user.id + 1, "User" + std::to_string(user.id + 1), (user.id + 1) * 10 + 1};
             CO_ASSERT_VAL(ret);
         }
-        int id = 50;
+        int  id           = 50;
         auto id_generator = [&id]() { return id++; };
         ilias_for_await(auto &ret,
                         users.insert()

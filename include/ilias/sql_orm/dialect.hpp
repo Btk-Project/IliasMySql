@@ -5,6 +5,7 @@
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
+#include "ilias/sql_orm/detail/orm_types.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"
 
 ILIAS_SQL_NS_BEGIN
@@ -21,7 +22,7 @@ struct Dialect<SqliteTag> {
     static bool check(std::string_view name) { return name == "sqlite"; }
     // 1. 类型映射
     template <typename T>
-    static constexpr std::string_view type_name() {
+    static constexpr std::string type_name([[maybe_unused]] const SqlTags &tags) {
         using DT = detail::strip_wrapper_t<T>;
         if constexpr (std::is_same_v<DT, SqlNull>) {
             static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
@@ -40,13 +41,32 @@ struct Dialect<SqliteTag> {
         }
     }
 
-    // 2. 关键字差异
-    static constexpr std::string_view auto_increment() { return "AUTOINCREMENT"; }
-    static constexpr std::string_view primary_key() { return "PRIMARY KEY"; }
+    template <typename T>
+    static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
+        std::vector<std::string> parts;
+        parts.push_back(std::string(name));
+        parts.push_back(type_name<T>(tags));
 
-    // 3. 绑定占位符 (SQLite 支持 ? 和 :name，假设用 ?)
-    static std::string placeholder([[maybe_unused]] int index) { return "?"; }
-    static std::string placeholder([[maybe_unused]] std::string_view name) { return ":" + std::string(name); }
+        // 约束
+        // 注意: SQLite中，PRIMARY KEY AUTOINCREMENT 必须一起使用且作用于INTEGER类型
+        if (tags.primary_key) {
+            parts.push_back("PRIMARY KEY");
+            if (tags.auto_increment) {
+                parts.push_back("AUTOINCREMENT");
+            }
+        }
+        if (tags.not_null) {
+            parts.push_back("NOT NULL");
+        }
+        if (tags.unique && !tags.primary_key) {
+            parts.push_back("UNIQUE");
+        }
+        if (tags.created_at) {
+            parts.push_back("DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        return detail::join_strs(parts, " ");
+    }
 };
 
 // ================= MySQL 特化 =================
@@ -59,53 +79,88 @@ struct Dialect<MysqlTag> {
     }
     // 1. 类型映射
     template <typename T>
-    static constexpr std::string_view type_name() {
+    static constexpr std::string type_name([[maybe_unused]] const SqlTags &tags) {
         using DT = detail::strip_wrapper_t<T>;
-        if constexpr (std::is_same_v<DT, SqlNull>) {
-            static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
-        }
-        else if constexpr (std::is_same_v<DT, bool>) {
-            return "BOOLEAN";
-        }
-        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int8_t)) {
-            return "TINYINT";
-        }
-        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int16_t)) {
-            return "SMALLINT";
-        }
-        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int32_t)) {
-            return "INT";
-        }
-        else if constexpr (std::is_integral_v<DT> && sizeof(DT) == sizeof(int64_t)) {
-            return "BIGINT";
+        if constexpr (std::is_same_v<DT, bool>) {
+            return "TINYINT(1)";
         }
         else if constexpr (std::is_integral_v<DT>) {
-            return "INTEGER";
+            std::string base_type;
+            if (sizeof(DT) == sizeof(int8_t))
+                base_type = "TINYINT";
+            else if (sizeof(DT) == sizeof(int16_t))
+                base_type = "SMALLINT";
+            else if (sizeof(DT) == sizeof(int32_t))
+                base_type = "INT";
+            else if (sizeof(DT) == sizeof(int64_t))
+                base_type = "BIGINT";
+            else
+                base_type = "INTEGER";
+
+            if (tags.unsigned_type)
+                base_type += " UNSIGNED";
+            return base_type;
         }
-        else if constexpr (std::is_same_v<DT, float>) {
+        else if constexpr (std::is_same_v<DT, float>)
             return "FLOAT";
-        }
-        else if constexpr (std::is_same_v<DT, double>) {
+        else if constexpr (std::is_same_v<DT, double>)
             return "DOUBLE";
-        }
-        else if constexpr (std::is_same_v<DT, SqlDate>) {
+        else if constexpr (std::is_same_v<DT, SqlDate>)
             return "DATETIME";
-        }
-        else if constexpr (std::is_same_v<DT, SqlBlob>) {
+        else if constexpr (std::is_same_v<DT, SqlBlob>)
             return "BLOB";
+        else if constexpr (std::is_same_v<DT, std::string> || std::is_same_v<DT, const char *>) {
+            if (tags.length > 0) {
+                return "VARCHAR(" + std::to_string(tags.length) + ")";
+            }
+            return "TEXT"; // 提供一个通用的默认长度
         }
         else {
-            return "VARCHAR(255)"; // MySQL 通常需要指定长度，这里可能需要更复杂的逻辑
+            return "TEXT";
         }
     }
 
     // 2. 关键字差异
-    static constexpr std::string_view auto_increment() { return "AUTO_INCREMENT"; } // 注意下划线
-    static constexpr std::string_view primary_key() { return "PRIMARY KEY"; }
 
-    // 3. 绑定占位符 (MySQL Connector/C++ 通常也支持 ?)
-    static std::string placeholder([[maybe_unused]] int index) { return "?"; }
-    static std::string placeholder([[maybe_unused]] std::string_view name) { return ":" + std::string(name); }
+    template <typename T>
+    static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
+        std::vector<std::string> parts;
+
+        parts.push_back("`" + std::string(name) + "`");
+        parts.push_back(type_name<T>(tags));
+
+        if (tags.not_null) {
+            parts.push_back("NOT NULL");
+        }
+        if (tags.auto_increment) {
+            parts.push_back("AUTO_INCREMENT");
+        }
+
+        if (tags.created_at) {
+            parts.push_back("DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        if (tags.updated_at) {
+            // DATETIME 和 TIMESTAMP 类型支持 ON UPDATE
+            parts.push_back("ON UPDATE CURRENT_TIMESTAMP");
+        }
+
+        if (tags.unique && !tags.primary_key) {
+            parts.push_back("UNIQUE KEY");
+        }
+
+        if (tags.primary_key) {
+            parts.push_back("PRIMARY KEY");
+        }
+
+        if (tags.index && !tags.primary_key && !tags.unique) {
+            // 主键和唯一键会自动创建索引，所以只为普通列添普通加索引
+            // 注意：更规范的做法是在表末尾用 KEY `idx_name` (`col_name`) 创建
+            parts.push_back("KEY");
+        }
+
+        return detail::join_strs(parts, " ");
+    }
 };
 
 ILIAS_SQL_NS_END

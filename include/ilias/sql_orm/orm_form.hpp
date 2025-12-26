@@ -36,17 +36,7 @@ public:
         std::vector<std::string> colDefs;
 
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
-            std::string typeStr = std::string(BackendDialect::template type_name<decltype(field)>());
-            std::string colDef  = std::string(name) + " " + typeStr;
-            if (tags.primary_key) {
-                colDef += " " + std::string(BackendDialect::primary_key());
-            }
-            if (tags.auto_increment)
-                colDef += " " + std::string(BackendDialect::auto_increment());
-            if (tags.unique)
-                colDef += " UNIQUE";
-            if (tags.not_null)
-                colDef += " NOT NULL";
+            std::string colDef = BackendDialect::template generate_column_definition<decltype(field)>(name, tags);
             colDefs.push_back(colDef);
         });
 
