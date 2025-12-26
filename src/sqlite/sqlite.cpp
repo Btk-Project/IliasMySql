@@ -22,7 +22,7 @@ auto SqliteStmtResultSet::next() -> IoTask<bool> {
     if (!mSqlite || !mSqliteStmt) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
-    ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing next", (void *)mSqlite.get());
+    // ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing next", (void *)mSqlite.get());
     auto ret = co_await blocking([this]() -> int { return sqlite3_step(mSqliteStmt.get()); });
     if (ret == SQLITE_DONE) {
         co_return false;

@@ -124,7 +124,7 @@ template <typename U>
 auto SqlResult<void>::load(std::string_view name, U &value) -> IoResult<void> {
     auto ret = mImp->getValue(name);
     if (!ret) {
-        ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
+        ILIAS_WARN("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
         return Unexpected(ret.error());
     }
     // ILIAS_TRACE("ilias-sql", "load {} : {}", name, ret.value());

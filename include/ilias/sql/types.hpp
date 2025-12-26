@@ -117,6 +117,7 @@ struct SqlValueTraits<SqlValueType::kNull, void> {
     using type                              = SqlNull;
     using viewType                          = SqlNull;
     constexpr static SqlValueType valueType = SqlValueType::kNull;
+    constexpr static auto         name      = "NULL";
 };
 
 template <>
@@ -124,6 +125,7 @@ struct SqlValueTraits<SqlValueType::kBool, void> {
     using type                              = bool;
     using viewType                          = bool;
     constexpr static SqlValueType valueType = SqlValueType::kBool;
+    constexpr static auto         name      = "Bool";
 };
 
 template <>
@@ -131,6 +133,7 @@ struct SqlValueTraits<SqlValueType::kChar, void> {
     using type                              = char;
     using viewType                          = char;
     constexpr static SqlValueType valueType = SqlValueType::kChar;
+    constexpr static auto         name      = "Char";
 };
 
 template <>
@@ -138,6 +141,7 @@ struct SqlValueTraits<SqlValueType::kInt, void> {
     using type                              = int32_t;
     using viewType                          = int32_t;
     constexpr static SqlValueType valueType = SqlValueType::kInt;
+    constexpr static auto         name      = "Int";
 };
 
 template <>
@@ -145,6 +149,7 @@ struct SqlValueTraits<SqlValueType::kBigInt, void> {
     using type                              = int64_t;
     using viewType                          = int64_t;
     constexpr static SqlValueType valueType = SqlValueType::kBigInt;
+    constexpr static auto         name      = "BigInt";
 };
 
 template <>
@@ -152,6 +157,7 @@ struct SqlValueTraits<SqlValueType::kFloat, void> {
     using type                              = float;
     using viewType                          = float;
     constexpr static SqlValueType valueType = SqlValueType::kFloat;
+    constexpr static auto         name      = "Float";
 };
 
 template <>
@@ -159,6 +165,7 @@ struct SqlValueTraits<SqlValueType::kDouble, void> {
     using type                              = double;
     using viewType                          = double;
     constexpr static SqlValueType valueType = SqlValueType::kDouble;
+    constexpr static auto         name      = "Double";
 };
 
 template <>
@@ -166,6 +173,7 @@ struct SqlValueTraits<SqlValueType::kText, void> {
     using type                              = std::string;
     using viewType                          = std::string_view;
     constexpr static SqlValueType valueType = SqlValueType::kText;
+    constexpr static auto         name      = "Text";
 };
 
 template <>
@@ -173,6 +181,7 @@ struct SqlValueTraits<SqlValueType::kBlob, void> {
     using type                              = SqlBlob;
     using viewType                          = SqlBlobView;
     constexpr static SqlValueType valueType = SqlValueType::kBlob;
+    constexpr static auto         name      = "Blob";
 };
 
 template <>
@@ -180,7 +189,39 @@ struct SqlValueTraits<SqlValueType::kDate, void> {
     using type                              = SqlDate;
     using viewType                          = SqlDate;
     constexpr static SqlValueType valueType = SqlValueType::kDate;
+    constexpr static auto         name      = "Date";
 };
+
+template <typename T>
+    requires(std::is_same_v<std::decay_t<T>, SqlValue> || std::is_same_v<std::decay_t<T>, SqlValueView> ||
+             std::is_same_v<std::decay_t<T>, SqlValuePointer> || std::is_same_v<std::decay_t<T>, SqlValueRef>)
+inline auto getSqltypeName(T &&v) -> std::string_view {
+    int type = v.index();
+    switch ((SqlValueType)type) {
+        case SqlValueType::kNull:
+            return SqlValueTraits<SqlValueType::kNull>::name;
+        case SqlValueType::kBool:
+            return SqlValueTraits<SqlValueType::kBool>::name;
+        case SqlValueType::kChar:
+            return SqlValueTraits<SqlValueType::kChar>::name;
+        case SqlValueType::kInt:
+            return SqlValueTraits<SqlValueType::kInt>::name;
+        case SqlValueType::kBigInt:
+            return SqlValueTraits<SqlValueType::kBigInt>::name;
+        case SqlValueType::kFloat:
+            return SqlValueTraits<SqlValueType::kFloat>::name;
+        case SqlValueType::kDouble:
+            return SqlValueTraits<SqlValueType::kDouble>::name;
+        case SqlValueType::kText:
+            return SqlValueTraits<SqlValueType::kText>::name;
+        case SqlValueType::kBlob:
+            return SqlValueTraits<SqlValueType::kBlob>::name;
+        case SqlValueType::kDate:
+            return SqlValueTraits<SqlValueType::kDate>::name;
+        default:
+            return "Unknown";
+    }
+}
 
 template <SqlValueType T>
 auto &get(SqlValue &v) {
@@ -456,6 +497,15 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
             default:
                 return format_to(ctx.out(), "{}", "Unknown");
         }
+    }
+};
+ILIAS_FORMATTER_T_RAW(,std::span<const char>) {
+    constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    template <typename Context> 
+    auto format(std::span<const char> & value, Context &ctx) const {
+        return format_to(ctx.out(), "{}", std::string_view{value.data(), value.size()});
     }
 };
 // clang-format on

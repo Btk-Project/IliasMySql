@@ -151,7 +151,6 @@ auto SqlDate::setTime(std::string_view str) -> void {
 
     std::cmatch match;
     std::string s_str(str); // regex需要C-string
-    ILIAS_TRACE("ilias-sql", "parser time {}", str);
 
     if (std::regex_match(s_str.c_str(), match, re_datetime)) {
         type   = kDateTime;

@@ -498,7 +498,7 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
             bind.is_null_value = true;
             bind.buffer_length = 0;
             break;
-        case SqlValueType::kBool:            
+        case SqlValueType::kBool:
             bind.buffer_type   = MYSQL_TYPE_TINY;
             bind.buffer        = std::get<(int)SqlValueType::kBool>(value);
             bind.buffer_length = sizeof(SqlValueTraits<SqlValueType::kBool>::type);
@@ -563,7 +563,7 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
 }
 
 auto MysqlStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    ILIAS_TRACE("ilias-mysql", "bind {} with(type {}) {}", index, value.index(), value);
+    ILIAS_TRACE("ilias-mysql", "bind {} with ({}){}", index, getSqltypeName(value), value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NotPrepared);
     }
@@ -619,9 +619,9 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     }
     if (ret != 0) {
         auto lastererror = mMysql->lastError();
-        auto message     = mMysql->lastErrorMessage();
-        ILIAS_ERROR("ilias-mysql", "stmt execute failed. (error {}:{})", ret, mMysql->lastErrorMessage());
         if (lastererror != 0) {
+            auto message = mMysql->lastErrorMessage();
+            // ILIAS_ERROR("ilias-mysql", "stmt execute failed. (error {}:{})", ret, mMysql->lastErrorMessage());
             sql::SqlErrorCategory::instance().registerMessage(lastererror, message);
             co_return Unexpected((SqlError::Code)lastererror);
         }

@@ -147,7 +147,6 @@ public:
         }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using StorageT = StorageType_t<T>;
-        ILIAS_TRACE("ilias-sql", "compare {} by {}", op, StorageSelector<T>::debug());
         binders.push_back(std::make_shared<ValueBinder<StorageT>>(std::forward<T>(value)));
         return SqlCondition(mName + " " + op + " ?", std::move(binders));
     }

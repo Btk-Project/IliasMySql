@@ -538,7 +538,7 @@ auto SqlStmtResult::fieldName(size_t index) -> std::string_view {
 }
 
 auto SqlStmtResult::fetchRow() -> IoTask<int> {
-    ILIAS_TRACE("sql", "stmt fetch row");
+    // ILIAS_TRACE("sql", "stmt fetch row");
     ILIAS_ASSERT(mStmt != nullptr);
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_stmt_fetch);
