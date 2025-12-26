@@ -110,8 +110,12 @@ struct Dialect<MysqlTag> {
         else if constexpr (std::is_same_v<DT, SqlBlob>)
             return "BLOB";
         else if constexpr (std::is_same_v<DT, std::string> || std::is_same_v<DT, const char *>) {
+            bool needs_index = tags.primary_key || tags.unique || tags.index;
             if (tags.length > 0) {
                 return "VARCHAR(" + std::to_string(tags.length) + ")";
+            }
+            if (needs_index) {
+                return "VARCHAR(255)";
             }
             return "TEXT"; // 提供一个通用的默认长度
         }

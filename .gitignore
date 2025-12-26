@@ -11,3 +11,4 @@ a.out
 *.dll
 /vsxmake*
 include/ilias/sql/global/config.h
+/.kiro
