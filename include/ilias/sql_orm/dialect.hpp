@@ -26,11 +26,14 @@ struct Dialect<SqliteTag> {
         if constexpr (std::is_same_v<DT, SqlNull>) {
             static_assert(!std::is_same_v<DT, SqlNull>, "SqlNull is not a valid type for SQLite");
         }
-        else if constexpr (std::is_integral_v<DT>) {
+        else if constexpr (std::is_integral_v<DT> || std::is_same_v<DT, bool> || std::is_enum_v<DT>) {
             return "INTEGER"; // SQLite 只有 INTEGER
         }
-        else if constexpr (std::is_floating_point_v<DT>) {
+        else if constexpr (std::is_same_v<DT, float> || std::is_same_v<DT, double>) {
             return "REAL";
+        }
+        else if constexpr (std::is_same_v<DT, SqlBlob>) {
+            return "BLOB";
         }
         else {
             return "TEXT";

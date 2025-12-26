@@ -89,7 +89,7 @@ public:
     template <typename... Ts>
         requires(detail::HasSqlMethod<Ts> && ...)
     auto select(Ts... args) const {
-        return detail::ProjectedSelectBuilder<Ts...>(derived().db(), derived().tableRef(), {args.sql()...});
+        return detail::ProjectedSelectBuilder<>(derived().db(), derived().tableRef(), {args.sql()...});
     }
 
     auto select() const {
@@ -98,21 +98,22 @@ public:
     }
 
     auto select(const std::string &columns) const {
-        auto builder = detail::SelectBuilder(derived().db(), derived().tableRef());
-        if (!columns.empty())
-            builder.select(columns);
+        auto builder = detail::SelectBuilder(derived().db(), derived().tableRef(), {columns});
         return builder;
     }
 
-    auto count() const { return detail::SelectBuilder(derived().db(), derived().tableRef()).count("*"); }
+    auto count() const {
+        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(), {"COUNT(*)"});
+    }
 
     auto count(const std::string &column) const {
-        return detail::SelectBuilder(derived().db(), derived().tableRef()).count(column);
+        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(), {"COUNT(" + column + ")"});
     }
 
     template <typename U>
     auto count(detail::TypedColumn<U> column) const {
-        return detail::SelectBuilder(derived().db(), derived().tableRef()).count(column.sql());
+        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(),
+                                                   {"COUNT(" + column.sql() + ")"});
     }
 
     // =========================================================

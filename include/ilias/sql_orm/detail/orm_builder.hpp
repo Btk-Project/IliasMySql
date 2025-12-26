@@ -69,21 +69,15 @@ class ILIAS_SQL_API SelectBuilder {
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
 public:
-    SelectBuilder(SqlDatabase &db, std::string tableName);
+    SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols = {});
 
-    SelectBuilder &select(const std::string &columns);
-    SelectBuilder &count(const std::string &column);
     SelectBuilder &where(const SqlCondition &cond);
     SelectBuilder &orderBy(const std::string &column, bool desc = false);
     SelectBuilder &limit(int limit);
     SelectBuilder &offset(int offset);
 
-    // 模板方法实现保留在头文件
-    template <typename... Ts>
-    auto select(TypedColumn<Ts>... args) const -> ProjectedSelectBuilder<Ts...>;
-
     // 基础查询
-    IoTask<SqlResult<void>>      query();
+    IoTask<SqlResult<void>>      query() const;
     IoGenerator<SqlResult<void>> loop(int count);
 
 protected:
@@ -112,23 +106,16 @@ class ProjectedSelectBuilder : public SelectBuilder {
 
 public:
     ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols)
-        : SelectBuilder(db, std::move(tableName)) {
-        SelectBuilder::select(join_strs(cols, ", "));
-    }
+        : SelectBuilder(db, std::move(tableName), cols) {}
 
     // 专门用于 select * 的构造函数
     ProjectedSelectBuilder(SqlDatabase &db, std::string tableName)
         requires(sizeof...(ResultTypes) == 1)
-        : SelectBuilder(db, std::move(tableName)) {
-        SelectBuilder::select(" * ");
-    }
+        : SelectBuilder(db, std::move(tableName), {"*"}) {}
 
     // 专门用于 join 的构造
     ProjectedSelectBuilder(SqlDatabase &db, std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders)
         : SelectBuilder(db, ""), mBaseSql(std::move(sql)), mBinders(std::move(binders)) {}
-
-    // 覆盖 SelectBuilder 的 select，但这里只是为了隐藏基类方法
-    using SelectBuilder::select;
 
     ProjectedSelectBuilder &where(const SqlCondition &cond) {
         SelectBuilder::where(cond);
@@ -197,12 +184,6 @@ private:
     std::vector<std::shared_ptr<SqlStatementBinder>> mBinders;
 };
 
-// SelectBuilder 的模板方法实现
-template <typename... Ts>
-auto SelectBuilder::select(TypedColumn<Ts>... args) const -> ProjectedSelectBuilder<Ts...> {
-    return ProjectedSelectBuilder<Ts...>(mDb, mTableName, args...);
-}
-
 // ================== JoinedSelectBuilder ==================
 template <typename... Tables>
 class JoinedSelectBuilder {
@@ -234,11 +215,24 @@ public:
         return *this;
     }
 
-    template <typename... ColTypes>
-    auto select(const TypedColumn<ColTypes> &...columns) {
-        std::vector<std::string> colSqls = {columns.sql()...};
-        std::string              sql     = "SELECT " + join_strs(colSqls, ", ");
+    template <typename... Us, template <typename U> typename... Ts>
+        requires(detail::HasSqlMethod<Ts<Us>> && ...)
+    auto select(Ts<Us>... args) const {
+        return select<Us...>({args.sql()...});
+    }
 
+    template <typename... Ts>
+        requires(detail::HasSqlMethod<Ts> && ...)
+    auto select(Ts... args) const {
+        return select<>({args.sql()...});
+    }
+
+    template <typename... ColTypes>
+    auto select(const std::vector<std::string> &colSqls) const {
+        // 构建 SELECT 语句的基本部分
+        std::string sql = "SELECT " + join_strs(colSqls, ", ");
+
+        // 获取主表单并添加 FROM 子句
         auto &mainForm = std::get<0>(mForms);
         sql += " FROM " + mainForm.tableRef();
 
@@ -272,12 +266,12 @@ public:
     }
 
     template <typename NextTable, typename Tag = void>
-    auto join(NextTable &nextTable, const std::string &type = "INNER") {
+    auto join(NextTable &nextTable, const std::string &type = "INNER") const {
         return appendTable<NextTable>(nextTable, type);
     }
 
     template <typename NextTable, typename Tag = void>
-    auto leftJoin(NextTable &nextTable) {
+    auto leftJoin(NextTable &nextTable) const {
         return join(nextTable, "LEFT");
     }
 
@@ -286,7 +280,7 @@ public:
         return *this;
     }
 
-    IoTask<SqlResult<ResultType>> query() {
+    IoTask<SqlResult<ResultType>> query() const {
         auto stmtRet = co_await prepare();
         if (!stmtRet)
             co_return Unexpected(stmtRet.error());
@@ -303,7 +297,7 @@ public:
     }
 
 private:
-    IoTask<SqlStatement<void>> prepare() {
+    IoTask<SqlStatement<void>> prepare() const {
         std::vector<std::string> selectCols;
         std::apply(
             [&](auto &...forms) {
@@ -333,7 +327,7 @@ private:
         co_return co_await mainForm.db().prepare(sql);
     }
 
-    void bind(SqlStatement<void> &stmt) {
+    void bind(SqlStatement<void> &stmt) const {
         int index = 1;
         for (const auto &node : mNodes) {
             index = node.onCondition.bindTo(stmt, index);
@@ -343,7 +337,7 @@ private:
 
 private:
     template <typename NextTable>
-    auto appendTable(NextTable &nextTable, const std::string &type) {
+    auto appendTable(NextTable &nextTable, const std::string &type) const {
         std::vector<JoinNode> newNodes = mNodes;
         JoinNode              node;
         node.tableName = nextTable.tableRef();

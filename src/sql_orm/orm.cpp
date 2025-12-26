@@ -70,30 +70,12 @@ SqlVariable::SqlVariable(std::string_view name) : mName(name) {
 
 // ================= SelectBuilder =================
 
-SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {
-}
-
-SelectBuilder &SelectBuilder::select(const std::string &columns) {
-    if (mSelectColumns == "*")
-        mSelectColumns = columns;
+SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols)
+    : mDb(db), mTableName(std::move(tableName)) {
+    if (cols.empty())
+        mSelectColumns = "*";
     else
-        mSelectColumns += ", " + columns;
-    return *this;
-}
-
-SelectBuilder &SelectBuilder::count(const std::string &column) {
-    std::string column_ = column;
-    std::transform(column_.begin(), column_.end(), column_.begin(), ::toupper);
-    if (column == "*" || column_ == "COUNT(*)" || column.empty()) {
-        mSelectColumns = "COUNT(*)";
-    }
-    else if (column_.starts_with("COUNT")) {
-        mSelectColumns = column;
-    }
-    else {
-        mSelectColumns = "COUNT(" + column + ")";
-    }
-    return *this;
+        mSelectColumns = detail::join_strs(cols, ", ");
 }
 
 SelectBuilder &SelectBuilder::where(const SqlCondition &cond) {
@@ -116,7 +98,7 @@ SelectBuilder &SelectBuilder::offset(int offset) {
     return *this;
 }
 
-IoTask<SqlResult<void>> SelectBuilder::query() {
+IoTask<SqlResult<void>> SelectBuilder::query() const {
     auto ret = co_await prepare();
     if (!ret)
         co_return Unexpected(ret.error());
