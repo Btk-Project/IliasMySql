@@ -1,7 +1,93 @@
 #include "ilias/sql_orm/detail/orm_condition.hpp"
 #include "ilias/sql_orm/detail/orm_builder.hpp"
+#include "ilias/sql_orm/detail/orm_types.hpp"
+#include "ilias/sql_orm/detail/enhanced_error.hpp"
 
 ILIAS_SQL_NS_BEGIN
+
+// ================= Enhanced Error Handling =================
+
+namespace detail {
+
+/**
+ * @brief Enhance SqlError with SqlTags constraint context for better error reporting
+ */
+ILIAS_SQL_API
+EnhancedSqlError enhanceErrorWithConstraintContext(const SqlError& error,
+                                                  const std::string& tableName,
+                                                  const std::string& columnName,
+                                                  const SqlTags& tags) {
+    return SqlTagsErrorHandler::enhanceError(error, tableName, columnName, tags);
+}
+
+/**
+ * @brief Enhance SqlError with multiple constraint contexts
+ */
+ILIAS_SQL_API
+EnhancedSqlError enhanceErrorWithMultipleConstraints(const SqlError& error,
+                                                    const std::string& tableName,
+                                                    const std::vector<std::pair<std::string, SqlTags>>& contexts) {
+    return SqlTagsErrorHandler::enhanceError(error, tableName, contexts);
+}
+
+/**
+ * @brief Try to enhance a generic SqlError by analyzing its message and mapping to constraint types
+ */
+ILIAS_SQL_API
+EnhancedSqlError tryEnhanceGenericError(const SqlError& error,
+                                       const std::string& tableName) {
+    // Try to map the error message to a more specific constraint type
+    auto mappedCode = SqlTagsErrorHandler::mapDatabaseErrorToConstraintType(error.message());
+    
+    if (mappedCode.has_value()) {
+        // Create a new SqlError with the mapped code but keep the original message
+        SqlError enhancedBaseError(mappedCode.value(), error.message());
+        return EnhancedSqlError(enhancedBaseError, tableName, "", SqlTags{});
+    }
+    
+    // If we can't map it, just wrap the original error
+    return EnhancedSqlError(error, tableName, "", SqlTags{});
+}
+
+} // namespace detail
+
+// ================= SqlTags Validation Methods =================
+
+bool SqlTags::isValid() const {
+    return getValidationErrors().empty();
+}
+
+std::vector<std::string> SqlTags::getValidationErrors() const {
+    std::vector<std::string> errors;
+    
+    // 检查约束冲突
+    if (primary_key && !unique) {
+        // 主键隐含唯一性，但如果显式设置了unique=false，这是冲突的
+        // 注意：这里我们允许primary_key=true且unique=true的组合
+    }
+    
+    // 检查无效的长度值
+    if (length < 0) {
+        errors.push_back("Length cannot be negative");
+    }
+    
+    // 检查自增约束的类型兼容性
+    // 注意：这里我们无法直接检查字段类型，因为SqlTags不包含类型信息
+    // 实际的类型检查需要在使用时进行
+    
+    // 检查时间戳字段的类型兼容性
+    // 同样，类型兼容性检查需要在使用时进行
+    
+    return errors;
+}
+
+bool SqlTags::hasTimestampBehavior() const {
+    return created_at || updated_at;
+}
+
+bool SqlTags::requiresIndex() const {
+    return index || primary_key || unique;
+}
 
 // ================= Utils =================
 ILIAS_SQL_API

@@ -131,7 +131,7 @@ target("ilias_sql")
             add_files("src/postgres/**.cpp")
         end
         if has_config("enable_orm_interface") then
-            add_headerfiles("include/(ilias/sql/orm/**.hpp)")
+            add_headerfiles("include/(ilias/sql_orm/**.hpp)")
             add_files("src/sql_orm/**.cpp")
         end
         if is_kind("shared") then

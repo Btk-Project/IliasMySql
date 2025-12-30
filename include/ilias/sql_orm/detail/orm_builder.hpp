@@ -3,7 +3,9 @@
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql_orm/detail/orm_condition.hpp"
+#include "ilias/sql_orm/detail/timestamp_manager.hpp"
 #include <tuple>
+#include <nekoproto/serialization/reflection.hpp>
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
@@ -440,6 +442,41 @@ public:
         mWhereCondition = cond;
         return *this;
     }
+    
+    /**
+     * @brief Set object for update with automatic timestamp handling
+     * 
+     * This method allows setting an object that will receive automatic
+     * updated_at timestamps before the update operation.
+     */
+    template<typename T>
+    UpdateBuilder& setObjectForTimestamps(T& obj) {
+        // Apply updated_at timestamps before the update
+        applyUpdatedAtTimestamps(obj);
+        return *this;
+    }
+    
+    /**
+     * @brief Get list of field names that have updated_at behavior
+     * 
+     * Uses reflection to iterate through type T and identify fields
+     * with updated_at = true in their SqlTags configuration.
+     */
+    template<typename T>
+    static std::vector<std::string> getUpdatedAtFields() {
+        std::vector<std::string> fields;
+        
+        // Use reflection to iterate through fields and check SqlTags
+        T obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, 
+            [&](const auto& /*field*/, std::string_view name, const SqlTags& tags) {
+                if (TimestampManager::shouldApplyUpdatedAt(tags)) {
+                    fields.emplace_back(name);
+                }
+            });
+        
+        return fields;
+    }
 
     IoTask<size_t> execute() {
         if (mSetSqls.empty()) {
@@ -478,6 +515,24 @@ private:
         mSetSqls.push_back(assign.sql);
         mSetBinders.insert(mSetBinders.end(), assign.binders.begin(), assign.binders.end());
     }
+    
+    /**
+     * @brief Apply updated_at timestamps to an object before update
+     * 
+     * Uses reflection to identify fields with updated_at behavior and applies
+     * current timestamps to them before the object data is used in updates.
+     */
+    template<typename T>
+    void applyUpdatedAtTimestamps(T& obj) {
+        // Only apply timestamps if the object type has reflection metadata
+        if constexpr (NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>) {
+            // Get list of fields that should receive updated_at timestamps
+            auto updatedAtFields = getUpdatedAtFields<T>();
+            
+            // Apply timestamps using TimestampManager
+            TimestampManager::applyUpdatedAt(obj, updatedAtFields);
+        }
+    }
 
     SqlDatabase                                     &mDb;
     std::string                                      mTableName;
@@ -510,6 +565,9 @@ public:
     template <typename U>
         requires(std::is_constructible_v<T, U>)
     InsertBuilder &set(U &&obj) {
+        // Apply created_at timestamps before binding the object
+        applyCreatedAtTimestamps(obj);
+        
         mSetBinders.emplace_back(std::make_shared<ObjBinder<T, U>>(std::forward<U>(obj)));
         return *this;
     }
@@ -525,6 +583,28 @@ public:
     }
 
     IoGenerator<size_t> loop(int count) { return executeLoopWrap(std::move(*this), count); }
+    
+    /**
+     * @brief Get list of field names that have created_at behavior
+     * 
+     * Uses reflection to iterate through type U and identify fields
+     * with created_at = true in their SqlTags configuration.
+     */
+    template<typename U>
+    static std::vector<std::string> getCreatedAtFields() {
+        std::vector<std::string> fields;
+        
+        // Use reflection to iterate through fields and check SqlTags
+        U obj;
+        NEKO_NAMESPACE::Reflect<U>::forEach(obj, 
+            [&](const auto& /*field*/, std::string_view name, const SqlTags& tags) {
+                if (TimestampManager::shouldApplyCreatedAt(tags)) {
+                    fields.emplace_back(name);
+                }
+            });
+        
+        return fields;
+    }
 
 private:
     auto prepare() const -> IoTask<SqlStatement<void>> {
@@ -552,6 +632,24 @@ private:
         }
         for (auto &binder : assign.binders) {
             mSetBinders.emplace_back(std::make_shared<NamedBinder>(name, binder));
+        }
+    }
+    
+    /**
+     * @brief Apply created_at timestamps to an object before insertion
+     * 
+     * Uses reflection to identify fields with created_at behavior and applies
+     * current timestamps to them before the object is bound for insertion.
+     */
+    template<typename U>
+    void applyCreatedAtTimestamps(U& obj) {
+        // Only apply timestamps if the object type has reflection metadata
+        if constexpr (NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>) {
+            // Get list of fields that should receive created_at timestamps
+            auto createdAtFields = getCreatedAtFields<U>();
+            
+            // Apply timestamps using TimestampManager
+            TimestampManager::applyCreatedAt(obj, createdAtFields);
         }
     }
 

@@ -32,7 +32,13 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(NullValue, "Null value")                                                                           \
     SQL_ERROR_ENTRY(DriverAlreadyRegistered, "Driver already registered")                                              \
     SQL_ERROR_ENTRY(TypeNotMatched, "Type not matched")                                                                \
-    SQL_ERROR_ENTRY(DataTruncated, "Data truncated")
+    SQL_ERROR_ENTRY(DataTruncated, "Data truncated")                                                                   \
+    SQL_ERROR_ENTRY(ConstraintViolation, "Constraint violation")                                                       \
+    SQL_ERROR_ENTRY(PrimaryKeyViolation, "Primary key constraint violation")                                           \
+    SQL_ERROR_ENTRY(UniqueConstraintViolation, "Unique constraint violation")                                          \
+    SQL_ERROR_ENTRY(NotNullViolation, "Not null constraint violation")                                                 \
+    SQL_ERROR_ENTRY(ForeignKeyViolation, "Foreign key constraint violation")                                           \
+    SQL_ERROR_ENTRY(CheckConstraintViolation, "Check constraint violation")
 
 class ILIAS_SQL_API SqlError {
 public:

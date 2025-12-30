@@ -20,6 +20,14 @@ struct SqlTags {
     // 常用逻辑标记 (用于自动化生成时间戳)
     bool created_at = false; // 标记为创建时间字段
     bool updated_at = false; // 标记为更新时间字段
+
+    // 验证方法
+    ILIAS_SQL_API bool isValid() const;
+    ILIAS_SQL_API std::vector<std::string> getValidationErrors() const;
+    
+    // 约束组合辅助方法
+    ILIAS_SQL_API bool hasTimestampBehavior() const;
+    ILIAS_SQL_API bool requiresIndex() const;
 };
 
 // 前置声明
