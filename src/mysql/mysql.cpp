@@ -531,12 +531,12 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
         case SqlValueType::kText:
             bind.buffer_type   = MYSQL_TYPE_STRING;
             bind.buffer        = const_cast<char *>(get<SqlValueType::kText>(value).data());
-            bind.buffer_length = get<SqlValueType::kText>(value).size();
+            bind.buffer_length = static_cast<unsigned long>(get<SqlValueType::kText>(value).size());
             break;
         case SqlValueType::kBlob:
             bind.buffer_type   = MYSQL_TYPE_BLOB;
             bind.buffer        = const_cast<std::byte *>(get<SqlValueType::kBlob>(value).data());
-            bind.buffer_length = get<SqlValueType::kBlob>(value).size();
+            bind.buffer_length = static_cast<unsigned long>(get<SqlValueType::kBlob>(value).size());
             break;
         case SqlValueType::kDate:
             mBindBuffer.push_back(std::make_unique<MYSQL_TIME>(toMysqlTime(get<SqlValueType::kDate>(value))));

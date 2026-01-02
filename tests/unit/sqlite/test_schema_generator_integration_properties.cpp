@@ -195,7 +195,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property14_ComprehensiveCo
             }
         } catch (const std::exception& e) {
             // If validation fails, that's expected for some configurations
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid tags: " << e.what();
         }
         
         // Test MySQL dialect
@@ -225,7 +225,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property14_ComprehensiveCo
             }
         } catch (const std::exception& e) {
             // If validation fails, that's expected for some configurations
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid tags: " << e.what();
         }
         
         // Test PostgreSQL dialect
@@ -252,7 +252,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property14_ComprehensiveCo
             }
         } catch (const std::exception& e) {
             // If validation fails, that's expected for some configurations
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid tags: " << e.what();
         }
     }, 100);
 }
@@ -298,7 +298,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property15_MultipleConstra
             
         } catch (const std::exception& e) {
             // If validation fails, that's expected for some invalid combinations
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid multi-constraint tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid multi-constraint tags: " << e.what();
         }
         
         // Test SQLite dialect
@@ -311,7 +311,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property15_MultipleConstra
                 << "At least one constraint should be present in SQLite column: " << sqliteColumn;
                 
         } catch (const std::exception& e) {
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid multi-constraint tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid multi-constraint tags: " << e.what();
         }
     }, 100);
 }
@@ -375,7 +375,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property16_DatabaseSpecifi
                 << "PostgreSQL column should contain column name: " << postgresColumn;
                 
         } catch (const std::exception& e) {
-            EXPECT_FALSE(tags.isValid()) << "Exception thrown for valid tags: " << e.what();
+            EXPECT_FALSE(tags.isValid<int>()) << "Exception thrown for valid tags: " << e.what();
         }
     }, 100);
 }
@@ -396,7 +396,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
             std::string sqliteColumn = detail::SchemaGenerator<SqliteTag>::generateColumnDefinition<int>(columnName, tags);
             
             // If no exception was thrown, the tags should be valid
-            EXPECT_TRUE(tags.isValid()) 
+            EXPECT_TRUE(tags.isValid<int>()) 
                 << "No exception thrown but tags appear invalid. Generated: " << sqliteColumn;
                 
         } catch (const std::invalid_argument& e) {
@@ -408,7 +408,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
                 << "Error message should be descriptive: " << errorMsg;
                 
             // Verify that the tags are indeed invalid
-            EXPECT_FALSE(tags.isValid()) 
+            EXPECT_FALSE(tags.isValid<int>()) 
                 << "Exception thrown but tags appear valid. Error: " << errorMsg;
                 
         } catch (const std::exception& e) {
@@ -421,7 +421,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
         try {
             std::string mysqlColumn = detail::SchemaGenerator<MysqlTag>::generateColumnDefinition<int>(columnName, tags);
             
-            EXPECT_TRUE(tags.isValid()) 
+            EXPECT_TRUE(tags.isValid<int>()) 
                 << "No exception thrown but tags appear invalid. Generated: " << mysqlColumn;
                 
         } catch (const std::invalid_argument& e) {
@@ -431,7 +431,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
                        propertyTester.containsIgnoreCase(errorMsg, "configuration"))
                 << "MySQL error message should be descriptive: " << errorMsg;
                 
-            EXPECT_FALSE(tags.isValid()) 
+            EXPECT_FALSE(tags.isValid<int>()) 
                 << "Exception thrown but tags appear valid. Error: " << errorMsg;
                 
         } catch (const std::exception& e) {
@@ -443,7 +443,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
         try {
             std::string postgresColumn = detail::SchemaGenerator<PostgresTag>::generateColumnDefinition<int>(columnName, tags);
             
-            EXPECT_TRUE(tags.isValid()) 
+            EXPECT_TRUE(tags.isValid<int>()) 
                 << "No exception thrown but tags appear invalid. Generated: " << postgresColumn;
                 
         } catch (const std::invalid_argument& e) {
@@ -453,7 +453,7 @@ TEST_F(SchemaGeneratorIntegrationPropertyTestFixture, Property17_InvalidConstrai
                        propertyTester.containsIgnoreCase(errorMsg, "configuration"))
                 << "PostgreSQL error message should be descriptive: " << errorMsg;
                 
-            EXPECT_FALSE(tags.isValid()) 
+            EXPECT_FALSE(tags.isValid<int>()) 
                 << "Exception thrown but tags appear valid. Error: " << errorMsg;
                 
         } catch (const std::exception& e) {

@@ -49,7 +49,7 @@ auto SqliteStmtResultSet::columnName(size_t index) const -> std::string_view {
     if (!mSqlite || !mSqliteStmt) {
         return "";
     }
-    return sqlite3_column_name(mSqliteStmt.get(), index);
+    return sqlite3_column_name(mSqliteStmt.get(), static_cast<int>(index));
 }
 
 auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValueView> {
@@ -59,23 +59,23 @@ auto SqliteStmtResultSet::getValue(size_t index) -> IoResult<SqlValueView> {
     if (index >= columnCount()) {
         return Unexpected(std::make_error_code(std::errc::result_out_of_range));
     }
-    int          type_code = sqlite3_column_type(mSqliteStmt.get(), index);
+    int          type_code = sqlite3_column_type(mSqliteStmt.get(), static_cast<int>(index));
     SqlValueView value;
     value.emplace<SqlNull>();
     switch (type_code) {
         case SQLITE_INTEGER:
-            value.emplace<int64_t>(sqlite3_column_int64(mSqliteStmt.get(), index));
+            value.emplace<int64_t>(sqlite3_column_int64(mSqliteStmt.get(), static_cast<int>(index)));
             break;
         case SQLITE_FLOAT:
-            value.emplace<double>(sqlite3_column_double(mSqliteStmt.get(), index));
+            value.emplace<double>(sqlite3_column_double(mSqliteStmt.get(), static_cast<int>(index)));
             break;
         case SQLITE_TEXT:
             value.emplace<std::string_view>(
-                reinterpret_cast<const char *>(sqlite3_column_text(mSqliteStmt.get(), index)));
+                reinterpret_cast<const char *>(sqlite3_column_text(mSqliteStmt.get(), static_cast<int>(index))));
             break;
         case SQLITE_BLOB:
-            const void *blob_ptr   = sqlite3_column_blob(mSqliteStmt.get(), index);
-            int         blob_bytes = sqlite3_column_bytes(mSqliteStmt.get(), index);
+            const void *blob_ptr   = sqlite3_column_blob(mSqliteStmt.get(), static_cast<int>(index));
+            int         blob_bytes = sqlite3_column_bytes(mSqliteStmt.get(), static_cast<int>(index));
             value.emplace<std::span<const std::byte>>(reinterpret_cast<const std::byte *>(blob_ptr), blob_bytes);
     }
     return value;
@@ -109,37 +109,40 @@ auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, 
     }
     switch ((SqlValueType)value.index()) {
         case SqlValueType::kNull:
-            sqlite3_bind_null(mSqliteStmt.get(), index);
+            sqlite3_bind_null(mSqliteStmt.get(), static_cast<int>(index));
             break;
         case SqlValueType::kBool:
-            sqlite3_bind_int(mSqliteStmt.get(), index, get<SqlValueType::kBool>(value));
+            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kBool>(value));
             break;
         case SqlValueType::kChar:
-            sqlite3_bind_int(mSqliteStmt.get(), index, get<SqlValueType::kChar>(value));
+            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kChar>(value));
             break;
         case SqlValueType::kInt:
-            sqlite3_bind_int(mSqliteStmt.get(), index, get<SqlValueType::kInt>(value));
+            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kInt>(value));
             break;
         case SqlValueType::kBigInt:
-            sqlite3_bind_int64(mSqliteStmt.get(), index, get<SqlValueType::kBigInt>(value));
+            sqlite3_bind_int64(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kBigInt>(value));
             break;
         case SqlValueType::kFloat:
-            sqlite3_bind_double(mSqliteStmt.get(), index, get<SqlValueType::kFloat>(value));
+            sqlite3_bind_double(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kFloat>(value));
             break;
         case SqlValueType::kDouble:
-            sqlite3_bind_double(mSqliteStmt.get(), index, get<SqlValueType::kDouble>(value));
+            sqlite3_bind_double(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kDouble>(value));
             break;
         case SqlValueType::kText: {
             auto string = get<SqlValueType::kText>(value);
-            sqlite3_bind_text(mSqliteStmt.get(), index, string.data(), string.size(), SQLITE_STATIC);
+            sqlite3_bind_text(mSqliteStmt.get(), static_cast<int>(index), string.data(),
+                              static_cast<int>(string.size()), SQLITE_STATIC);
         } break;
         case SqlValueType::kBlob: {
             auto data = get<SqlValueType::kBlob>(value);
-            sqlite3_bind_blob(mSqliteStmt.get(), index, data.data(), data.size_bytes(), SQLITE_STATIC);
+            sqlite3_bind_blob(mSqliteStmt.get(), static_cast<int>(index), data.data(),
+                              static_cast<int>(data.size_bytes()), SQLITE_STATIC);
         } break;
         case SqlValueType::kDate: {
             auto string = get<SqlValueType::kDate>(value).toString();
-            sqlite3_bind_text(mSqliteStmt.get(), index, string.data(), string.size(), SQLITE_TRANSIENT);
+            sqlite3_bind_text(mSqliteStmt.get(), static_cast<int>(index), string.data(),
+                              static_cast<int>(string.size()), SQLITE_TRANSIENT);
         } break;
         default:
             ILIAS_TRACE("ilias-sqlite", "{} bind failed: invalid argument", index);
@@ -193,7 +196,7 @@ auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
     }
     auto ret = co_await blocking([this, sql = sql]() -> int {
         sqlite3_stmt *stmt;
-        auto          ret = sqlite3_prepare_v2(mSqlite.get(), sql.data(), sql.size(), &stmt, nullptr);
+        auto          ret = sqlite3_prepare_v2(mSqlite.get(), sql.data(), static_cast<int>(sql.size()), &stmt, nullptr);
         ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing prepare: {}", (void *)mSqlite.get(), sql);
         if (ret != SQLITE_OK) {
             return ret;

@@ -101,7 +101,7 @@ struct Meta<ExtendedUser, void> {
         "id",           make_tags<SqlTags {.primary_key = true}>(&ExtendedUser::id), 
         "name",         make_tags<SqlTags {.not_null = true}>(&ExtendedUser::name), 
         "age",          make_tags<SqlTags {}>(&ExtendedUser::age), 
-        "email",        make_tags<SqlTags {.unique = true}>(&ExtendedUser::email), 
+        "email",        make_tags<SqlTags {.unique = true, .index = true}>(&ExtendedUser::email), 
         "salary",       make_tags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
         "department",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
         "created_at",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::created_at));

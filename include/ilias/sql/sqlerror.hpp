@@ -38,7 +38,8 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(UniqueConstraintViolation, "Unique constraint violation")                                          \
     SQL_ERROR_ENTRY(NotNullViolation, "Not null constraint violation")                                                 \
     SQL_ERROR_ENTRY(ForeignKeyViolation, "Foreign key constraint violation")                                           \
-    SQL_ERROR_ENTRY(CheckConstraintViolation, "Check constraint violation")
+    SQL_ERROR_ENTRY(CheckConstraintViolation, "Check constraint violation")                                            \
+    SQL_ERROR_ENTRY(ColumnNotFound, "Column not found")
 
 class ILIAS_SQL_API SqlError {
 public:

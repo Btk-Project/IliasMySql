@@ -90,6 +90,7 @@ struct ExtendedUser {
     double             salary;
     std::string        department;
     SqlDate            created_at;
+    SqlDate            updated_at;
 };
 
 // 反射元数据定义
@@ -101,10 +102,11 @@ struct Meta<ExtendedUser, void> {
         "id",           make_tags<SqlTags {.primary_key = true}>(&ExtendedUser::id), 
         "name",         make_tags<SqlTags {.not_null = true}>(&ExtendedUser::name), 
         "age",          make_tags<SqlTags {}>(&ExtendedUser::age), 
-        "email",        make_tags<SqlTags {.unique = true}>(&ExtendedUser::email), 
+        "email",        make_tags<SqlTags {.index = true}>(&ExtendedUser::email), 
         "salary",       make_tags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
         "department",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
-        "created_at",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::created_at));
+        "created_at",   make_tags<SqlTags {.not_null = true, .created_at = true}>(&ExtendedUser::created_at),
+        "updated_at",   make_tags<SqlTags {.not_null = true, .updated_at = true}>(&ExtendedUser::updated_at));
 };
 template <>
 struct Meta<SimpleUser, void> {
@@ -1335,7 +1337,16 @@ public:
         auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
-
+        printf("create table schema:\n");
+        printf("%s\n", users.createTableSchema().value().c_str());
+        printf("index schema:\n");
+        for (auto indexStatement : users.indexStatementsSchema()) {
+            printf("%s\n", indexStatement.c_str());
+        }
+        printf("complete schema:\n");
+        for (auto &complete : users.completeSchema()) {
+            printf("%s\n", complete.c_str());
+        }
         // 准备测试数据
         std::vector<ExtendedUser> test_users = {
             {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(2024, 1, 1)},
@@ -1346,7 +1357,6 @@ public:
 
         auto insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);
-        co_await users.print();
         // 1. 测试 has_value() - 检查可选字段
         {
             auto query_ret = co_await users.select().where(users.sql(&ExtendedUser::age).has_value()).query();
@@ -1455,6 +1465,32 @@ public:
             }
             EXPECT_EQ(contains_count, 5); // 所有用户
         }
+        // 7. 更新id==2的用户
+        // 从 {2, "Bob", std::nullopt, "bob@company.com", 60000.0, "Marketing", SqlDate()},
+        // 更新为 {2, "Alice Smith", std::nullopt, "alice@example.com", 60000.0, "Marketing"}
+        {
+            auto user =
+                co_await users.update()
+                    .set(users.sql(&ExtendedUser::email)      = "alice@example.com",
+                         users.sql(&ExtendedUser::name)       = "Alice Smith",
+                         users.sql(&ExtendedUser::department) = "Marketing", users.sql(&ExtendedUser::salary) = 60000.0)
+                    .where(users.sql(&ExtendedUser::id) == 2)
+                    .execute();
+            EXPECT_TRUE(user);
+            auto select = co_await users.select().where(users.sql(&ExtendedUser::id) == 2).query();
+            EXPECT_TRUE(select);
+            int contains_count = 0;
+            ilias_for_await(auto &user, select->range()) {
+                EXPECT_EQ(user.id, 2);
+                EXPECT_EQ(user.name, "Alice Smith");
+                EXPECT_EQ(user.email, "alice@example.com");
+                EXPECT_EQ(user.salary, 60000.0);
+                EXPECT_EQ(user.department, "Marketing");
+                contains_count++;
+            }
+            EXPECT_EQ(contains_count, 1);
+        }
+        co_await users.print();
 
         co_return {};
     }

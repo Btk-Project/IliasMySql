@@ -53,34 +53,6 @@ EnhancedSqlError tryEnhanceGenericError(const SqlError& error,
 
 // ================= SqlTags Validation Methods =================
 
-bool SqlTags::isValid() const {
-    return getValidationErrors().empty();
-}
-
-std::vector<std::string> SqlTags::getValidationErrors() const {
-    std::vector<std::string> errors;
-    
-    // 检查约束冲突
-    if (primary_key && !unique) {
-        // 主键隐含唯一性，但如果显式设置了unique=false，这是冲突的
-        // 注意：这里我们允许primary_key=true且unique=true的组合
-    }
-    
-    // 检查无效的长度值
-    if (length < 0) {
-        errors.push_back("Length cannot be negative");
-    }
-    
-    // 检查自增约束的类型兼容性
-    // 注意：这里我们无法直接检查字段类型，因为SqlTags不包含类型信息
-    // 实际的类型检查需要在使用时进行
-    
-    // 检查时间戳字段的类型兼容性
-    // 同样，类型兼容性检查需要在使用时进行
-    
-    return errors;
-}
-
 bool SqlTags::hasTimestampBehavior() const {
     return created_at || updated_at;
 }

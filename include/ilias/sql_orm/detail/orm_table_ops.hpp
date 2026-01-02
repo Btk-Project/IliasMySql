@@ -2,6 +2,7 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
+#include "ilias/sql_orm/detail/schema_generator.hpp"
 #include "ilias/sql_orm/detail/console_table.hpp"
 
 #include "ilias/sql_orm/detail/orm_types.hpp"
@@ -17,14 +18,51 @@ public:
     Derived       &derived() { return *static_cast<Derived *>(this); }
     const Derived &derived() const { return *static_cast<const Derived *>(this); }
 
+    auto columnDefinitionSchema(int idx) const -> std::string {
+        auto columns = derived().getColumnNames();
+        if (idx >= columns.size() || idx < 0) {
+            return "";
+        }
+        return columnDefinitionSchema(columns[idx]);
+    }
+
+    auto columnDefinitionSchema(std::string name) const -> std::string {
+        std::string result;
+        NEKO_NAMESPACE::Reflect<T>::forEach([&](const auto &field, std::string_view fname, const SqlTags &tags) {
+            if (name == fname) {
+                result = detail::SchemaGenerator<BackendTag>::template generateColumnDefinition<
+                    std::decay_t<decltype(field)>>(fname, tags);
+            }
+        });
+        return result;
+    }
+
+    auto createTableSchema() const -> IoResult<std::string> {
+        auto tablename = derived().getTableName();
+        return detail::SchemaGenerator<BackendTag>::template generateCreateTable<T>(tablename);
+    }
+
+    auto indexStatementsSchema() const -> std::vector<std::string> {
+        auto                                         columns = derived().getColumnNames();
+        auto                                         tags    = derived().getColumnTags();
+        std::vector<std::pair<std::string, SqlTags>> columnTags;
+        for (auto i = 0; i < columns.size(); ++i) {
+            columnTags.emplace_back(columns[i], tags[i]);
+        }
+        return detail::SchemaGenerator<BackendTag>::generateIndexStatements(derived().getTableName(), columnTags);
+    }
+
+    auto completeSchema() const -> std::vector<std::string> {
+        return detail::SchemaGenerator<BackendTag>::template generateCompleteSchema<T>(derived().getTableName());
+    }
     // =========================================================
     // 1. 写入操作 (Insert, Update, Remove)
     // =========================================================
 
     // Insert: 批量插入
     template <typename Range>
-        requires(std::ranges::range<Range> && std::is_same_v<std::ranges::range_value_t<Range>, T>)
-    auto insert(const Range &items) -> IoTask<size_t> {
+        requires(std::ranges::range<Range> && std::is_same_v<std::decay_t<std::ranges::range_value_t<Range>>, T>)
+    auto insert(Range &&items) -> IoTask<size_t> {
         if (std::empty(items))
             co_return 0;
         std::string placeholders;
@@ -42,30 +80,29 @@ public:
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
             co_return Unexpected(ret.error());
-        int bindIndex = 1;
+        int                                bindIndex = 1;
+        std::vector<std::shared_ptr<void>> binds;
         for (const auto &item : items) {
-            NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field) {
+            NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const SqlTags &tags) {
                 using FieldType = std::decay_t<decltype(field)>;
+                if (tags.created_at) {
+                    if constexpr (std::is_same_v<FieldType, std::string> || std::is_same_v<FieldType, SqlDate>) {
+                        std::shared_ptr<FieldType> now = std::make_shared<FieldType>();
+                        detail::TimestampUpdater {.created_at = true}(*now, tags);
+                        SqlBinder<FieldType>::bind(**ret, bindIndex++, *now);
+                        binds.push_back(now);
+                        return;
+                    }
+                }
                 SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
             });
         }
         co_return co_await ret->execute();
     }
-
-    // Insert: 单个插入 (转发给批量或者独立实现)
     template <typename... Args>
         requires(std::is_constructible_v<T, Args...> && sizeof...(Args) > 0)
     auto insert(Args &&...args) -> IoTask<size_t> {
-        std::string placeholders;
-        auto        columns        = derived().getColumnNames();
-        std::string rowPlaceholder = "(" + detail::join_strs(columns, ", ", ":") + ")";
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columns, ", ") +
-                          ") VALUES " + rowPlaceholder;
-        auto ret = co_await derived().db().template prepare<T>(sql);
-        if (!ret)
-            co_return Unexpected(ret.error());
-        ret->bind(std::forward<Args>(args)...);
-        co_return co_await ret->execute();
+        co_return co_await insert(std::vector {T {std::forward<Args>(args)...}});
     }
     auto insert() {
         return detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());

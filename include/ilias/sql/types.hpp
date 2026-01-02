@@ -26,7 +26,8 @@ struct ILIAS_SQL_API SqlDate {
         kDateTime,      // 2022-01-01 00:00:00.000000
         kTime,          // 00:00:00.000000
     };
-    SqlDate(int year = 0, int month = 1, int day = 1, int hour = 0, int minute = 0, int second = 0) {
+    SqlDate() {}
+    SqlDate(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) {
         setTime(year, month, day, hour, minute, second);
     }
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }
@@ -94,19 +95,12 @@ using SqlValueRef =
     std::variant<SqlNull, bool &, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
 
 // 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
-inline auto to_sql_pointer(std::nullptr_t &) -> SqlValuePointer {
+inline auto to_sql_pointer(std::nullptr_t) -> SqlValuePointer {
     return SqlValuePointer {&g_sql_null};
 }
-inline auto to_sql_pointer(const std::nullptr_t &) -> SqlValuePointer {
+inline auto to_sql_pointer(std::nullopt_t) -> SqlValuePointer {
     return SqlValuePointer {&g_sql_null};
 }
-inline auto to_sql_pointer(const std::nullopt_t &) -> SqlValuePointer {
-    return SqlValuePointer {&g_sql_null};
-}
-inline auto to_sql_pointer(std::nullopt_t &) -> SqlValuePointer {
-    return SqlValuePointer {&g_sql_null};
-}
-
 template <SqlValueType T, class enable = void>
 struct SqlValueTraits {
     static_assert(T == SqlValueType::kNull, "Invalid SqlValueType");
