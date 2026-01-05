@@ -6,7 +6,7 @@
 ILIAS_SQL_NS_BEGIN
 
 // 标签定义
-struct SqlTags {
+struct ILIAS_SQL_API SqlTags {
     // 核心约束
     bool primary_key    = false; // 主键约束
     bool not_null       = false; // 非空约束
@@ -103,12 +103,12 @@ struct SqlTags {
         return errors;
     }
     template <typename T>
-    ILIAS_SQL_API bool isValid() const {
+    bool isValid() const {
         return getValidationErrors<T>().empty();
     }
     // 约束组合辅助方法
-    ILIAS_SQL_API bool hasTimestampBehavior() const;
-    ILIAS_SQL_API bool requiresIndex() const;
+    bool hasTimestampBehavior() const;
+    bool requiresIndex() const;
 };
 
 // 前置声明

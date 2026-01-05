@@ -33,8 +33,27 @@ struct ILIAS_SQL_API SqlDate {
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }
     explicit SqlDate(std::chrono::system_clock::time_point tp) { setTime(tp); }
     explicit SqlDate(std::chrono::milliseconds timestamp) { setTime(timestamp); }
-    explicit SqlDate(std::string_view str) { setTime(str); }
-    explicit SqlDate(const std::string str) { setTime(str); }
+    explicit SqlDate(std::string_view str) { fromUTCString(str); }
+    explicit SqlDate(const std::string str) { fromUTCString(str); }
+    SqlDate(const SqlDate &)            = default;
+    SqlDate(SqlDate &&)                 = default;
+    SqlDate &operator=(const SqlDate &) = default;
+    SqlDate &operator=(SqlDate &&)      = default;
+    ~SqlDate()                          = default;
+
+    explicit operator time_t() const { return toTimestamp(); }
+    explicit operator struct tm() const {
+        struct tm timeinfo = {};
+        timeinfo.tm_year   = year - 1900;
+        timeinfo.tm_mon    = month - 1;
+        timeinfo.tm_mday   = day;
+        timeinfo.tm_hour   = hour;
+        timeinfo.tm_min    = minute;
+        timeinfo.tm_sec    = second;
+        return timeinfo;
+    }
+    explicit operator std::string() const { return toUTCString(); }
+    explicit operator bool() const { return type != kErrorTime; }
 
     auto setTime(std::chrono::system_clock::time_point tp) -> void;
     auto setTime(std::chrono::milliseconds timestamp) -> void;
@@ -42,12 +61,15 @@ struct ILIAS_SQL_API SqlDate {
     auto setDate(int year, int month, int day) -> void;
     auto setTime(int hour, int minute, int second) -> void;
     auto setTime(struct tm *timeinfo) -> void;
-    auto setTime(std::string_view str) -> void;
     auto setTimeType(TimeType type) -> void;
 
-    auto toString() const -> std::string;
-    auto toTimestamp() const -> uint64_t;
-    void clear();
+    auto        fromUTCString(std::string_view str) -> void;
+    auto        fromLocaltring(std::string_view str) -> void;
+    auto        toUTCString() const -> std::string;
+    auto        toLocalString() const -> std::string;
+    auto        toTimestamp() const -> uint64_t;
+    void        clear();
+    static auto now() -> SqlDate;
 
     uint32_t year        = 0;
     uint32_t month       = 0;
@@ -93,6 +115,38 @@ using SqlValuePointer = std::variant<SqlNull *, bool *, char *, int32_t *, int64
                                      std::string_view, SqlBlobView, SqlDate *>;
 using SqlValueRef =
     std::variant<SqlNull, bool &, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
+
+// =========================================================
+// 3. 运行时 NULL 检测 (修复 -Waddress 警告)
+// =========================================================
+template <typename T>
+constexpr bool is_sql_null(const T &val) {
+    using DecayT = std::decay_t<T>;
+
+    if constexpr (std::is_same_v<DecayT, std::nullptr_t> || std::is_same_v<DecayT, SqlNull> ||
+                  std::is_same_v<DecayT, SqlNull *>) {
+        return true;
+    }
+    // 数组类型 (e.g. "literal") 永远不为空
+    else if constexpr (std::is_array_v<DecayT> || std::is_array_v<T>) {
+        return false;
+    }
+    // 指针类型
+    else if constexpr (std::is_pointer_v<DecayT>) {
+        return val == nullptr;
+    }
+    else if constexpr (std::is_same_v<DecayT, SqlDate>) {
+        return val.type == SqlDate::kErrorTime;
+    }
+    // 智能指针 / Optional (拥有 operator bool)
+    else if constexpr (requires { static_cast<bool>(val); } && !std::is_arithmetic_v<DecayT>) {
+        return !static_cast<bool>(val);
+    }
+    // 基础类型 (int, float) 视为非空
+    else {
+        return false;
+    }
+}
 
 // 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
 inline auto to_sql_pointer(std::nullptr_t) -> SqlValuePointer {
@@ -218,13 +272,36 @@ inline auto getSqltypeName(T &&v) -> std::string_view {
 }
 
 template <SqlValueType T>
+auto &get(const SqlValue &v) {
+    return *std::get_if<typename SqlValueTraits<T>::type>(&v);
+}
+
+template <SqlValueType T>
 auto &get(SqlValue &v) {
     return *std::get_if<typename SqlValueTraits<T>::type>(&v);
 }
 
 template <SqlValueType T>
+auto &get(const SqlValueView &v) {
+    return *std::get_if<typename SqlValueTraits<T>::viewType>(&v);
+}
+
+template <SqlValueType T>
 auto &get(SqlValueView &v) {
     return *std::get_if<typename SqlValueTraits<T>::viewType>(&v);
+}
+
+template <SqlValueType T>
+auto &get(const SqlValuePointer &v) {
+    if constexpr (T == SqlValueType::kText) {
+        return std::get<std::string_view>(v);
+    }
+    else if constexpr (T == SqlValueType::kBlob) {
+        return std::get<SqlBlobView>(v);
+    }
+    else {
+        return *std::get<(int)T>(v);
+    }
 }
 
 template <SqlValueType T>
@@ -285,13 +362,11 @@ auto to_sql_value_view(T &&t) -> SqlValueView {
 template <typename T>
     requires(ISqlValue<T> && !std::is_integral_v<T>)
 auto to_sql_pointer(T &t) -> SqlValuePointer {
+    if (is_sql_null(t)) {
+        return SqlValuePointer {&g_sql_null};
+    }
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        if constexpr (std::is_pointer_v<std::decay_t<T>>) {
-            if (t == nullptr) {
-                return SqlValuePointer {&g_sql_null};
-            }
-        }
         return SqlValuePointer {std::string_view {t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
@@ -306,13 +381,11 @@ auto to_sql_pointer(T &t) -> SqlValuePointer {
 template <typename T>
     requires(ISqlValue<T> && !std::is_integral_v<T>)
 auto to_sql_pointer(const T &t) -> SqlValuePointer {
+    if (is_sql_null(t)) {
+        return SqlValuePointer {&g_sql_null};
+    }
     if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
                   std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        if constexpr (std::is_pointer_v<std::decay_t<T>>) {
-            if (t == nullptr) {
-                return SqlValuePointer {&g_sql_null};
-            }
-        }
         return SqlValuePointer {std::string_view {t}};
     }
     else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
@@ -353,8 +426,8 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlDate) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlDate & date, Context &ctx) const {
-        return format_to(ctx.out(), "{}", date.toString());
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlDate & date, Context &ctx) const {
+        return format_to(ctx.out(), "{}", date.toLocalString());
     }
 };
 
@@ -363,7 +436,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlob) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlob & blob, Context &ctx) const {
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlob & blob, Context &ctx) const {
         std::string hex;
         hex.resize(blob.size() * 2);
         for (size_t i = 0; i < blob.size(); ++i) {
@@ -380,7 +453,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlobView) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlobView & blob, Context &ctx) const {
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlobView & blob, Context &ctx) const {
         std::string hex;
         hex.resize(blob.size() * 2);
         for (size_t i = 0; i < blob.size(); ++i) {
@@ -397,7 +470,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValue & value, Context &ctx) const {
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValue & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
@@ -431,7 +504,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueView & value, Context &ctx) const {
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueView & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
@@ -465,7 +538,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(ILIAS_SQL_COMPLETE_NAMESPACE::SqlValuePointer & value, Context &ctx) const {
+    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValuePointer & value, Context &ctx) const {
         using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
         switch ((SqlValueType)value.index()) {
             case SqlValueType::kNull:
@@ -498,7 +571,7 @@ ILIAS_FORMATTER_T_RAW(,std::span<const char>) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(std::span<const char> & value, Context &ctx) const {
+    auto format(std::span<const char> value, Context &ctx) const {
         return format_to(ctx.out(), "{}", std::string_view{value.data(), value.size()});
     }
 };

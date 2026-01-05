@@ -35,7 +35,7 @@ public:
         }
 
         // Validate SqlTags configuration before creating table
-        auto validation_errors = validateTableConfiguration();
+        auto validation_errors = TableOperations<Form<T, BackendTag>, T, BackendTag>::validateTableConfiguration();
         if (!validation_errors.empty()) {
             std::string error_msg = "SqlTags validation failed: " + detail::join_strs(validation_errors, "; ");
             ILIAS_ERROR("ilias-sql", "{}", error_msg);
@@ -87,107 +87,6 @@ public:
     auto db() const -> SqlDatabase & { return mDb; }
 
     auto as(const std::string &alias);
-
-    // =========================================================
-    // Enhanced SqlTags Helper Methods
-    // =========================================================
-
-    /**
-     * @brief Validate the SqlTags configuration for the entire table
-     *
-     * Checks all field configurations for conflicts and invalid combinations.
-     * @return Vector of validation error messages (empty if valid)
-     */
-    static std::vector<std::string> validateTableConfiguration() {
-        std::vector<std::string> errors;
-
-        T obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
-            using rawType       = detail::strip_wrapper_t<decltype(field)>;
-            auto fieldErrors = tags.getValidationErrors<rawType>();
-            for (const auto &error : fieldErrors) {
-                errors.push_back(std::string(name) + ": " + error);
-            }
-        });
-
-        return errors;
-    }
-
-    /**
-     * @brief Get list of field names that have timestamp behavior (created_at or updated_at)
-     *
-     * @return Vector of field names with timestamp automation
-     */
-    static std::vector<std::string> getTimestampFields() {
-        std::vector<std::string> timestampFields;
-        T obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
-                                                if (tags.hasTimestampBehavior()) {
-                                                    timestampFields.emplace_back(name);
-                                                }
-                                            });
-        return timestampFields;
-    }
-
-    /**
-     * @brief Create SqlTags configuration for a primary key field
-     *
-     * Helper method for common primary key configuration.
-     * @param autoIncrement Whether the primary key should auto-increment
-     * @return SqlTags configured for primary key usage
-     */
-    static constexpr SqlTags createPrimaryKeyTags(bool autoIncrement = false) {
-        return SqlTags {.primary_key = true, .not_null = true, .unique = true, .auto_increment = autoIncrement};
-    }
-
-    /**
-     * @brief Create SqlTags configuration for a unique indexed field
-     *
-     * Helper method for fields that need unique constraint and indexing.
-     * @param length String length for VARCHAR fields (0 for TEXT)
-     * @return SqlTags configured for unique indexed field
-     */
-    static constexpr SqlTags createUniqueIndexTags(int length = 0) {
-        return SqlTags {.not_null = true, .unique = true, .index = true, .length = length};
-    }
-
-    /**
-     * @brief Create SqlTags configuration for a timestamp field
-     *
-     * Helper method for automatic timestamp fields.
-     * @param isCreatedAt True for created_at behavior, false for updated_at
-     * @return SqlTags configured for timestamp automation
-     */
-    static constexpr SqlTags createTimestampTags(bool isCreatedAt = true) {
-        return SqlTags {.not_null = true, .created_at = isCreatedAt, .updated_at = !isCreatedAt};
-    }
-
-    /**
-     * @brief Create SqlTags configuration for a string field with length constraint
-     *
-     * Helper method for VARCHAR fields with specific length.
-     * @param length Maximum string length
-     * @param required Whether the field is required (not null)
-     * @param indexed Whether the field should be indexed
-     * @return SqlTags configured for string field
-     */
-    static constexpr SqlTags createStringTags(int length, bool required = true, bool indexed = false) {
-        return SqlTags {.not_null = required, .index = indexed, .length = length};
-    }
-
-    /**
-     * @brief Create SqlTags configuration for a numeric field
-     *
-     * Helper method for numeric fields with optional unsigned constraint.
-     * @param required Whether the field is required (not null)
-     * @param isUnsigned Whether the field should be unsigned
-     * @return SqlTags configured for numeric field
-     */
-    static constexpr SqlTags createNumericTags(bool required = true, bool isUnsigned = false) {
-        return SqlTags {.not_null = required, .unsigned_type = isUnsigned};
-    }
-
 private:
     Form(SqlDatabase &db, const std::string &tableName) : mDb(db), mTableName(tableName) {}
 
@@ -269,28 +168,6 @@ public:
     static decltype(auto) getColumnNames() noexcept { return Form<T, BackendDialect>::getColumnNames(); }
     static decltype(auto) getColumnIndex() noexcept { return Form<T, BackendDialect>::getColumnIndex(); }
     static decltype(auto) getPrimaryKey() noexcept { return Form<T, BackendDialect>::getPrimaryKey(); }
-
-    // Enhanced SqlTags helper methods (delegate to Form)
-    static decltype(auto) validateTableConfiguration() { return Form<T, BackendTag>::validateTableConfiguration(); }
-
-    static decltype(auto)           getTimestampFields() { return Form<T, BackendTag>::getTimestampFields(); }
-    static decltype(auto)           getCreatedAtFields() { return Form<T, BackendTag>::getCreatedAtFields(); }
-    static decltype(auto)           getUpdatedAtFields() { return Form<T, BackendTag>::getUpdatedAtFields(); }
-    static constexpr decltype(auto) createPrimaryKeyTags(bool autoIncrement = false) {
-        return Form<T, BackendTag>::createPrimaryKeyTags(autoIncrement);
-    }
-    static constexpr decltype(auto) createUniqueIndexTags(int length = 0) {
-        return Form<T, BackendTag>::createUniqueIndexTags(length);
-    }
-    static constexpr decltype(auto) createTimestampTags(bool isCreatedAt = true) {
-        return Form<T, BackendTag>::createTimestampTags(isCreatedAt);
-    }
-    static constexpr decltype(auto) createStringTags(int length, bool required = true, bool indexed = false) {
-        return Form<T, BackendTag>::createStringTags(length, required, indexed);
-    }
-    static constexpr decltype(auto) createNumericTags(bool required = true, bool isUnsigned = false) {
-        return Form<T, BackendTag>::createNumericTags(required, isUnsigned);
-    }
 
     auto as(const std::string &alias) { return TableAlias(alias, mForm); }
 

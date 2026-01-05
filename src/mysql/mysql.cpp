@@ -895,7 +895,11 @@ auto MysqlConnection::connect() -> IoTask<void> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    mIsConnected = true;
+    auto set_time_zone = co_await mMysql->query("SET time_zone = '+00:00'");
+    if (!set_time_zone) {
+        co_return Unexpected(set_time_zone.error());
+    }
+    mIsConnected       = true;
     co_return {};
 }
 

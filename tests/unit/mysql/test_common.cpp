@@ -229,7 +229,7 @@ public:
             EXPECT_EQ(p.name, expected.name);
             EXPECT_EQ(p.email, expected.email);
             // 简单验证日期字符串
-            EXPECT_EQ(p.born.toString(), expected.born.toString());
+            EXPECT_EQ(p.born.toUTCString(), expected.born.toUTCString());
             // 验证 Blob
             EXPECT_EQ(p.promise.size(), expected.promise.size());
             EXPECT_EQ(p.promise[0], expected.promise[0]);

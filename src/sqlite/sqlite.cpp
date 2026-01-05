@@ -140,7 +140,7 @@ auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, 
                               static_cast<int>(data.size_bytes()), SQLITE_STATIC);
         } break;
         case SqlValueType::kDate: {
-            auto string = get<SqlValueType::kDate>(value).toString();
+            auto string = get<SqlValueType::kDate>(value).toUTCString();
             sqlite3_bind_text(mSqliteStmt.get(), static_cast<int>(index), string.data(),
                               static_cast<int>(string.size()), SQLITE_TRANSIENT);
         } break;

@@ -106,7 +106,7 @@ struct Meta<ExtendedUser, void> {
         "salary",       make_tags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
         "department",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
         "created_at",   make_tags<SqlTags {.not_null = true, .created_at = true}>(&ExtendedUser::created_at),
-        "updated_at",   make_tags<SqlTags {.not_null = true, .updated_at = true}>(&ExtendedUser::updated_at));
+        "updated_at",   make_tags<SqlTags {.updated_at = true}>(&ExtendedUser::updated_at));
 };
 template <>
 struct Meta<SimpleUser, void> {
@@ -1349,11 +1349,11 @@ public:
         }
         // 准备测试数据
         std::vector<ExtendedUser> test_users = {
-            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(2024, 1, 1)},
-            {2, "Bob", std::nullopt, "bob@company.com", 60000.0, "Marketing", SqlDate(2024, 1, 2)},
-            {3, "Charlie", 30, "charlie@company.com", 55000.0, "Engineering", SqlDate(2024, 1, 3)},
-            {4, "Diana", 28, "diana@company.com", 65000.0, "Sales", SqlDate(2024, 1, 4)},
-            {5, "Eve", 35, "eve@company.com", 70000.0, "Engineering", SqlDate(2024, 1, 5)}};
+            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(), SqlDate()},
+            {2, "Bob", std::nullopt, "bob@company.com", 60000.0, "Marketing", SqlDate(), SqlDate()},
+            {3, "Charlie", 30, "charlie@company.com", 55000.0, "Engineering", SqlDate(), SqlDate()},
+            {4, "Diana", 28, "diana@company.com", 65000.0, "Sales", SqlDate(), SqlDate()},
+            {5, "Eve", 35, "eve@company.com", 70000.0, "Engineering", SqlDate(), SqlDate()}};
 
         auto insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);
@@ -1503,9 +1503,9 @@ public:
 
         // 准备测试数据
         std::vector<ExtendedUser> test_users = {
-            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(2024, 1, 1)},
-            {2, "Bob", 30, "bob@company.com", 60000.0, "Engineering", SqlDate(2024, 1, 2)},
-            {3, "Charlie", 35, "charlie@company.com", 70000.0, "Sales", SqlDate(2024, 1, 3)}};
+            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(2024, 1, 1), SqlDate()},
+            {2, "Bob", 30, "bob@company.com", 60000.0, "Engineering", SqlDate(2024, 1, 2), SqlDate()},
+            {3, "Charlie", 35, "charlie@company.com", 70000.0, "Sales", SqlDate(2024, 1, 3), SqlDate()}};
 
         auto insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);
@@ -1568,9 +1568,9 @@ public:
 
         // 准备测试数据
         std::vector<ExtendedUser> test_users = {
-            {1, "Alice", 25, "alice@company.com", -1500.75, "Engineering", SqlDate(2024, 1, 1)},
-            {2, "Bob", 30, "bob@company.com", 2300.25, "Engineering", SqlDate(2024, 1, 2)},
-            {3, "Charlie", 35, "charlie@company.com", 1750.99, "Sales", SqlDate(2024, 1, 3)}};
+            {1, "Alice", 25, "alice@company.com", -1500.75, "Engineering", SqlDate(2024, 1, 1), SqlDate()},
+            {2, "Bob", 30, "bob@company.com", 2300.25, "Engineering", SqlDate(2024, 1, 2), SqlDate()},
+            {3, "Charlie", 35, "charlie@company.com", 1750.99, "Sales", SqlDate(2024, 1, 3), SqlDate()}};
 
         auto insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);

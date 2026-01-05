@@ -65,13 +65,10 @@ struct TimestampUpdater {
     void operator()(T &field, const SqlTags &tags) {
         if ((tags.updated_at && updated_at) || (tags.created_at && created_at)) {
             if constexpr (std::is_same_v<std::decay_t<decltype(field)>, SqlDate>) {
-                field = SqlDate(std::chrono::system_clock::now());
+                field = SqlDate::now();
             }
             else if constexpr (std::is_same_v<std::decay_t<decltype(field)>, std::string>) {
-                auto now = std::chrono::system_clock::now();
-                // Convert to time_t for human-readable format
-                std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
-                field                   = std::ctime(&currentTime);
+                field = SqlDate::now().toUTCString();
             }
         }
     }
@@ -469,19 +466,6 @@ public:
 
     UpdateBuilder &where(const SqlCondition &cond) {
         mWhereCondition = cond;
-        return *this;
-    }
-
-    /**
-     * @brief Set object for update with automatic timestamp handling
-     *
-     * This method allows setting an object that will receive automatic
-     * updated_at timestamps before the update operation.
-     */
-    template <typename T>
-    UpdateBuilder &setObjectForTimestamps(T &obj) {
-        // Apply updated_at timestamps before the update
-        applyUpdatedAtTimestamps(obj);
         return *this;
     }
 

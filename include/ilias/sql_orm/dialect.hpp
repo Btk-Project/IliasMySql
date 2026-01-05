@@ -42,6 +42,10 @@ struct Dialect<SqliteTag> {
         }
     }
 
+    static constexpr bool support_auto_increment() { return true; }
+    static constexpr bool support_timestamp_default() { return true; }
+    static constexpr bool support_timestamp_update() { return false; }
+
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
         std::vector<std::string> parts;
@@ -62,31 +66,33 @@ struct Dialect<SqliteTag> {
         if (tags.unique && !tags.primary_key) {
             parts.push_back("UNIQUE");
         }
-        
+
         // 时间戳默认值处理
         if (tags.created_at) {
             parts.push_back("DEFAULT CURRENT_TIMESTAMP");
         }
-        
+
         // 注意：SQLite不支持ON UPDATE CURRENT_TIMESTAMP，updated_at需要在应用层处理
 
         return detail::join_strs(parts, " ");
     }
-    
+
     // 生成索引语句
-    static std::vector<std::string> generate_index_statements(std::string_view table_name, 
-                                                            const std::vector<std::pair<std::string, SqlTags>>& columns) {
+    static std::vector<std::string>
+    generate_index_statements(std::string_view                                    table_name,
+                              const std::vector<std::pair<std::string, SqlTags>> &columns) {
         std::vector<std::string> index_statements;
-        
-        for (const auto& [column_name, tags] : columns) {
+
+        for (const auto &[column_name, tags] : columns) {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement = "CREATE INDEX " + index_name + " ON " + std::string(table_name) + " (" + column_name + ")";
+                std::string statement =
+                    "CREATE INDEX " + index_name + " ON " + std::string(table_name) + " (" + column_name + ")";
                 index_statements.push_back(statement);
             }
         }
-        
+
         return index_statements;
     }
 };
@@ -145,7 +151,9 @@ struct Dialect<MysqlTag> {
             return "TEXT";
         }
     }
-
+    static constexpr bool support_auto_increment() { return true; }
+    static constexpr bool support_timestamp_default() { return true; }
+    static constexpr bool support_timestamp_update() { return true; }
     // 2. 关键字差异
 
     template <typename T>
@@ -188,21 +196,23 @@ struct Dialect<MysqlTag> {
 
         return detail::join_strs(parts, " ");
     }
-    
+
     // 生成索引语句
-    static std::vector<std::string> generate_index_statements(std::string_view table_name, 
-                                                            const std::vector<std::pair<std::string, SqlTags>>& columns) {
+    static std::vector<std::string>
+    generate_index_statements(std::string_view                                    table_name,
+                              const std::vector<std::pair<std::string, SqlTags>> &columns) {
         std::vector<std::string> index_statements;
-        
-        for (const auto& [column_name, tags] : columns) {
+
+        for (const auto &[column_name, tags] : columns) {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement = "CREATE INDEX `" + index_name + "` ON `" + std::string(table_name) + "` (`" + column_name + "`)";
+                std::string statement =
+                    "CREATE INDEX `" + index_name + "` ON `" + std::string(table_name) + "` (`" + column_name + "`)";
                 index_statements.push_back(statement);
             }
         }
-        
+
         return index_statements;
     }
 };
@@ -215,7 +225,7 @@ struct Dialect<PostgresTag> {
         std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
         return nameLower == "postgresql" || nameLower == "postgres" || nameLower == "pgsql";
     }
-    
+
     // 1. 类型映射
     template <typename T>
     static constexpr std::string type_name([[maybe_unused]] const SqlTags &tags) {
@@ -276,7 +286,8 @@ struct Dialect<PostgresTag> {
             if constexpr (std::is_integral_v<detail::strip_wrapper_t<T>>) {
                 if (sizeof(detail::strip_wrapper_t<T>) <= sizeof(int32_t)) {
                     parts[1] = "SERIAL";
-                } else {
+                }
+                else {
                     parts[1] = "BIGSERIAL";
                 }
             }
@@ -286,7 +297,7 @@ struct Dialect<PostgresTag> {
         if (tags.created_at) {
             parts.push_back("DEFAULT CURRENT_TIMESTAMP");
         }
-        
+
         // PostgreSQL doesn't support ON UPDATE CURRENT_TIMESTAMP like MySQL
         // updated_at needs to be handled at application level or with triggers
 
@@ -300,21 +311,27 @@ struct Dialect<PostgresTag> {
 
         return detail::join_strs(parts, " ");
     }
-    
+
+    static constexpr bool support_auto_increment() { return true; }
+    static constexpr bool support_timestamp_default() { return true; }
+    static constexpr bool support_timestamp_update() { return false; }
+
     // 生成索引语句
-    static std::vector<std::string> generate_index_statements(std::string_view table_name, 
-                                                            const std::vector<std::pair<std::string, SqlTags>>& columns) {
+    static std::vector<std::string>
+    generate_index_statements(std::string_view                                    table_name,
+                              const std::vector<std::pair<std::string, SqlTags>> &columns) {
         std::vector<std::string> index_statements;
-        
-        for (const auto& [column_name, tags] : columns) {
+
+        for (const auto &[column_name, tags] : columns) {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement = "CREATE INDEX \"" + index_name + "\" ON \"" + std::string(table_name) + "\" (\"" + column_name + "\")";
+                std::string statement  = "CREATE INDEX \"" + index_name + "\" ON \"" + std::string(table_name) +
+                                        "\" (\"" + column_name + "\")";
                 index_statements.push_back(statement);
             }
         }
-        
+
         return index_statements;
     }
 };
