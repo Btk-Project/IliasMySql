@@ -114,35 +114,36 @@ public:
         }
     }
 
-    void print() const {
+    void print(std::ostream &stream = std::cout) const {
         // 打印表名
-        printf("%s\n", fmtlib::format("Table: {}", mTableName).c_str());
-        printSeparator();
-        printRow(mHeaders);
-        printSeparator();
+        stream << fmtlib::format("Table: {}\n", mTableName);
+
+        printSeparator(stream);
+        printRow(stream, mHeaders);
+        printSeparator(stream);
         for (const auto &row : mRows) {
-            printRow(row);
+            printRow(stream, row);
         }
-        printSeparator();
+        printSeparator(stream);
         // 打印行数统计
-        printf("%s", fmtlib::format("{} rows in set.\n", mRows.size()).c_str());
+        stream << fmtlib::format("{} rows in set.\n", mRows.size());
     }
 
 private:
-    void printSeparator() const {
-        printf("+");
+    void printSeparator(std::ostream &stream) const {
+        stream << "+";
         for (const auto &width : mColumnWidths) {
-            printf("%s", fmtlib::format("{:-^{}}+", "", width + 2).c_str());
+            stream << fmtlib::format("{:-^{}}+", "", width + 2);
         }
-        printf("\n");
+        stream << std::endl;
     }
 
-    void printRow(const std::vector<std::string> &row) const {
-        printf("|");
+    void printRow(std::ostream &stream, const std::vector<std::string> &row) const {
+        stream << "|";
         for (size_t i = 0; i < row.size(); ++i) {
-            printf(" %s |", fmtlib::format("{:<{}}", row[i], mColumnWidths[i]).c_str());
+            stream << fmtlib::format(" {:<{}} |", row[i], mColumnWidths[i]);
         }
-        printf("\n");
+        stream << std::endl;
     }
     std::string                           mTableName;
     std::vector<std::string>              mHeaders;
