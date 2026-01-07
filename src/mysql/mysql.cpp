@@ -227,6 +227,7 @@ auto MySql::selectDb(std::string_view db) -> IoTask<int> {
 
 auto MySql::query(std::string_view sql) -> IoTask<int> {
     int ret;
+    ILIAS_TRACE("ilias-mysql", "query: {}", sql);
     SQL_PRIVATE_SYNC_CODE(ret, mysql_real_query, sql.data(), (uint32_t)sql.size())
     // can use mysql_num_fields() to determine if a statement returned a result set.
     co_return ret;
@@ -656,7 +657,7 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
     mMysqlStmt = std::shared_ptr<MYSQL_STMT>(mMysql->stmtInit(), [](MYSQL_STMT *stmt) { mysql_stmt_close(stmt); });
     int  ret;
     auto queryp = parser(sql);
-    // ILIAS_TRACE("ilias-mysql", "prepare :{}", queryp);
+    ILIAS_TRACE("ilias-mysql", "prepare :{}", queryp);
     auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt.get(), queryp.data(), (unsigned long)queryp.size());
     while (status) {
         ILIAS_TRACE("ilias-mysql", "stmt prepare waiting for status {}", status);
@@ -940,7 +941,7 @@ auto MysqlConnection::execute(std::string_view sql) -> IoTask<size_t> {
 
 auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> {
     ILIAS_ASSERT(mMysql != nullptr);
-    ILIAS_TRACE("ilias-mysql", "exec query {}", sql);
+    // ILIAS_TRACE("ilias-mysql", "exec query {}", sql);
     auto ret = co_await (mMysql->query(sql) | unstoppable());
     if (!ret) {
         co_return Unexpected(ret.error());

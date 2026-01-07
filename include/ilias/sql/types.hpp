@@ -27,8 +27,8 @@ struct ILIAS_SQL_API SqlDate {
         kTime,          // 00:00:00.000000
     };
     SqlDate() {}
-    SqlDate(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) {
-        setTime(year, month, day, hour, minute, second);
+    SqlDate(int year, int month, int day, int hour = 0, int minute = 0, int second = 0, int time_zone = 0) {
+        setTime(year, month, day, hour, minute, second, 0, time_zone);
     }
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }
     explicit SqlDate(std::chrono::system_clock::time_point tp) { setTime(tp); }
@@ -57,14 +57,15 @@ struct ILIAS_SQL_API SqlDate {
 
     auto setTime(std::chrono::system_clock::time_point tp) -> void;
     auto setTime(std::chrono::milliseconds timestamp) -> void;
-    auto setTime(int year, int month, int day, int hour, int minute, int second, int microsecond = 0) -> void;
+    auto setTime(int year, int month, int day, int hour, int minute, int second, int microsecond = 0, int time_zone = 0)
+        -> void;
     auto setDate(int year, int month, int day) -> void;
     auto setTime(int hour, int minute, int second) -> void;
     auto setTime(struct tm *timeinfo) -> void;
     auto setTimeType(TimeType type) -> void;
 
     auto        fromUTCString(std::string_view str) -> void;
-    auto        fromLocaltring(std::string_view str) -> void;
+    auto        fromLocalString(std::string_view str) -> void;
     auto        toUTCString() const -> std::string;
     auto        toLocalString() const -> std::string;
     auto        toTimestamp() const -> uint64_t;

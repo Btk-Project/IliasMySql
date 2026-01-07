@@ -154,7 +154,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
         case MYSQL_TYPE_TIME:
         case MYSQL_TYPE_DATE:
             result.emplace<sql::SqlDate>();
-            std::get<sql::SqlDate>(result).fromLocaltring(std::string_view(buffer, bufferSize));
+            std::get<sql::SqlDate>(result).fromUTCString(std::string_view(buffer, bufferSize));
             break;
         case MYSQL_TYPE_LONGLONG: // long long
             result.emplace<int64_t>(std::stoll(std::string(buffer), nullptr, 10));

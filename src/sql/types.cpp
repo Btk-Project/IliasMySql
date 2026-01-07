@@ -147,20 +147,62 @@ auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
     setTime(tp);
 }
 
-auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, int second_, int microsecond_) -> void {
+auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, int second_, int microsecond_,
+                      int time_zone) -> void {
     clear();
     if (year_ < 0 || month_ < 1 || month_ > 12 || day_ < 1 || day_ > 31 || hour_ < 0 || hour_ > 23 || minute_ < 0 ||
         minute_ > 59 || second_ < 0 || second_ > 59 || microsecond_ < 0 || microsecond_ > 999999) {
         ILIAS_ERROR("sql", "error date time set {}-{}-{} {}:{}:{}", year_, month_, day_, hour_, minute_, second_);
         return;
     }
-    year        = year_;
-    month       = month_;
-    day         = day_;
-    hour        = hour_;
-    minute      = minute_;
-    second      = second_;
-    microsecond = microsecond_;
+    int daysInMonth[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if ((year_ % 4 == 0 && year_ % 100 != 0) || (year_ % 400 == 0)) {
+        daysInMonth[2] = 29;
+    }
+    if (day_ > daysInMonth[month_]) {
+        ILIAS_ERROR("sql", "Invalid day %d for month %d in year %d", day_, month_, year_);
+        return;
+    }
+
+    // 2. 将输入时间（视为本地时间）转换为 UTC 时间
+    struct tm input_tm = {0};
+    input_tm.tm_year   = year_ - 1900;
+    input_tm.tm_mon    = month_ - 1;
+    input_tm.tm_mday   = day_;
+    input_tm.tm_hour   = hour_;
+    input_tm.tm_min    = minute_;
+    input_tm.tm_sec    = second_;
+    input_tm.tm_isdst  = -1; // 让库自动判断夏令时（如果相关）
+
+    // timegm 将 struct tm 视为 UTC 并转换为 time_t
+    time_t total_seconds = timegm(&input_tm);
+    if (total_seconds == -1) {
+        ILIAS_ERROR("sql", "Failed to convert input time to time_t");
+        return;
+    }
+
+    // 3. 应用时区偏移量，得到真正的 UTC 时间（以秒为单位）
+    // 要从本地时间得到 UTC 时间，需要减去偏移量
+    total_seconds -= time_zone * 60;
+
+    // 4. 将 UTC 总秒数转换回 UTC 的 struct tm
+    struct tm utc_tm = {0};
+#ifdef _WIN32
+    // Windows下的gmtime_s是线程安全的
+    gmtime_s(&utc_tm, &total_seconds);
+#else
+    // Linux/macOS下的gmtime_r是线程安全的
+    gmtime_r(&total_seconds, &utc_tm);
+#endif
+
+    // 5. 将转换后的 UTC 时间赋值给成员变量
+    year        = utc_tm.tm_year + 1900;
+    month       = utc_tm.tm_mon + 1;
+    day         = utc_tm.tm_mday;
+    hour        = utc_tm.tm_hour;
+    minute      = utc_tm.tm_min;
+    second      = utc_tm.tm_sec;
+    microsecond = static_cast<uint32_t>(microsecond_); // 微秒部分直接保留
     type        = kDateTime;
 }
 
@@ -253,7 +295,7 @@ auto SqlDate::fromUTCString(std::string_view str) -> void {
     }
 }
 
-auto SqlDate::fromLocaltring(std::string_view str) -> void {
+auto SqlDate::fromLocalString(std::string_view str) -> void {
     fromUTCString(str);
     if (type == kErrorTime) {
         return;

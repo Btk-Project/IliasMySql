@@ -70,6 +70,14 @@ struct TimestampUpdater {
             else if constexpr (std::is_same_v<std::decay_t<decltype(field)>, std::string>) {
                 field = SqlDate::now().toUTCString();
             }
+            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                               sizeof(std::decay_t<decltype(field)>) == sizeof(int64_t)) {
+                field = SqlDate::now().toTimestamp();
+            }
+            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                               sizeof(std::decay_t<decltype(field)>) == sizeof(int32_t)) {
+                field = SqlDate::now().toTimestamp() / 1000;
+            }
         }
     }
 

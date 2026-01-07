@@ -64,7 +64,7 @@ NEKO_BEGIN_NAMESPACE
 template <>
 struct Meta<SimpleUser, void> {
     constexpr static auto value = Object(
-        "id",   make_tags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id),
+        "id",   make_tags<SqlTags::createPrimaryKeyTags(false)>(&SimpleUser::id),
         "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
         "score",make_tags<SqlTags {}>(&SimpleUser::score));
 };
@@ -72,7 +72,7 @@ struct Meta<SimpleUser, void> {
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-            "id",       make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), 
+            "id",       make_tags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
             "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
             "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
             "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));

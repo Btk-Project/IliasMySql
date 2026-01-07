@@ -112,59 +112,6 @@ public:
                                             });
         return updatedAtFields;
     }
-    /**
-     * @brief Create SqlTags configuration for a primary key field
-     *
-     * Helper method for common primary key configuration.
-     * @param autoIncrement Whether the primary key should auto-increment
-     * @return SqlTags configured for primary key usage
-     */
-    static constexpr decltype(auto) createPrimaryKeyTags(bool autoIncrement = false) {
-        return SqlTags {.primary_key = true, .not_null = true, .unique = true, .auto_increment = autoIncrement};
-    }
-    /**
-     * @brief Create SqlTags configuration for a unique indexed field
-     *
-     * Helper method for fields that need unique constraint and indexing.
-     * @param length String length for VARCHAR fields (0 for TEXT)
-     * @return SqlTags configured for unique indexed field
-     */
-    static constexpr decltype(auto) createUniqueIndexTags(int length = 0) {
-        return SqlTags {.not_null = true, .unique = true, .index = true, .length = length};
-    }
-    /**
-     * @brief Create SqlTags configuration for a timestamp field
-     *
-     * Helper method for automatic timestamp fields.
-     * @param isCreatedAt True for created_at behavior, false for updated_at
-     * @return SqlTags configured for timestamp automation
-     */
-    static constexpr decltype(auto) createTimestampTags(bool isCreatedAt = true) {
-        return SqlTags {.not_null = true, .created_at = isCreatedAt, .updated_at = !isCreatedAt};
-    }
-    /**
-     * @brief Create SqlTags configuration for a string field with length constraint
-     *
-     * Helper method for VARCHAR fields with specific length.
-     * @param length Maximum string length
-     * @param required Whether the field is required (not null)
-     * @param indexed Whether the field should be indexed
-     * @return SqlTags configured for string field
-     */
-    static constexpr decltype(auto) createStringTags(int length, bool required = true, bool indexed = false) {
-        return SqlTags {.not_null = required, .index = indexed, .length = length};
-    }
-    /**
-     * @brief Create SqlTags configuration for a numeric field
-     *
-     * Helper method for numeric fields with optional unsigned constraint.
-     * @param required Whether the field is required (not null)
-     * @param isUnsigned Whether the field should be unsigned
-     * @return SqlTags configured for numeric field
-     */
-    static constexpr decltype(auto) createNumericTags(bool required = true, bool isUnsigned = false) {
-        return SqlTags {.not_null = required, .unsigned_type = isUnsigned};
-    }
 
     // =========================================================
     // 1. 写入操作 (Insert, Update, Remove)
