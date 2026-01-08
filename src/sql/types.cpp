@@ -2,6 +2,7 @@
 
 #include <sstream>
 #include <regex>
+#include <chrono>
 
 ILIAS_SQL_NS_BEGIN
 auto SqlDate::toLocalString() const -> std::string {
@@ -148,61 +149,45 @@ auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
 }
 
 auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, int second_, int microsecond_,
-                      int time_zone) -> void {
+                      int time_zone_offset_minutes) -> void {
     clear();
-    if (year_ < 0 || month_ < 1 || month_ > 12 || day_ < 1 || day_ > 31 || hour_ < 0 || hour_ > 23 || minute_ < 0 ||
-        minute_ > 59 || second_ < 0 || second_ > 59 || microsecond_ < 0 || microsecond_ > 999999) {
+
+    // 1. 使用 std::chrono::year_month_day 验证日期组件的有效性
+    const std::chrono::year_month_day ymd {std::chrono::year {year_},
+                                           std::chrono::month {static_cast<unsigned int>(month_)},
+                                           std::chrono::day {static_cast<unsigned int>(day_)}};
+
+    // 2. 检查所有时间组件的范围是否有效
+    if (!ymd.ok() || hour_ < 0 || hour_ > 23 || minute_ < 0 || minute_ > 59 || second_ < 0 || second_ > 59 ||
+        microsecond_ < 0 || microsecond_ > 999999) {
         ILIAS_ERROR("sql", "error date time set {}-{}-{} {}:{}:{}", year_, month_, day_, hour_, minute_, second_);
         return;
     }
-    int daysInMonth[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    if ((year_ % 4 == 0 && year_ % 100 != 0) || (year_ % 400 == 0)) {
-        daysInMonth[2] = 29;
-    }
-    if (day_ > daysInMonth[month_]) {
-        ILIAS_ERROR("sql", "Invalid day %d for month %d in year %d", day_, month_, year_);
-        return;
-    }
 
-    // 2. 将输入时间（视为本地时间）转换为 UTC 时间
-    struct tm input_tm = {0};
-    input_tm.tm_year   = year_ - 1900;
-    input_tm.tm_mon    = month_ - 1;
-    input_tm.tm_mday   = day_;
-    input_tm.tm_hour   = hour_;
-    input_tm.tm_min    = minute_;
-    input_tm.tm_sec    = second_;
-    input_tm.tm_isdst  = -1; // 让库自动判断夏令时（如果相关）
+    // 3. 从输入组件构造一个 "本地" 时间点 (local_time)
+    // local_time 代表一个未指定时区的时间
+    auto local_tp = std::chrono::local_days {ymd} + std::chrono::hours {hour_} + std::chrono::minutes {minute_} +
+                    std::chrono::seconds {second_} + std::chrono::microseconds {microsecond_};
 
-    // timegm 将 struct tm 视为 UTC 并转换为 time_t
-    time_t total_seconds = timegm(&input_tm);
-    if (total_seconds == -1) {
-        ILIAS_ERROR("sql", "Failed to convert input time to time_t");
-        return;
-    }
+    // 4. 应用时区偏移量，将本地时间转换为 UTC 时间 (sys_time)
+    // 从本地时间转为 UTC 时间，需要减去偏移量
+    const std::chrono::minutes                       offset {time_zone_offset_minutes};
+    std::chrono::sys_time<std::chrono::microseconds> utc_tp {(local_tp - offset).time_since_epoch()};
 
-    // 3. 应用时区偏移量，得到真正的 UTC 时间（以秒为单位）
-    // 要从本地时间得到 UTC 时间，需要减去偏移量
-    total_seconds -= time_zone * 60;
+    // 5. 将 UTC 时间点分解为年月日和时分秒
+    auto                        utc_dp = std::chrono::floor<std::chrono::days>(utc_tp);
+    std::chrono::year_month_day utc_ymd {utc_dp};
+    auto                        time_of_day = utc_tp - utc_dp;
+    std::chrono::hh_mm_ss       hms {time_of_day};
 
-    // 4. 将 UTC 总秒数转换回 UTC 的 struct tm
-    struct tm utc_tm = {0};
-#ifdef _WIN32
-    // Windows下的gmtime_s是线程安全的
-    gmtime_s(&utc_tm, &total_seconds);
-#else
-    // Linux/macOS下的gmtime_r是线程安全的
-    gmtime_r(&total_seconds, &utc_tm);
-#endif
-
-    // 5. 将转换后的 UTC 时间赋值给成员变量
-    year        = utc_tm.tm_year + 1900;
-    month       = utc_tm.tm_mon + 1;
-    day         = utc_tm.tm_mday;
-    hour        = utc_tm.tm_hour;
-    minute      = utc_tm.tm_min;
-    second      = utc_tm.tm_sec;
-    microsecond = static_cast<uint32_t>(microsecond_); // 微秒部分直接保留
+    // 6. 将最终的 UTC 时间赋值给成员变量
+    year        = static_cast<int>(utc_ymd.year());
+    month       = static_cast<unsigned int>(utc_ymd.month());
+    day         = static_cast<unsigned int>(utc_ymd.day());
+    hour        = hms.hours().count();
+    minute      = hms.minutes().count();
+    second      = hms.seconds().count();
+    microsecond = static_cast<uint32_t>(hms.subseconds().count());
     type        = kDateTime;
 }
 

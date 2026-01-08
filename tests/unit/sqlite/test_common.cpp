@@ -737,7 +737,7 @@ public:
         }
         {
             stmt.reset();
-            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59), std::vector<std::byte> {});
+            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59, 8 * 60), std::vector<std::byte> {});
             auto ir = co_await stmt.execute();
             CO_EXPECT_RESULT(ir);
         }
