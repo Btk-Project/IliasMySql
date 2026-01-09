@@ -75,16 +75,10 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
             break;
         case MYSQL_TYPE_TIMESTAMP:
         case MYSQL_TYPE_DATETIME:
-            result.emplace<sql::SqlDate>(std::string_view((char *)buffer, bufferSize));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kDateTime;
-            break;
         case MYSQL_TYPE_DATE:
-            result.emplace<sql::SqlDate>(std::string_view((char *)buffer, bufferSize));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kDate;
-            break;
         case MYSQL_TYPE_TIME:
-            result.emplace<sql::SqlDate>(std::string_view((char *)buffer, bufferSize));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kTime;
+            result.emplace<sql::SqlDate>();
+            std::get<sql::SqlDate>(result).fromUTCString(std::string_view((char *)buffer, bufferSize));
             break;
         case MYSQL_TYPE_LONGLONG: // long long
             result.emplace<int64_t>(*reinterpret_cast<int64_t *>(buffer));
@@ -157,16 +151,10 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             break;
         case MYSQL_TYPE_TIMESTAMP:
         case MYSQL_TYPE_DATETIME:
-            result.emplace<sql::SqlDate>(std::string_view(buffer));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kDateTime;
-            break;
-        case MYSQL_TYPE_DATE:
-            result.emplace<sql::SqlDate>(std::string_view(buffer));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kDate;
-            break;
         case MYSQL_TYPE_TIME:
-            result.emplace<sql::SqlDate>(std::string_view(buffer));
-            std::get<sql::SqlDate>(result).type = sql::SqlDate::kTime;
+        case MYSQL_TYPE_DATE:
+            result.emplace<sql::SqlDate>();
+            std::get<sql::SqlDate>(result).fromUTCString(std::string_view(buffer, bufferSize));
             break;
         case MYSQL_TYPE_LONGLONG: // long long
             result.emplace<int64_t>(std::stoll(std::string(buffer), nullptr, 10));

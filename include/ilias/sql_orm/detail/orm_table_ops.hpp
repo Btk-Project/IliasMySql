@@ -2,6 +2,7 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
+#include "ilias/sql_orm/detail/schema_generator.hpp"
 #include "ilias/sql_orm/detail/console_table.hpp"
 
 #include "ilias/sql_orm/detail/orm_types.hpp"
@@ -17,61 +18,207 @@ public:
     Derived       &derived() { return *static_cast<Derived *>(this); }
     const Derived &derived() const { return *static_cast<const Derived *>(this); }
 
+    auto columnDefinitionSchema(int idx) const -> std::string {
+        auto columns = derived().getColumnNames();
+        if (idx >= columns.size() || idx < 0) {
+            return "";
+        }
+        return columnDefinitionSchema(columns[idx]);
+    }
+
+    auto columnDefinitionSchema(std::string name) const -> std::string {
+        std::string result;
+        NEKO_NAMESPACE::Reflect<T>::forEach([&](const auto &field, std::string_view fname, const SqlTags &tags) {
+            if (name == fname) {
+                result = detail::SchemaGenerator<BackendTag>::template generateColumnDefinition<
+                    std::decay_t<decltype(field)>>(fname, tags);
+            }
+        });
+        return result;
+    }
+
+    auto createTableSchema() const -> IoResult<std::string> {
+        auto tablename = derived().getTableName();
+        return detail::SchemaGenerator<BackendTag>::template generateCreateTable<T>(tablename);
+    }
+
+    auto indexStatementsSchema() const -> std::vector<std::string> {
+        auto                                         columns = derived().getColumnNames();
+        auto                                         tags    = derived().getColumnTags();
+        std::vector<std::pair<std::string, SqlTags>> columnTags;
+        for (auto i = 0; i < static_cast<int>(columns.size()); ++i) {
+            columnTags.emplace_back(columns[i], tags[i]);
+        }
+        return detail::SchemaGenerator<BackendTag>::generateIndexStatements(derived().getTableName(), columnTags);
+    }
+
+    auto completeSchema() const -> std::vector<std::string> {
+        return detail::SchemaGenerator<BackendTag>::template generateCompleteSchema<T>(derived().getTableName());
+    }
+
+    /**
+     * @brief Validate the SqlTags configuration for the entire table
+     *
+     * Checks all field configurations for conflicts and invalid combinations.
+     * @return Vector of validation error messages (empty if valid)
+     */
+    static decltype(auto) validateTableConfiguration() {
+        std::vector<std::string> errors;
+
+        T obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
+            using rawType    = detail::strip_wrapper_t<decltype(field)>;
+            auto fieldErrors = tags.getValidationErrors<rawType>();
+            for (const auto &error : fieldErrors) {
+                errors.push_back(std::string(name) + ": " + error);
+            }
+        });
+
+        return errors;
+    }
+
+    static decltype(auto) getTimestampFields() {
+        std::vector<std::string_view> timestampFields;
+        T                             obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
+                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
+                                                if (tags.hasTimestampBehavior()) {
+                                                    timestampFields.emplace_back(name);
+                                                }
+                                            });
+        return timestampFields;
+    }
+
+    static decltype(auto) getCreatedAtFields() {
+        std::vector<std::string_view> createdAtFields;
+        T                             obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
+                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
+                                                if (tags.created_at) {
+                                                    createdAtFields.emplace_back(name);
+                                                }
+                                            });
+        return createdAtFields;
+    }
+
+    static decltype(auto) getUpdatedAtFields() {
+        std::vector<std::string_view> updatedAtFields;
+        T                             obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
+                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
+                                                if (tags.updated_at) {
+                                                    updatedAtFields.emplace_back(name);
+                                                }
+                                            });
+        return updatedAtFields;
+    }
+
     // =========================================================
     // 1. 写入操作 (Insert, Update, Remove)
     // =========================================================
 
     // Insert: 批量插入
     template <typename Range>
-        requires(std::ranges::range<Range> && std::is_same_v<std::ranges::range_value_t<Range>, T>)
-    auto insert(const Range &items) -> IoTask<size_t> {
+        requires(std::ranges::range<Range> && std::is_same_v<std::decay_t<std::ranges::range_value_t<Range>>, T>)
+    auto insert(Range &&items) -> IoTask<size_t> {
         if (std::empty(items))
             co_return 0;
+        const auto              &first_item = *std::ranges::begin(items);
+        std::vector<std::string> columnsToInsert;
+        NEKO_NAMESPACE::Reflect<T>::forEach(
+            first_item, [&](const auto &field, std::string_view name, const auto &tags) {
+                // 如果字段是 created_at 并且它的值是空的，则跳过此列
+                if (tags.created_at && is_sql_null(field) && Dialect<BackendTag>::support_timestamp_default()) {
+                    return;
+                }
+                // 否则，将此列加入到 INSERT 语句中
+                columnsToInsert.emplace_back(name); // 假设可以从tags获取列名
+            });
         std::string placeholders;
-        auto        columns        = derived().getColumnNames();
         std::string rowPlaceholder = "(";
-        for ([[maybe_unused]] int i = 0; i < (int)columns.size(); ++i) {
+        for ([[maybe_unused]] int i = 0; i < (int)columnsToInsert.size(); ++i) {
             if (rowPlaceholder.back() != '(')
                 rowPlaceholder += ", ";
             rowPlaceholder += "?";
         }
         rowPlaceholder += ")";
         std::vector<std::string> allRowsPlaceholder(std::size(items), rowPlaceholder);
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columns, ", ") +
+        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columnsToInsert, ", ") +
                           ") VALUES " + detail::join_strs(allRowsPlaceholder, ", ");
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
             co_return Unexpected(ret.error());
-        int bindIndex = 1;
+        int                                bindIndex = 1;
+        std::vector<std::shared_ptr<void>> binds;
         for (const auto &item : items) {
-            NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field) {
-                using FieldType = std::decay_t<decltype(field)>;
-                SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
-            });
+            if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
+                // if sql dialect support default timestamp, then we don't need to generate timestamp by ourselves
+                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const SqlTags &tags) {
+                    using FieldType = std::decay_t<decltype(field)>;
+                    if (tags.created_at && is_sql_null(field)) {
+                        return;
+                    }
+                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
+                });
+            }
+            else {
+                // if sql dialect doesn't support default timestamp, then we need to generate timestamp by ourselves
+                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const SqlTags &tags) {
+                    using FieldType = std::decay_t<decltype(field)>;
+                    if (tags.created_at) {
+                        if constexpr (std::is_same_v<FieldType, std::string> || std::is_same_v<FieldType, SqlDate>) {
+                            std::shared_ptr<FieldType> now = std::make_shared<FieldType>();
+                            detail::TimestampUpdater {.created_at = true}(*now, tags);
+                            SqlBinder<FieldType>::bind(**ret, bindIndex++, *now);
+                            binds.push_back(now);
+                            return;
+                        }
+                    }
+                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
+                });
+            }
         }
         co_return co_await ret->execute();
     }
-
-    // Insert: 单个插入 (转发给批量或者独立实现)
     template <typename... Args>
         requires(std::is_constructible_v<T, Args...> && sizeof...(Args) > 0)
     auto insert(Args &&...args) -> IoTask<size_t> {
-        std::string placeholders;
-        auto        columns        = derived().getColumnNames();
-        std::string rowPlaceholder = "(" + detail::join_strs(columns, ", ", ":") + ")";
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columns, ", ") +
-                          ") VALUES " + rowPlaceholder;
-        auto ret = co_await derived().db().template prepare<T>(sql);
-        if (!ret)
-            co_return Unexpected(ret.error());
-        ret->bind(std::forward<Args>(args)...);
-        co_return co_await ret->execute();
+        co_return co_await insert(std::vector {T {std::forward<Args>(args)...}});
     }
     auto insert() {
-        return detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
+        if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
+            return detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
+        }
+        else {
+            auto insertBuilder =
+                detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
+            T obj;
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
+                if (tags.created_at) {
+                    detail::TimestampUpdater {.created_at = true}(field, tags);
+                    insertBuilder.set(detail::SqlVariable(name) = std::move(field));
+                }
+            });
+        }
     }
     // Update Builder
-    auto update() { return detail::UpdateBuilder(derived().db(), derived().getTableName()); }
+    auto update() {
+        if constexpr (Dialect<BackendTag>::support_timestamp_update()) {
+            return detail::UpdateBuilder(derived().db(), derived().getTableName());
+        }
+        else {
+            auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().getTableName());
+            T    obj;
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
+                if (tags.updated_at) {
+                    detail::TimestampUpdater {.updated_at = true}(field, tags);
+                    updateBuilder.set(detail::SqlVariable(name) = std::move(field));
+                    return;
+                }
+            });
+            return updateBuilder;
+        }
+    }
     // Remove Builder
     auto remove() { return detail::DeleteBuilder(derived().db(), derived().getTableName()); }
 
@@ -174,11 +321,11 @@ public:
         return detail::TypedColumn<std::decay_t<M>>(getColumnName(memberPtr).value());
     }
 
-    auto print() -> Task<void> {
-        co_return co_await print(50); // 默认列宽限制为50字符
+    auto print(std::ostream& stream = std::cout) -> Task<void> {
+        co_return co_await print(50, stream); // 默认列宽限制为50字符
     }
 
-    auto print(size_t maxColumnWidth) -> Task<void> {
+    auto print(size_t maxColumnWidth, std::ostream& stream = std::cout) -> Task<void> {
         auto ret = co_await select().query();
         if (!ret) {
             ILIAS_ERROR("ilias-sql", "Print failed: {}", ret.error().message());
@@ -202,7 +349,7 @@ public:
             });
             table.addRow(rowStrings);
         }
-        table.print();
+        table.print(stream);
         co_return;
     }
 };

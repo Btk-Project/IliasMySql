@@ -72,7 +72,7 @@ struct Meta<SimpleUser, void> {
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-        "id",       make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), 
+        "id",       make_tags<SqlTags {.primary_key = true, .not_null=true, .unique=true, .auto_increment = true}>(&SimpleOrder::id), 
         "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
         "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), 
         "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
@@ -197,7 +197,7 @@ public:
              "Alice",
              18,
              "alice@test.com",
-             SqlDate(2025, 6, 20, 10, 0, 0),
+             SqlDate(2025, 6, 20, 10, 0, 0, 8 * 60),
              {std::byte {0xDE}, std::byte {0xAD}},
              'A',
              100},
@@ -229,7 +229,7 @@ public:
             EXPECT_EQ(p.name, expected.name);
             EXPECT_EQ(p.email, expected.email);
             // 简单验证日期字符串
-            EXPECT_EQ(p.born.toString(), expected.born.toString());
+            EXPECT_EQ(p.born.toUTCString(), expected.born.toUTCString());
             // 验证 Blob
             EXPECT_EQ(p.promise.size(), expected.promise.size());
             EXPECT_EQ(p.promise[0], expected.promise[0]);

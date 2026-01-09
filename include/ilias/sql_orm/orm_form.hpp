@@ -3,14 +3,15 @@
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
 #include "ilias/sql_orm/dialect.hpp"
+#include <type_traits>
 
 #include "ilias/sql_orm/detail/orm_types.hpp"
 #include "ilias/sql_orm/detail/orm_condition.hpp"
 #include "ilias/sql_orm/detail/orm_builder.hpp"
 #include "ilias/sql_orm/detail/orm_table_ops.hpp"
+#include "ilias/sql_orm/detail/schema_generator.hpp"
 
 ILIAS_SQL_NS_BEGIN
-
 template <typename T, typename Tag>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class Form;
@@ -32,18 +33,41 @@ public:
             ILIAS_ERROR("ilias-sql", "Dialect {} is not supported", db->sqlname());
             co_return Unexpected(SqlError::DialectNotSupported);
         }
-        T                        obj;
-        std::vector<std::string> colDefs;
+
+        // Validate SqlTags configuration before creating table
+        auto validation_errors = TableOperations<Form<T, BackendTag>, T, BackendTag>::validateTableConfiguration();
+        if (!validation_errors.empty()) {
+            std::string error_msg = "SqlTags validation failed: " + detail::join_strs(validation_errors, "; ");
+            ILIAS_ERROR("ilias-sql", "{}", error_msg);
+            co_return Unexpected(SqlError::InvalidParameter);
+        }
+
+        T                                            obj;
+        std::vector<std::string>                     colDefs;
+        std::vector<std::pair<std::string, SqlTags>> colWithTags;
 
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
             std::string colDef = BackendDialect::template generate_column_definition<decltype(field)>(name, tags);
+            colWithTags.emplace_back(name, tags);
             colDefs.push_back(colDef);
         });
+
+        // Generate additional index statements if needed
+        auto indexStatements = BackendDialect::generate_index_statements(tableName, colWithTags);
 
         std::string sql = "CREATE TABLE IF NOT EXISTS " + tableName + " (" + detail::join_strs(colDefs, ", ") + ")";
         auto        ret = co_await db.execute(sql);
         if (!ret)
             co_return Unexpected(ret.error());
+
+        // Execute index creation statements
+        for (const auto &indexSql : indexStatements) {
+            auto indexRet = co_await db.execute(indexSql);
+            if (!indexRet) {
+                ILIAS_WARN("ilias-sql", "Failed to create index: {}", indexSql);
+                // Continue with other indexes even if one fails
+            }
+        }
 
         Form form(db, tableName);
         ILIAS_TRACE("ilias-sql", "Created table {}, columns: {}, primary key: {}", tableName,
@@ -63,7 +87,6 @@ public:
     auto db() const -> SqlDatabase & { return mDb; }
 
     auto as(const std::string &alias);
-
 private:
     Form(SqlDatabase &db, const std::string &tableName) : mDb(db), mTableName(tableName) {}
 

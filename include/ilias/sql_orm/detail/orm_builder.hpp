@@ -4,6 +4,7 @@
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql_orm/detail/orm_condition.hpp"
 #include <tuple>
+#include <nekoproto/serialization/reflection.hpp>
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
@@ -57,6 +58,41 @@ static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
             stmt->reset();
         }
     }
+}
+
+struct TimestampUpdater {
+    template <typename T>
+    void operator()(T &field, const SqlTags &tags) {
+        if ((tags.updated_at && updated_at) || (tags.created_at && created_at)) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(field)>, SqlDate>) {
+                field = SqlDate::now();
+            }
+            else if constexpr (std::is_same_v<std::decay_t<decltype(field)>, std::string>) {
+                field = SqlDate::now().toUTCString();
+            }
+            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                               sizeof(std::decay_t<decltype(field)>) == sizeof(int64_t)) {
+                field = SqlDate::now().toTimestamp();
+            }
+            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                               sizeof(std::decay_t<decltype(field)>) == sizeof(int32_t)) {
+                field = SqlDate::now().toTimestamp() / 1000;
+            }
+        }
+    }
+
+    bool updated_at = false;
+    bool created_at = false;
+};
+
+template <typename T>
+void applyUpdatedAtTimestamps(T &obj) {
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, TimestampUpdater {.updated_at = true});
+}
+
+template <typename T>
+void applyCreatedAtTimestamps(T &obj) {
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, TimestampUpdater {.created_at = true});
 }
 
 // ================== SelectBuilder (基类) ==================
@@ -510,6 +546,9 @@ public:
     template <typename U>
         requires(std::is_constructible_v<T, U>)
     InsertBuilder &set(U &&obj) {
+        // Apply created_at timestamps before binding the object
+        applyCreatedAtTimestamps(obj);
+
         mSetBinders.emplace_back(std::make_shared<ObjBinder<T, U>>(std::forward<U>(obj)));
         return *this;
     }

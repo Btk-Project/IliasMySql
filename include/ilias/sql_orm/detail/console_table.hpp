@@ -20,19 +20,23 @@ ILIAS_SQL_NS_BEGIN
 namespace detail {
 
 // 简单的UTF-8字符计数函数
-inline size_t utf8_length(const std::string& str) {
+inline size_t utf8_length(const std::string &str) {
     size_t len = 0;
-    for (size_t i = 0; i < str.size(); ) {
+    for (size_t i = 0; i < str.size();) {
         unsigned char c = str[i];
         if (c < 0x80) {
             i += 1;
-        } else if ((c >> 5) == 0x06) {
+        }
+        else if ((c >> 5) == 0x06) {
             i += 2;
-        } else if ((c >> 4) == 0x0e) {
+        }
+        else if ((c >> 4) == 0x0e) {
             i += 3;
-        } else if ((c >> 3) == 0x1e) {
+        }
+        else if ((c >> 3) == 0x1e) {
             i += 4;
-        } else {
+        }
+        else {
             i += 1; // 无效字符，跳过
         }
         len++;
@@ -41,35 +45,39 @@ inline size_t utf8_length(const std::string& str) {
 }
 
 // UTF-8安全的字符串截断
-inline std::string utf8_truncate(const std::string& str, size_t max_chars) {
+inline std::string utf8_truncate(const std::string &str, size_t max_chars) {
     if (utf8_length(str) <= max_chars) {
         return str;
     }
-    
+
     size_t chars = 0;
     size_t bytes = 0;
-    
-    for (size_t i = 0; i < str.size() && chars < max_chars - 3; ) {
-        unsigned char c = str[i];
-        size_t char_bytes = 1;
-        
+
+    for (size_t i = 0; i < str.size() && chars < max_chars - 3;) {
+        unsigned char c          = str[i];
+        size_t        char_bytes = 1;
+
         if (c < 0x80) {
             char_bytes = 1;
-        } else if ((c >> 5) == 0x06) {
+        }
+        else if ((c >> 5) == 0x06) {
             char_bytes = 2;
-        } else if ((c >> 4) == 0x0e) {
+        }
+        else if ((c >> 4) == 0x0e) {
             char_bytes = 3;
-        } else if ((c >> 3) == 0x1e) {
+        }
+        else if ((c >> 3) == 0x1e) {
             char_bytes = 4;
         }
-        
-        if (i + char_bytes > str.size()) break;
-        
+
+        if (i + char_bytes > str.size())
+            break;
+
         i += char_bytes;
         bytes = i;
         chars++;
     }
-    
+
     return str.substr(0, bytes) + "...";
 }
 
@@ -94,47 +102,48 @@ public:
             size_t       pos = 0;
             while ((pos = tmp.find('\n', pos)) != std::string::npos)
                 tmp.replace(pos, 1, "\\n"), pos += 2; // 换行符替换为 \n
-            
+
             // 截断过长的内容 (UTF-8安全)
             if (utf8_length(tmp) > mMaxColumnWidth) {
                 tmp = utf8_truncate(tmp, mMaxColumnWidth);
             }
-            
+
             // 更新每一列的最大宽度
             size_t displayLen = utf8_length(tmp);
-            mColumnWidths[i] = std::max(mColumnWidths[i], std::min(displayLen, mMaxColumnWidth));
+            mColumnWidths[i]  = std::max(mColumnWidths[i], std::min(displayLen, mMaxColumnWidth));
         }
     }
 
-    void print() const {
+    void print(std::ostream &stream = std::cout) const {
         // 打印表名
-        printf("%s\n", fmtlib::format("Table: {}", mTableName).c_str());
-        printSeparator();
-        printRow(mHeaders);
-        printSeparator();
+        stream << fmtlib::format("Table: {}\n", mTableName);
+
+        printSeparator(stream);
+        printRow(stream, mHeaders);
+        printSeparator(stream);
         for (const auto &row : mRows) {
-            printRow(row);
+            printRow(stream, row);
         }
-        printSeparator();
+        printSeparator(stream);
         // 打印行数统计
-        printf("%s", fmtlib::format("{} rows in set.\n", mRows.size()).c_str());
+        stream << fmtlib::format("{} rows in set.\n", mRows.size());
     }
 
 private:
-    void printSeparator() const {
-        printf("+");
+    void printSeparator(std::ostream &stream) const {
+        stream << "+";
         for (const auto &width : mColumnWidths) {
-            printf("%s", fmtlib::format("{:-^{}}+", "", width + 2).c_str());
+            stream << fmtlib::format("{:-^{}}+", "", width + 2);
         }
-        printf("\n");
+        stream << std::endl;
     }
 
-    void printRow(const std::vector<std::string> &row) const {
-        printf("|");
+    void printRow(std::ostream &stream, const std::vector<std::string> &row) const {
+        stream << "|";
         for (size_t i = 0; i < row.size(); ++i) {
-            printf(" %s |", fmtlib::format("{:<{}}", row[i], mColumnWidths[i]).c_str());
+            stream << fmtlib::format(" {:<{}} |", row[i], mColumnWidths[i]);
         }
-        printf("\n");
+        stream << std::endl;
     }
     std::string                           mTableName;
     std::vector<std::string>              mHeaders;
@@ -152,28 +161,8 @@ std::string to_string_view(const T &t) {
         }
         return to_string_view(*t);
     }
-    else if constexpr (std::is_same_v<std::decay_t<T>, std::string>) {
-        return t;
-    }
-    else if constexpr (std::is_same_v<std::decay_t<T>, std::string_view>) {
-        return std::string(t);
-    }
-    else if constexpr (std::is_enum_v<std::decay_t<T>>) {
-        return std::to_string(static_cast<std::underlying_type_t<std::decay_t<T>>>(t));
-    }
-    else if constexpr (std::is_same_v<std::decay_t<T>, SqlDate>) {
-        return t.toString();
-    }
-    else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob>) {
-        // std::vector<std::byte>
-        std::stringstream result;
-        for (const auto &byte : t) {
-            result << "\\x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-        }
-        return result.str();
-    }
-    else if constexpr (std::is_arithmetic_v<std::decay_t<T>>) {
-        return std::to_string(t);
+    else if constexpr (requires(const T &t) { fmtlib::format("{}", t); }) {
+        return fmtlib::format("{}", t);
     }
     else {
         // 对于其他类型，尝试使用 neko 的序列化或返回占位符

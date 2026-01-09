@@ -297,6 +297,90 @@ template<> struct Meta<User, void> {
 };
 ```
 
+## SqlTags 增强功能
+
+IliasSql 现在包含了强大的 SqlTags 系统，用于声明式数据库模式定义：
+
+### 核心特性
+
+- **约束管理**: 主键、唯一性、非空、自增、索引等数据库约束
+- **类型修饰符**: 无符号类型、字符串长度等数据类型优化
+- **时间戳自动化**: 自动创建时间和更新时间管理
+- **跨数据库兼容**: 自动生成适配不同数据库的 SQL 语句
+- **配置验证**: 编译期和运行时配置验证，确保模式正确性
+- **模式生成**: 从 SqlTags 配置自动生成 CREATE TABLE 语句
+
+### 快速示例
+
+```cpp
+struct User {
+    int64_t id;
+    std::string username;
+    std::string email;
+    SqlDate created_at;
+    SqlDate updated_at;
+};
+
+NEKO_BEGIN_NAMESPACE
+template<> struct Meta<User, void> {
+    constexpr static auto value = Object(
+        "id", make_tags<SqlTags{
+            .primary_key = true,
+            .auto_increment = true
+        }>(&User::id),
+        
+        "username", make_tags<SqlTags{
+            .not_null = true,
+            .unique = true,
+            .length = 50
+        }>(&User::username),
+        
+        "email", make_tags<SqlTags{
+            .not_null = true,
+            .unique = true,
+            .length = 255
+        }>(&User::email),
+        
+        "created_at", make_tags<SqlTags{
+            .not_null = true,
+            .created_at = true
+        }>(&User::created_at),
+        
+        "updated_at", make_tags<SqlTags{
+            .not_null = true,
+            .updated_at = true
+        }>(&User::updated_at)
+    );
+};
+NEKO_END_NAMESPACE
+```
+
+### 文档资源
+
+完整的 SqlTags 文档位于 [`docs/`](docs/) 目录：
+
+- **[SqlTags 完整指南](docs/sql-tags-guide.md)** - 详细的功能介绍和使用方法
+- **[迁移指南](docs/migration-guide.md)** - 从现有代码迁移到增强 SqlTags 的指导
+- **[API 参考](docs/api-reference.md)** - 完整的 API 文档
+- **[示例代码](docs/examples/)** - 实际使用场景和最佳实践
+
+### 自动模式生成
+
+```cpp
+// 自动生成数据库模式
+auto createTableSQL = SchemaGenerator<MysqlTag>::generateCreateTable<User>("users");
+co_await db.execute(createTableSQL);
+
+// 生成的 SQL (MySQL):
+// CREATE TABLE `users` (
+//   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+//   `username` VARCHAR(50) NOT NULL UNIQUE KEY,
+//   `email` VARCHAR(255) NOT NULL UNIQUE KEY,
+//   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//   `updated_at` DATETIME NOT NULL ON UPDATE CURRENT_TIMESTAMP
+// )
+```
+
 ## 快速开始
 
 ### 环境依赖

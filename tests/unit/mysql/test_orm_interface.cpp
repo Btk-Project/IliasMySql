@@ -98,18 +98,18 @@ NEKO_BEGIN_NAMESPACE
 template <>
 struct Meta<ExtendedUser, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags {.primary_key = true}>(&ExtendedUser::id), 
+        "id",           make_tags<SqlTags::createPrimaryKeyTags()>(&ExtendedUser::id), 
         "name",         make_tags<SqlTags {.not_null = true}>(&ExtendedUser::name), 
         "age",          make_tags<SqlTags {}>(&ExtendedUser::age), 
-        "email",        make_tags<SqlTags {.unique = true}>(&ExtendedUser::email), 
+        "email",        make_tags<SqlTags {.unique = true, .index = true}>(&ExtendedUser::email), 
         "salary",       make_tags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
         "department",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
-        "created_at",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::created_at));
+        "created_at",   make_tags<SqlTags {.not_null = true, .created_at = true}>(&ExtendedUser::created_at));
 };
 template <>
 struct Meta<SimpleUser, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id), 
+        "id",           make_tags<SqlTags::createPrimaryKeyTags()>(&SimpleUser::id), 
         "name",         make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
         "age",          make_tags<SqlTags {}>(&SimpleUser::age),
         "email",        make_tags<SqlTags {.not_null = false, .unique = true}>(&SimpleUser::email), 
@@ -121,7 +121,7 @@ struct Meta<SimpleUser, void> {
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags {.primary_key = true, .auto_increment = true}>(&SimpleOrder::id), 
+        "id",           make_tags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
         "user_id",      make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id),
         "amount",       make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
         "status",       make_tags<SqlTags {.not_null = true}>(&SimpleOrder::status),
@@ -1372,11 +1372,11 @@ public:
 
         // 准备测试数据
         std::vector<ExtendedUser> test_users = {
-            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate(2024, 1, 1)},
-            {2, "Bob", std::nullopt, "bob@company.com", 60000.0, "Marketing", SqlDate(2024, 1, 2)},
-            {3, "Charlie", 30, "charlie@company.com", 55000.0, "Engineering", SqlDate(2024, 1, 3)},
-            {4, "Diana", 28, "diana@company.com", 65000.0, "Sales", SqlDate(2024, 1, 4)},
-            {5, "Eve", 35, "eve@company.com", 70000.0, "Engineering", SqlDate(2024, 1, 5)}};
+            {1, "Alice", 25, "alice@company.com", 50000.0, "Engineering", SqlDate()},
+            {2, "Bob", std::nullopt, "bob@company.com", 60000.0, "Marketing", SqlDate()},
+            {3, "Charlie", 30, "charlie@company.com", 55000.0, "Engineering", SqlDate()},
+            {4, "Diana", 28, "diana@company.com", 65000.0, "Sales", SqlDate()},
+            {5, "Eve", 35, "eve@company.com", 70000.0, "Engineering", SqlDate()}};
 
         auto insert_ret = co_await users.insert(test_users);
         CO_ASSERT_VAL(insert_ret);
