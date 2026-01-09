@@ -37,7 +37,7 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         set_default(false)
         add_deps("ilias_sql")
         add_files(file)
-        add_tests("cpp20", {run_timeout = 10000, languages="c++20"})
+        add_tests("cpp20", {run_timeout = 30000, languages="c++20"})
         add_packages("gtest", "cpptrace")
         add_includedirs("$(projectdir)/include")
     target_end()

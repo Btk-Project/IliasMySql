@@ -564,7 +564,7 @@ auto MysqlStatement::makeBindData(SqlValuePointer value) -> Result<MYSQL_BIND, s
 }
 
 auto MysqlStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    ILIAS_TRACE("ilias-mysql", "bind {} with ({}){}", index, getSqltypeName(value), value);
+    // ILIAS_TRACE("ilias-mysql", "bind {} with ({}){}", index, getSqltypeName(value), value);
     if (mMysqlStmt == nullptr) {
         return Unexpected(SqlError::NotPrepared);
     }
