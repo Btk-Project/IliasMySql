@@ -285,7 +285,7 @@ public:
         for (int i = 1; i <= NUM_USERS; ++i) {
             int64_t balance = 100000; // 初始余额
             initial_users.push_back({i, "User" + std::to_string(i), 30, "user" + std::to_string(i) + "@concurrent.com",
-                                     SqlDate::now(), true, balance});
+                                     SqlDate{}, true, balance});
             initial_total_balance += balance;
         }
         auto insert_ret = co_await users.insert(initial_users);
@@ -449,6 +449,7 @@ TEST(ORMConcurrency, ConcurrentReadWriteCoroutines) {
 int main(int argc, char **argv) {
     cpptrace::init();
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
+    ILIAS_LOG_ADD_WHITELIST("ilias-mysql");
     ILIAS_LOG_ADD_WHITELIST("orm-test");
     ilias::PlatformContext ioContext;
     ioContext.install();
