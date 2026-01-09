@@ -143,7 +143,7 @@ struct Meta<SimpleUser, void> {
         "name",         make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
         "age",          make_tags<SqlTags {}>(&SimpleUser::age),
         "email",        make_tags<SqlTags {.not_null = false, .unique = true}>(&SimpleUser::email), 
-        "created_at",   make_tags<SqlTags {.not_null = true}>(&SimpleUser::created_at),
+        "created_at",   make_tags<SqlTags {.not_null = true, .created_at = true}>(&SimpleUser::created_at),
         "is_active",    make_tags<SqlTags {.not_null = true}>(&SimpleUser::is_active),
         "balance_in_cents",      make_tags<SqlTags {.not_null = true}>(&SimpleUser::balance_in_cents));
 };
@@ -285,7 +285,7 @@ public:
         for (int i = 1; i <= NUM_USERS; ++i) {
             int64_t balance = 100000; // 初始余额
             initial_users.push_back({i, "User" + std::to_string(i), 30, "user" + std::to_string(i) + "@concurrent.com",
-                                     SqlDate{}, true, balance});
+                                     SqlDate {}, true, balance});
             initial_total_balance += balance;
         }
         auto insert_ret = co_await users.insert(initial_users);
@@ -385,7 +385,7 @@ public:
                     co_await thread_users.select().where(thread_users.sql(&SimpleUser::id) == user_id).query();
                 if (select_ret) {
                     ilias_for_await(auto &user, select_ret.value().range()) {
-                         EXPECT_GE(user.balance_in_cents, 0L);
+                        EXPECT_GE(user.balance_in_cents, 0L);
                     }
                 }
 
