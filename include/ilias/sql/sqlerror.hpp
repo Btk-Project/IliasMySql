@@ -39,7 +39,10 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(NotNullViolation, "Not null constraint violation")                                                 \
     SQL_ERROR_ENTRY(ForeignKeyViolation, "Foreign key constraint violation")                                           \
     SQL_ERROR_ENTRY(CheckConstraintViolation, "Check constraint violation")                                            \
-    SQL_ERROR_ENTRY(ColumnNotFound, "Column not found")
+    SQL_ERROR_ENTRY(ColumnNotFound, "Column not found")                                                                \
+    SQL_ERROR_ENTRY(UnsupportSqlType, "Unsupported SQL type")                                                          \
+    SQL_ERROR_ENTRY(UnsupportConvertFromSqlType, "Unsupported convert from SQL type")                                  \
+    SQL_ERROR_ENTRY(NumericValueOutOfRange, "Numeric value out of range")
 
 class ILIAS_SQL_API SqlError {
 public:

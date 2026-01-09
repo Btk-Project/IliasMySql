@@ -260,6 +260,7 @@ auto SqlDatabase::execute_with(SqlCheck<std::tuple<std::type_identity_t<Args>...
     auto ret1 = co_await ret.value().execute();
     if (!ret1) {
         ILIAS_TRACE("ilias-sql", "Failed to execute query {}", query.sql);
+        co_return Unexpected(ret1.error());
     }
     co_return ret1.value();
 }

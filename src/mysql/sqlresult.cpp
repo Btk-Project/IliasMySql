@@ -57,7 +57,12 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
     }
     switch (field->type) {
         case MYSQL_TYPE_TINY: // char
-            result.emplace<char>(*reinterpret_cast<int32_t *>(buffer));
+            if (field->length == 1) {
+                result.emplace<bool>(*reinterpret_cast<int32_t *>(buffer) != 0);
+            }
+            else {
+                result.emplace<char>(*reinterpret_cast<int32_t *>(buffer));
+            }
             break;
         case MYSQL_TYPE_SHORT: // short
         case MYSQL_TYPE_LONG:  // int
@@ -83,9 +88,37 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
         case MYSQL_TYPE_LONGLONG: // long long
             result.emplace<int64_t>(*reinterpret_cast<int64_t *>(buffer));
             break;
+        case MYSQL_TYPE_DECIMAL:
+        case MYSQL_TYPE_NEWDECIMAL: {
+            const char      *start = reinterpret_cast<const char *>(buffer);
+            const char      *end   = start + bufferSize;
+            std::string_view sv(start, bufferSize);
+            if (sv.find('.') == std::string_view::npos) {
+                int64_t value;
+                auto    res = std::from_chars(start, end, value);
+                if (res.ec == std::errc() && res.ptr == end) {
+                    result.emplace<int64_t>(value);
+                }
+                else {
+                    result.emplace<std::string_view>(sv);
+                }
+            }
+            else {
+                try {
+                    std::string temp(start, bufferSize);
+                    result.emplace<double>(std::stod(temp));
+                } catch (const std::exception &) {
+                    result.emplace<std::string_view>(sv);
+                }
+            }
+            break;
+        }
         case MYSQL_TYPE_VARCHAR:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_STRING:
+        case MYSQL_TYPE_JSON:
+        case MYSQL_TYPE_ENUM:
+        case MYSQL_TYPE_SET:
             result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
             break;
         case MYSQL_TYPE_BLOB:
@@ -95,7 +128,8 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
             result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>((char *)buffer), bufferSize);
             break;
         default:
-            return Unexpected(sql::SqlError::Code::UnknownError);
+            ILIAS_WARN("ilias-sql", "unsuported type: {}", (int)field->type);
+            return Unexpected(sql::SqlError::Code::UnsupportSqlType);
     }
     return result;
 }
@@ -112,7 +146,13 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             int res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnknownError);
+                auto str = std::string_view(buffer, bufferSize);
+                // if is a boolean
+                if (str == "true" || str == "false") {
+                    result.emplace<bool>(str == "true");
+                    break;
+                }
+                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             result.emplace<char>(res);
             break;
@@ -123,7 +163,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             int32_t res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnknownError);
+                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             result.emplace<int32_t>(res);
             break;
@@ -132,7 +172,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             float res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnknownError);
+                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             result.emplace<float>(res);
             break;
@@ -141,9 +181,34 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             double res;
             auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
             if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnknownError);
+                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             result.emplace<double>(res);
+            break;
+        }
+        case MYSQL_TYPE_DECIMAL:
+        case MYSQL_TYPE_NEWDECIMAL: {
+            const char      *start = reinterpret_cast<const char *>(buffer);
+            const char      *end   = start + bufferSize;
+            std::string_view sv(start, bufferSize);
+            if (sv.find('.') == std::string_view::npos) {
+                int64_t value;
+                auto    res = std::from_chars(start, end, value);
+                if (res.ec == std::errc() && res.ptr == end) {
+                    result.emplace<int64_t>(value);
+                }
+                else {
+                    result.emplace<std::string_view>(sv);
+                }
+            }
+            else {
+                try {
+                    std::string temp(start, bufferSize);
+                    result.emplace<double>(std::stod(temp));
+                } catch (const std::exception &) {
+                    result.emplace<std::string_view>(sv);
+                }
+            }
             break;
         }
         case MYSQL_TYPE_NULL:
@@ -162,6 +227,9 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
         case MYSQL_TYPE_VARCHAR:
         case MYSQL_TYPE_VAR_STRING:
         case MYSQL_TYPE_STRING:
+        case MYSQL_TYPE_JSON:
+        case MYSQL_TYPE_ENUM:
+        case MYSQL_TYPE_SET:
             result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
             break;
         case MYSQL_TYPE_BLOB:
@@ -171,7 +239,8 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
             result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>(buffer), bufferSize);
             break;
         default:
-            return Unexpected(sql::SqlError::Code::UnknownError);
+            ILIAS_WARN("ilias-mysql", "Unsupport sql type {}", (int)field->type);
+            return Unexpected(sql::SqlError::Code::UnsupportSqlType);
     }
     return result;
 }
@@ -598,7 +667,8 @@ auto SqlStmtResult::getBindConfig(const MYSQL_FIELD *field) -> IoResult<BindConf
             break;
 
         default:
-            return Unexpected(SqlError::Code::UnknownError);
+            ILIAS_TRACE("ilias-mysql", "unsupported sql type {}", (int)field->type);
+            return Unexpected(SqlError::Code::UnsupportSqlType);
     }
     return config;
 }

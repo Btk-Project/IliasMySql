@@ -1673,6 +1673,9 @@ int main(int argc, char **argv) {
 
     // 设置日志级别
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
+    ILIAS_LOG_ADD_WHITELIST("ilias-mysql");
+    ILIAS_LOG_ADD_WHITELIST("mysql-test");
+    ILIAS_LOG_ADD_WHITELIST("orm-test");
 
     // 初始化平台上下文
     ilias::PlatformContext ioContext;
