@@ -678,7 +678,7 @@ public:
     static auto test_type_converter_coverage() -> IoTask<void> {
         PERF_TIMER("test_type_converter_coverage");
         auto db = (co_await setup_db()).value();
-        co_await db->execute("DROP TABLE IF EXISTS type_test");
+        co_await db.execute("DROP TABLE IF EXISTS type_test");
         ILIAS_INFO("orm-test", ">>> Running test_type_converter_coverage");
 
         // 创建测试表，包含各种数据类型

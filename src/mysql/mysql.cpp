@@ -286,6 +286,7 @@ auto MySql::storeResult() -> IoTask<MYSQL_RES *> {
 
 auto MySql::rollback() -> IoTask<bool> {
     my_bool ret;
+    ILIAS_TRACE("ilias-mysql", "rollback");
     SQL_PRIVATE_SYNC_CODE(ret, mysql_rollback)
     co_return ret;
 }

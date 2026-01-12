@@ -112,7 +112,9 @@ public:
         ILIAS_INFO("test", ">>> Running test_batch_insert_and_scan");
 
         // 1. 开启事务以提高插入速度
-        auto tx = (co_await db.transaction()).value();
+        auto tx_ret = co_await db.transaction();
+        CO_ASSERT_VAL(tx_ret);
+        auto tx = std::move(tx_ret.value());
 
         auto stmt = (co_await tx.prepare("INSERT INTO users (id, name, score) VALUES (?, ?, ?)")).value();
 
@@ -737,7 +739,8 @@ public:
         }
         {
             stmt.reset();
-            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59, 8 * 60), std::vector<std::byte> {});
+            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59, 8 * 60),
+                      std::vector<std::byte> {});
             auto ir = co_await stmt.execute();
             CO_EXPECT_RESULT(ir);
         }
@@ -777,30 +780,67 @@ public:
 // 4. 统一入口 Runner
 // ==========================================
 
-ILIAS_NAMESPACE::Task<void> run_all_tests() {
-    try {
-        // 运行原有测试
-        co_await SqlTestSuite::test_basic_crud();
-
-        // 运行新增的扩展测试
-        co_await SqlTestSuite::test_batch_insert_and_scan();
-        co_await SqlTestSuite::test_pagination();
-        co_await SqlTestSuite::test_bulk_update_delete();
-        co_await SqlTestSuite::test_null_handling();
-        co_await SqlTestSuite::test_null_bind();
-        co_await SqlTestSuite::test_transaction_rollback();
-        co_await SqlTestSuite::test_raii_rollback();
-        co_await SqlTestSuite::test_realistic_scenario();
-        co_await SqlTestSuite::test_form_interface();
-        co_await SqlTestSuite::test_join_features();
-    } catch (const std::exception &e) {
-        ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
-        EXPECT_TRUE(false) << "Exception in test runner: " << e.what();
-    }
+TEST(SQL, BASIC_CRUD) {
+    SqlTestSuite::test_basic_crud().wait();
 }
 
-TEST(SQL, FullSuite) {
-    run_all_tests().wait();
+TEST(SQL, BATCH_INSERT_AND_SCAN) {
+    SqlTestSuite::test_batch_insert_and_scan().wait();
+}
+
+TEST(SQL, PAGINATION) {
+    SqlTestSuite::test_pagination().wait();
+}
+
+TEST(SQL, BULK_UPDATE_DELETE) {
+    SqlTestSuite::test_bulk_update_delete().wait();
+}
+
+TEST(SQL, NULL_HANDLING) {
+    SqlTestSuite::test_null_handling().wait();
+}
+
+TEST(SQL, NULL_BIND) {
+    SqlTestSuite::test_null_bind().wait();
+}
+
+TEST(SQL, TRANSACTION_ROLLBACK) {
+    SqlTestSuite::test_transaction_rollback().wait();
+}
+
+TEST(SQL, RAII_ROLLBACK) {
+    SqlTestSuite::test_raii_rollback().wait();
+}
+
+TEST(SQL, REALISTIC_SCENARIO) {
+    SqlTestSuite::test_realistic_scenario().wait();
+}
+
+TEST(SQL, FORM_INTERFACE) {
+    SqlTestSuite::test_form_interface().wait();
+}
+
+TEST(SQL, JOIN_FEATURES) {
+    SqlTestSuite::test_join_features().wait();
+}
+
+ILIAS_NAMESPACE::Task<int> run_all_tests() {
+    // 运行原有测试
+    co_await SqlTestSuite::test_basic_crud();
+
+    // 运行新增的扩展测试
+    co_await SqlTestSuite::test_batch_insert_and_scan();
+    co_await SqlTestSuite::test_pagination();
+    co_await SqlTestSuite::test_bulk_update_delete();
+    co_await SqlTestSuite::test_null_handling();
+    co_await SqlTestSuite::test_null_bind();
+    co_await SqlTestSuite::test_transaction_rollback();
+    co_await SqlTestSuite::test_raii_rollback();
+    co_await SqlTestSuite::test_realistic_scenario();
+    co_await SqlTestSuite::test_form_interface();
+    co_await SqlTestSuite::test_join_features();
+
+    co_return 0;
 }
 
 int main(int argc, char **argv) {
@@ -813,4 +853,5 @@ int main(int argc, char **argv) {
     ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
+    // return run_all_tests().wait();
 }

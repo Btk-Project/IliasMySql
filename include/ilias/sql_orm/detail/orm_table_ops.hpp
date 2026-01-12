@@ -10,7 +10,7 @@
 #include "ilias/sql_orm/detail/orm_builder.hpp"
 
 ILIAS_SQL_NS_BEGIN
-
+namespace detail {
 template <typename Derived, typename T, typename BackendTag>
 class TableOperations {
 public:
@@ -321,11 +321,11 @@ public:
         return detail::TypedColumn<std::decay_t<M>>(getColumnName(memberPtr).value());
     }
 
-    auto print(std::ostream& stream = std::cout) -> Task<void> {
+    auto print(std::ostream &stream = std::cout) -> Task<void> {
         co_return co_await print(50, stream); // 默认列宽限制为50字符
     }
 
-    auto print(size_t maxColumnWidth, std::ostream& stream = std::cout) -> Task<void> {
+    auto print(size_t maxColumnWidth, std::ostream &stream = std::cout) -> Task<void> {
         auto ret = co_await select().query();
         if (!ret) {
             ILIAS_ERROR("ilias-sql", "Print failed: {}", ret.error().message());
@@ -353,5 +353,5 @@ public:
         co_return;
     }
 };
-
+} // namespace detail
 ILIAS_SQL_NS_END
