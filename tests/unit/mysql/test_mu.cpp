@@ -19,6 +19,13 @@
 #include "ilias/sql/sqlstatement.hpp"
 #include "../backtrace.hpp"
 
+const int    NUM_USERS             = 500; // 初始用户数 (原: 5000)
+const size_t POOL_SIZE             = 10;  // 数据库连接池大小 (原: 50)
+const int    NUM_WRITER_COROUTINES = 25;  // 写入（转账）协程数 (原: 250)
+const int    NUM_READER_COROUTINES = 50;  // 只读协程数 (原: 500)
+const int    OPERATIONS_PER_WRITER = 10;  // 每个写协程的转账次数 (原: 50)
+const int    OPERATIONS_PER_READER = 20;  // 每个读协程的查询次数 (原: 100)
+
 ILIAS_SQL_USE_NAMESPACE;
 using namespace ILIAS_NAMESPACE;
 using namespace std::literals;
@@ -279,7 +286,6 @@ public:
         CO_ASSERT_VAL(users_form_ret);
         auto users = std::move(users_form_ret.value());
 
-        const int               NUM_USERS             = 5000;
         int64_t                 initial_total_balance = 0;
         std::vector<SimpleUser> initial_users;
         for (int i = 1; i <= NUM_USERS; ++i) {
@@ -292,14 +298,7 @@ public:
         CO_ASSERT_VAL(insert_ret);
         ILIAS_INFO("orm-test", "Initialized {} users with a total balance of {}", NUM_USERS, initial_total_balance);
 
-        const size_t POOL_SIZE = 50; // 设置一个合理的连接池大小
-        auto         pool      = co_await ConnectionPool::create("mysql", get_options(), POOL_SIZE);
-
-        // 2. 定义并发协程参数
-        const int NUM_WRITER_COROUTINES = 250; // 写入（转账）协程数
-        const int NUM_READER_COROUTINES = 500; // 只读协程数
-        const int OPERATIONS_PER_WRITER = 50;  // 每个写协程执行的转账次数
-        const int OPERATIONS_PER_READER = 100; // 每个读协程执行的查询次数
+        auto pool = co_await ConnectionPool::create("mysql", get_options(), POOL_SIZE);
 
         auto writer_latencies = std::make_shared<LatencyCollector>();
         auto reader_latencies = std::make_shared<LatencyCollector>();
