@@ -38,6 +38,7 @@ NEKO_USE_NAMESPACE
     do {                                                                                                               \
         if (!ret.has_value()) {                                                                                        \
             ILIAS_ERROR("sql-test", "assert failed: {}", ret.error().message());                                       \
+            EXPECT_FALSE(true);                                                                                        \
             co_return {}; /* 需要在 Task 中返回 void */                                                                \
         }                                                                                                              \
         CO_EXPECT_RESULT(ret);                                                                                         \
@@ -774,6 +775,119 @@ public:
         ILIAS_INFO("test", ">>> test_realistic_scenario (SQLite) PASSED");
         co_return {};
     }
+
+    static auto test_form_with_transaction() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_form_with_transaction");
+
+        // 1. 清理并创建表
+        co_await db.execute("DROP TABLE IF EXISTS common_test_users_transaction");
+        co_await db.execute("DROP TABLE IF EXISTS common_test_orders_transaction");
+        // 在一个初始事务中设置好我们的基础数据
+        {
+            auto transaction_ret = co_await db.transaction();
+            CO_ASSERT_VAL(transaction_ret);
+            auto transaction = std::move(transaction_ret.value());
+
+            // 使用该事务创建 Form 对象
+            auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(transaction, "common_test_users_transaction");
+            auto orders_ret =
+                co_await Form<SimpleOrder, SqliteTag>::create(transaction, "common_test_orders_transaction");
+            CO_ASSERT_VAL(users_ret);
+            CO_ASSERT_VAL(orders_ret);
+
+            auto users  = std::move(users_ret.value());
+            auto orders = std::move(orders_ret.value());
+
+            // 2. 准备基础数据
+            // 用户: 1(Alice), 2(Bob), 3(Charlie)
+            co_await users.insert(1, "Alice", 100);
+            co_await users.insert(2, "Bob", 200);
+            co_await users.insert(3, "Charlie", 50);
+
+            // 订单: Alice买了两单，Bob买了一单，Charlie没买
+            co_await orders.insert(101, 1, 500, "Apple"); // Alice
+            co_await orders.insert(102, 1, 50, "Banana"); // Alice
+            co_await orders.insert(103, 2, 900, "TV");    // Bob
+
+            // 提交这个初始设置
+            auto commit_setup_ret = co_await transaction.commit();
+            CO_ASSERT_VAL(commit_setup_ret);
+        }
+
+        // =========================================================
+        // 测试场景 1: 事务提交
+        // 意图: 在新事务中插入用户 "Dave" 和他的订单，然后提交。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+
+            // 需要为这个新事务创建新的 Form 实例
+            auto users_in_tx  = co_await Form<SimpleUser, SqliteTag>::create(tx, "common_test_users_transaction");
+            auto orders_in_tx = co_await Form<SimpleOrder, SqliteTag>::create(tx, "common_test_orders_transaction");
+
+            CO_ASSERT_VAL(users_in_tx);
+            CO_ASSERT_VAL(orders_in_tx);
+
+            co_await users_in_tx->insert(4, "Dave", 300);
+            co_await orders_in_tx->insert(104, 4, 100, "Book");
+
+            // 提交事务
+            auto commit_ret = co_await tx.commit();
+            CO_ASSERT_VAL(commit_ret);
+        }
+
+        auto users_form = co_await Form<SimpleUser, SqliteTag>::create(db, "common_test_users_transaction");
+        CO_ASSERT_VAL(users_form);
+        auto dave_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 4).query();
+        CO_ASSERT_VAL(dave_count_ret);
+
+        int dave_count = 0;
+        ilias_for_await(auto &row, dave_count_ret.value().range()) {
+            dave_count = std::get<0>(row);
+        }
+        EXPECT_EQ(dave_count, 1); // "Dave" 应该存在
+
+        // =========================================================
+        // 测试场景 2: 事务回滚
+        // 意图: 在新事务中插入用户 "Eve"，然后回滚。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+
+            auto users_in_tx = co_await Form<SimpleUser, SqliteTag>::create(tx, "common_test_users_transaction");
+            co_await users_in_tx->insert(5, "Eve", 500);
+
+            // 回滚事务
+            auto rollback_ret = co_await tx.rollback();
+            CO_ASSERT_VAL(rollback_ret);
+        }
+
+        auto eve_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 5).query();
+        CO_ASSERT_VAL(eve_count_ret);
+
+        int eve_count = 0;
+        ilias_for_await(auto &row, eve_count_ret.value().range()) {
+            eve_count = std::get<0>(row);
+        }
+        EXPECT_EQ(eve_count, 0); // "Eve" 不应该存在
+
+        auto final_count_ret = co_await users_form->count().query();
+        CO_ASSERT_VAL(final_count_ret);
+
+        int final_count = 0;
+        ilias_for_await(auto &row, final_count_ret.value().range()) {
+            final_count = std::get<0>(row);
+        }
+        // 初始3个用户 (Alice, Bob, Charlie) + 提交的1个用户 (Dave) = 4
+        EXPECT_EQ(final_count, 4);
+
+        co_return {};
+    }
 };
 
 // ==========================================
@@ -804,7 +918,7 @@ TEST(SQL, NULL_BIND) {
     SqlTestSuite::test_null_bind().wait();
 }
 
-TEST(SQL, TRANSACTION_ROLLBACK) {
+TEST(SQL, TRANSACTION_ROLLBACK_TEST) {
     SqlTestSuite::test_transaction_rollback().wait();
 }
 
@@ -822,6 +936,10 @@ TEST(SQL, FORM_INTERFACE) {
 
 TEST(SQL, JOIN_FEATURES) {
     SqlTestSuite::test_join_features().wait();
+}
+
+TEST(SQL, FORM_INTERFACE_WITH_TRANSACTION) {
+    SqlTestSuite::test_form_with_transaction().wait();
 }
 
 ILIAS_NAMESPACE::Task<int> run_all_tests() {
@@ -848,6 +966,7 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ILIAS_LOG_ADD_WHITELIST("ilias-sqlite");
     ILIAS_LOG_ADD_WHITELIST("sqlite-test");
+    ILIAS_LOG_ADD_WHITELIST("sql-test");
     ILIAS_LOG_ADD_WHITELIST("orm-test");
     ilias::PlatformContext ioContext;
     ioContext.install();

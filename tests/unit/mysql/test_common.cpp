@@ -886,7 +886,7 @@ TEST(MySQL, NULL_BIND) {
     MySqlTestSuite::test_null_handling().wait();
 }
 
-TEST(MySQL, TRANSACTION_ROLLBACK) {
+TEST(MySQL, TRANSACTION_ROLLBACK_TEST) {
     MySqlTestSuite::test_transaction_rollback().wait();
 }
 
