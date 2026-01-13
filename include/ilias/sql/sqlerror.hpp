@@ -42,7 +42,9 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(ColumnNotFound, "Column not found")                                                                \
     SQL_ERROR_ENTRY(UnsupportSqlType, "Unsupported SQL type")                                                          \
     SQL_ERROR_ENTRY(UnsupportConvertFromSqlType, "Unsupported convert from SQL type")                                  \
-    SQL_ERROR_ENTRY(NumericValueOutOfRange, "Numeric value out of range")
+    SQL_ERROR_ENTRY(NumericValueOutOfRange, "Numeric value out of range")                                              \
+    SQL_ERROR_ENTRY(TableNotFound, "Table not found")                                                                  \
+    SQL_ERROR_ENTRY(SchemaMismatch, "Schema mismatch")
 
 class ILIAS_SQL_API SqlError {
 public:

@@ -245,7 +245,11 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_batch_insert_transaction");
 
-        auto tx = (co_await db.transaction()).value();
+        auto tx_ret = (co_await db.transaction());
+        if (!tx_ret) {
+            ILIAS_ERROR("mysql-test", "Transaction failed: {}", tx_ret.error().message());
+        }
+        auto tx = std::move(tx_ret.value());
         auto stmt =
             (co_await tx.prepare("INSERT INTO common_simple_users (id, name, score) VALUES (:id, :name, :score)"))
                 .value();
@@ -477,7 +481,7 @@ public:
         // 如果存在上次的测试数据，先清空
         co_await db.execute("DROP TABLE IF EXISTS common_users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "common_users_full_test");
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -628,6 +632,118 @@ public:
         co_return {};
     }
 
+    static auto test_form_with_transaction() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_form_with_transaction");
+
+        // 1. 清理并创建表
+        co_await db.execute("DROP TABLE IF EXISTS common_test_users_transaction");
+        co_await db.execute("DROP TABLE IF EXISTS common_test_orders_transaction");
+        // 在一个初始事务中设置好我们的基础数据
+        {
+            auto transaction_ret = co_await db.transaction();
+            CO_ASSERT_VAL(transaction_ret);
+            auto transaction = std::move(transaction_ret.value());
+
+            // 使用该事务创建 Form 对象
+            auto users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(transaction, "common_test_users_transaction");
+            auto orders_ret =
+                co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(transaction, "common_test_orders_transaction");
+            CO_ASSERT_VAL(users_ret);
+            CO_ASSERT_VAL(orders_ret);
+
+            auto users  = std::move(users_ret.value());
+            auto orders = std::move(orders_ret.value());
+
+            // 2. 准备基础数据
+            // 用户: 1(Alice), 2(Bob), 3(Charlie)
+            co_await users.insert(1, "Alice", 100);
+            co_await users.insert(2, "Bob", 200);
+            co_await users.insert(3, "Charlie", 50);
+
+            // 订单: Alice买了两单，Bob买了一单，Charlie没买
+            co_await orders.insert(101, 1, 500, "Apple"); // Alice
+            co_await orders.insert(102, 1, 50, "Banana"); // Alice
+            co_await orders.insert(103, 2, 900, "TV");    // Bob
+
+            // 提交这个初始设置
+            auto commit_setup_ret = co_await transaction.commit();
+            CO_ASSERT_VAL(commit_setup_ret);
+        }
+
+        // =========================================================
+        // 测试场景 1: 事务提交
+        // 意图: 在新事务中插入用户 "Dave" 和他的订单，然后提交。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+
+            // 需要为这个新事务创建新的 Form 实例
+            auto users_in_tx  = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            auto orders_in_tx = co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(tx, "common_test_orders_transaction");
+
+            CO_ASSERT_VAL(users_in_tx);
+            CO_ASSERT_VAL(orders_in_tx);
+
+            co_await users_in_tx->insert(4, "Dave", 300);
+            co_await orders_in_tx->insert(104, 4, 100, "Book");
+
+            // 提交事务
+            auto commit_ret = co_await tx.commit();
+            CO_ASSERT_VAL(commit_ret);
+        }
+
+        auto users_form = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_test_users_transaction");
+        CO_ASSERT_VAL(users_form);
+        auto dave_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 4).query();
+        CO_ASSERT_VAL(dave_count_ret);
+
+        int dave_count = 0;
+        ilias_for_await(auto &row, dave_count_ret.value().range()) {
+            dave_count = std::get<0>(row);
+        }
+        EXPECT_EQ(dave_count, 1); // "Dave" 应该存在
+
+        // =========================================================
+        // 测试场景 2: 事务回滚
+        // 意图: 在新事务中插入用户 "Eve"，然后回滚。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+            auto users_in_tx = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            co_await users_in_tx->insert(5, "Eve", 500);
+
+            // 回滚事务
+            auto rollback_ret = co_await users_in_tx->db().rollback();
+            CO_ASSERT_VAL(rollback_ret);
+        }
+
+        auto eve_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 5).query();
+        CO_ASSERT_VAL(eve_count_ret);
+
+        int eve_count = 0;
+        ilias_for_await(auto &row, eve_count_ret.value().range()) {
+            eve_count = std::get<0>(row);
+        }
+        EXPECT_EQ(eve_count, 0); // "Eve" 不应该存在
+
+        auto final_count_ret = co_await users_form->count().query();
+        CO_ASSERT_VAL(final_count_ret);
+
+        int final_count = 0;
+        ilias_for_await(auto &row, final_count_ret.value().range()) {
+            final_count = std::get<0>(row);
+        }
+        // 初始3个用户 (Alice, Bob, Charlie) + 提交的1个用户 (Dave) = 4
+        EXPECT_EQ(final_count, 4);
+
+        co_return {};
+    }
+
     static auto test_join_features() -> IoTask<void> {
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("mysql-test", ">>> Running test_join_features");
@@ -636,8 +752,8 @@ public:
         co_await db.execute("DROP TABLE IF EXISTS common_test_users_join");
         co_await db.execute("DROP TABLE IF EXISTS common_test_orders_join");
 
-        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create(db, "common_test_users_join");
-        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create(db, "common_test_orders_join");
+        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(db, "common_test_orders_join");
         CO_ASSERT_VAL(users_ret);
         CO_ASSERT_VAL(orders_ret);
 
@@ -741,6 +857,53 @@ public:
         co_return {};
     }
 };
+TEST(MySQL, COMPLEX_TYPES) {
+    MySqlTestSuite::test_complex_types().wait();
+}
+
+TEST(MySQL, BATCH_INSERT_TRANSACTION) {
+    MySqlTestSuite::test_batch_insert_transaction().wait();
+}
+
+TEST(MySQL, PAGINATION) {
+    MySqlTestSuite::test_pagination().wait();
+}
+
+TEST(MySQL, BULK_UPDATE_DELETE) {
+    MySqlTestSuite::test_bulk_update_delete().wait();
+}
+
+TEST(MySQL, NULL_HANDLING) {
+    MySqlTestSuite::test_null_handling().wait();
+}
+
+TEST(MySQL, ERRORS) {
+    MySqlTestSuite::test_errors().wait();
+}
+
+TEST(MySQL, NULL_BIND) {
+    MySqlTestSuite::test_null_handling().wait();
+}
+
+TEST(MySQL, TRANSACTION_ROLLBACK_TEST) {
+    MySqlTestSuite::test_transaction_rollback().wait();
+}
+
+TEST(MySQL, RAII_ROLLBACK) {
+    MySqlTestSuite::test_raii_rollback().wait();
+}
+
+TEST(MySQL, FORM_INTERFACE) {
+    MySqlTestSuite::test_form_interface().wait();
+}
+
+TEST(MySQL, FORM_WITH_TRANSACTION) {
+    MySqlTestSuite::test_form_with_transaction().wait();
+}
+
+TEST(MySQL, JOIN_FEATURES) {
+    MySqlTestSuite::test_join_features().wait();
+}
 
 // ==========================================
 // 4. 执行入口
@@ -756,15 +919,12 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await MySqlTestSuite::test_transaction_rollback();
         co_await MySqlTestSuite::test_raii_rollback();
         co_await MySqlTestSuite::test_form_interface();
+        co_await MySqlTestSuite::test_form_with_transaction();
         co_await MySqlTestSuite::test_join_features();
     } catch (const std::exception &e) {
         ILIAS_ERROR("mysql-test", "Exception caught: {}", e.what());
         EXPECT_TRUE(false) << "Exception in runner: " << e.what();
     }
-}
-
-TEST(SQL, MySqlSuite) {
-    run_all_tests().wait();
 }
 
 int main(int argc, char **argv) {

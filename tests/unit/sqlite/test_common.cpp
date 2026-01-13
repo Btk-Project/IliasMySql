@@ -38,6 +38,7 @@ NEKO_USE_NAMESPACE
     do {                                                                                                               \
         if (!ret.has_value()) {                                                                                        \
             ILIAS_ERROR("sql-test", "assert failed: {}", ret.error().message());                                       \
+            EXPECT_FALSE(true);                                                                                        \
             co_return {}; /* 需要在 Task 中返回 void */                                                                \
         }                                                                                                              \
         CO_EXPECT_RESULT(ret);                                                                                         \
@@ -112,7 +113,9 @@ public:
         ILIAS_INFO("test", ">>> Running test_batch_insert_and_scan");
 
         // 1. 开启事务以提高插入速度
-        auto tx = (co_await db.transaction()).value();
+        auto tx_ret = co_await db.transaction();
+        CO_ASSERT_VAL(tx_ret);
+        auto tx = std::move(tx_ret.value());
 
         auto stmt = (co_await tx.prepare("INSERT INTO users (id, name, score) VALUES (?, ?, ?)")).value();
 
@@ -415,7 +418,7 @@ public:
         // 如果存在上次的测试数据，先清空
         co_await db.execute("DROP TABLE IF EXISTS users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "users_full_test");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto       users = std::move(users_ret.value());
         SimpleUser user {0, "User0", 1};
@@ -588,8 +591,8 @@ public:
         co_await db.execute("DROP TABLE IF EXISTS test_users_join");
         co_await db.execute("DROP TABLE IF EXISTS test_orders_join");
 
-        auto users_ret  = co_await Form<SimpleUser, SqliteTag>::create(db, "test_users_join");
-        auto orders_ret = co_await Form<SimpleOrder, SqliteTag>::create(db, "test_orders_join");
+        auto users_ret  = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(db, "test_orders_join");
         CO_ASSERT_VAL(users_ret);
         CO_ASSERT_VAL(orders_ret);
 
@@ -737,7 +740,8 @@ public:
         }
         {
             stmt.reset();
-            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59, 8 * 60), std::vector<std::byte> {});
+            stmt.bind(3, "Charlie", nullptr, 9.99, 1, SqlDate(2022, 12, 31, 23, 59, 59, 8 * 60),
+                      std::vector<std::byte> {});
             auto ir = co_await stmt.execute();
             CO_EXPECT_RESULT(ir);
         }
@@ -771,46 +775,215 @@ public:
         ILIAS_INFO("test", ">>> test_realistic_scenario (SQLite) PASSED");
         co_return {};
     }
+
+    static auto test_form_with_transaction() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_form_with_transaction");
+
+        // 1. 清理并创建表
+        co_await db.execute("DROP TABLE IF EXISTS common_test_users_transaction");
+        co_await db.execute("DROP TABLE IF EXISTS common_test_orders_transaction");
+
+        auto gusers_ret =
+            co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "common_test_users_transaction");
+        auto gorders_ret =
+            co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(db, "common_test_orders_transaction");
+
+        CO_ASSERT_VAL(gusers_ret);
+        CO_ASSERT_VAL(gorders_ret);
+
+        auto users  = std::move(gusers_ret.value());
+        auto orders = std::move(gorders_ret.value());
+        // 在一个初始事务中设置好我们的基础数据
+        {
+            // 使用该事务创建 Form 对象
+            auto ausers_ret = co_await users.transaction();
+            CO_ASSERT_VAL(ausers_ret);
+            auto users_ret = std::move(ausers_ret->second);
+            auto orders_ret =
+                co_await Form<SimpleOrder, SqliteTag>::attach(users_ret.db(), "common_test_orders_transaction");
+            CO_ASSERT_VAL(orders_ret);
+
+            auto users  = std::move(users_ret);
+            auto orders = std::move(orders_ret.value());
+
+            // 2. 准备基础数据
+            // 用户: 1(Alice), 2(Bob), 3(Charlie)
+            co_await users.insert(1, "Alice", 100);
+            co_await users.insert(2, "Bob", 200);
+            co_await users.insert(3, "Charlie", 50);
+
+            // 订单: Alice买了两单，Bob买了一单，Charlie没买
+            co_await orders.insert(101, 1, 500, "Apple"); // Alice
+            co_await orders.insert(102, 1, 50, "Banana"); // Alice
+            co_await orders.insert(103, 2, 900, "TV");    // Bob
+            printf("%s\n", NekoProto::detail::mangled_name<decltype(orders_ret.value())>());
+            // 提交这个初始设置
+            auto commit_setup_ret = co_await users.db().commit();
+            CO_ASSERT_VAL(commit_setup_ret);
+        }
+
+        // =========================================================
+        // 测试场景 1: 事务提交
+        // 意图: 在新事务中插入用户 "Dave" 和他的订单，然后提交。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+
+            // 需要为这个新事务创建新的 Form 实例
+            auto users_in_tx =
+                co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            auto orders_in_tx =
+                co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(tx, "common_test_orders_transaction");
+
+            CO_ASSERT_VAL(users_in_tx);
+            CO_ASSERT_VAL(orders_in_tx);
+
+            co_await users_in_tx->insert(4, "Dave", 300);
+            co_await orders_in_tx->insert(104, 4, 100, "Book");
+
+            // 提交事务
+            auto commit_ret = co_await tx.commit();
+            CO_ASSERT_VAL(commit_ret);
+        }
+
+        auto users_form =
+            co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "common_test_users_transaction");
+        CO_ASSERT_VAL(users_form);
+        auto dave_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 4).query();
+        CO_ASSERT_VAL(dave_count_ret);
+
+        int dave_count = 0;
+        ilias_for_await(auto &row, dave_count_ret.value().range()) {
+            dave_count = std::get<0>(row);
+        }
+        EXPECT_EQ(dave_count, 1); // "Dave" 应该存在
+
+        // =========================================================
+        // 测试场景 2: 事务回滚
+        // 意图: 在新事务中插入用户 "Eve"，然后回滚。
+        // =========================================================
+        {
+            auto tx_ret = co_await db.transaction();
+            CO_ASSERT_VAL(tx_ret);
+            auto tx = std::move(tx_ret.value());
+
+            auto users_in_tx =
+                co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            co_await users_in_tx->insert(5, "Eve", 500);
+
+            // 回滚事务
+            auto rollback_ret = co_await tx.rollback();
+            CO_ASSERT_VAL(rollback_ret);
+        }
+
+        auto eve_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 5).query();
+        CO_ASSERT_VAL(eve_count_ret);
+
+        int eve_count = 0;
+        ilias_for_await(auto &row, eve_count_ret.value().range()) {
+            eve_count = std::get<0>(row);
+        }
+        EXPECT_EQ(eve_count, 0); // "Eve" 不应该存在
+
+        auto final_count_ret = co_await users_form->count().query();
+        CO_ASSERT_VAL(final_count_ret);
+
+        int final_count = 0;
+        ilias_for_await(auto &row, final_count_ret.value().range()) {
+            final_count = std::get<0>(row);
+        }
+        // 初始3个用户 (Alice, Bob, Charlie) + 提交的1个用户 (Dave) = 4
+        EXPECT_EQ(final_count, 4);
+
+        co_return {};
+    }
 };
 
 // ==========================================
 // 4. 统一入口 Runner
 // ==========================================
 
-ILIAS_NAMESPACE::Task<void> run_all_tests() {
-    try {
-        // 运行原有测试
-        co_await SqlTestSuite::test_basic_crud();
-
-        // 运行新增的扩展测试
-        co_await SqlTestSuite::test_batch_insert_and_scan();
-        co_await SqlTestSuite::test_pagination();
-        co_await SqlTestSuite::test_bulk_update_delete();
-        co_await SqlTestSuite::test_null_handling();
-        co_await SqlTestSuite::test_null_bind();
-        co_await SqlTestSuite::test_transaction_rollback();
-        co_await SqlTestSuite::test_raii_rollback();
-        co_await SqlTestSuite::test_realistic_scenario();
-        co_await SqlTestSuite::test_form_interface();
-        co_await SqlTestSuite::test_join_features();
-    } catch (const std::exception &e) {
-        ILIAS_ERROR("test", "Exception caught in tests: {}", e.what());
-        EXPECT_TRUE(false) << "Exception in test runner: " << e.what();
-    }
+TEST(SQL, BASIC_CRUD) {
+    SqlTestSuite::test_basic_crud().wait();
 }
 
-TEST(SQL, FullSuite) {
-    run_all_tests().wait();
+TEST(SQL, BATCH_INSERT_AND_SCAN) {
+    SqlTestSuite::test_batch_insert_and_scan().wait();
+}
+
+TEST(SQL, PAGINATION) {
+    SqlTestSuite::test_pagination().wait();
+}
+
+TEST(SQL, BULK_UPDATE_DELETE) {
+    SqlTestSuite::test_bulk_update_delete().wait();
+}
+
+TEST(SQL, NULL_HANDLING) {
+    SqlTestSuite::test_null_handling().wait();
+}
+
+TEST(SQL, NULL_BIND) {
+    SqlTestSuite::test_null_bind().wait();
+}
+
+TEST(SQL, TRANSACTION_ROLLBACK_TEST) {
+    SqlTestSuite::test_transaction_rollback().wait();
+}
+
+TEST(SQL, RAII_ROLLBACK) {
+    SqlTestSuite::test_raii_rollback().wait();
+}
+
+TEST(SQL, REALISTIC_SCENARIO) {
+    SqlTestSuite::test_realistic_scenario().wait();
+}
+
+TEST(SQL, FORM_INTERFACE) {
+    SqlTestSuite::test_form_interface().wait();
+}
+
+TEST(SQL, JOIN_FEATURES) {
+    SqlTestSuite::test_join_features().wait();
+}
+
+TEST(SQL, FORM_INTERFACE_WITH_TRANSACTION) {
+    SqlTestSuite::test_form_with_transaction().wait();
+}
+
+ILIAS_NAMESPACE::Task<int> run_all_tests() {
+    // 运行原有测试
+    co_await SqlTestSuite::test_basic_crud();
+
+    // 运行新增的扩展测试
+    co_await SqlTestSuite::test_batch_insert_and_scan();
+    co_await SqlTestSuite::test_pagination();
+    co_await SqlTestSuite::test_bulk_update_delete();
+    co_await SqlTestSuite::test_null_handling();
+    co_await SqlTestSuite::test_null_bind();
+    co_await SqlTestSuite::test_transaction_rollback();
+    co_await SqlTestSuite::test_raii_rollback();
+    co_await SqlTestSuite::test_realistic_scenario();
+    co_await SqlTestSuite::test_form_interface();
+    co_await SqlTestSuite::test_join_features();
+
+    co_return 0;
 }
 
 int main(int argc, char **argv) {
     cpptrace::init();
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ILIAS_LOG_ADD_WHITELIST("ilias-sqlite");
+    ILIAS_LOG_ADD_WHITELIST("ilias-sql");
     ILIAS_LOG_ADD_WHITELIST("sqlite-test");
+    ILIAS_LOG_ADD_WHITELIST("sql-test");
     ILIAS_LOG_ADD_WHITELIST("orm-test");
     ilias::PlatformContext ioContext;
     ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
+    // return run_all_tests().wait();
 }
