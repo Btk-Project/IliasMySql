@@ -62,7 +62,9 @@ public:
     SqlTransaction(SqlDatabase &db) : mDatabase(db) {
         auto ret = mDatabase.connection();
         if (!ret) {
-            ILIAS_ERROR("ilias-mysql", "SqlTransaction::SqlTransaction: connection error: {}", ret.error().message());
+            ILIAS_ERROR("ilias-sql", "SqlTransaction<{}> connection error: {}", (void *)this, ret.error().message());
+        } else {
+            ILIAS_TRACE("ilias-sql", "SqlTransaction<{}> connection success", (void *)this);
         }
         mConnection = ret.value_or(nullptr);
     }
@@ -70,6 +72,7 @@ public:
     SqlTransaction &operator=(const SqlTransaction &) = delete;
     SqlTransaction(SqlTransaction &&other)
         : mDatabase(other.mDatabase), mConnection(other.mConnection), mState(other.mState) {
+        ILIAS_TRACE("ilias-sql", "SqlTransaction<{}> move constructor", (void *)this);
         other.mState      = State::kUnused;
         other.mConnection = nullptr;
     }

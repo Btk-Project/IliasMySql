@@ -49,6 +49,7 @@ auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
 }
 
 SqlTransaction::~SqlTransaction() {
+    ILIAS_TRACE("ilias-sql", "SqlTransaction<{}> destroyed", (void *)this);
     if (mState == State::kBeginned) {
         auto ret = connection();
         if (ret) {

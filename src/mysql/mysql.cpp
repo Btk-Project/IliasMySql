@@ -264,6 +264,10 @@ auto MySql::autoCommit(bool autoMode) -> IoTask<bool> {
     co_return ret;
 }
 
+auto MySql::syncAutoCommit(bool autoMode) -> bool {
+    return mysql_autocommit(&mMysql, autoMode);
+}
+
 auto MySql::nextResult() -> IoTask<int> {
     int ret;
     SQL_PRIVATE_SYNC_CODE(ret, mysql_next_result)
@@ -286,8 +290,8 @@ auto MySql::storeResult() -> IoTask<MYSQL_RES *> {
 
 auto MySql::rollback() -> IoTask<bool> {
     my_bool ret;
-    ILIAS_TRACE("ilias-mysql", "rollback");
     SQL_PRIVATE_SYNC_CODE(ret, mysql_rollback)
+    ILIAS_TRACE("ilias-mysql", "rollback result {}", static_cast<int>(ret));
     co_return ret;
 }
 
@@ -901,7 +905,7 @@ auto MysqlConnection::connect() -> IoTask<void> {
     if (!set_time_zone) {
         co_return Unexpected(set_time_zone.error());
     }
-    mIsConnected       = true;
+    mIsConnected = true;
     co_return {};
 }
 
@@ -952,6 +956,10 @@ auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IRes
 }
 
 auto MysqlConnection::beginTransaction() -> IoTask<bool> {
+    auto close_auto_commit = co_await mMysql->autoCommit(false);
+    if (!close_auto_commit) {
+        co_return Unexpected(close_auto_commit.error());
+    }
     auto ret = co_await mMysql->query("START TRANSACTION");
     if (!ret) {
         co_return Unexpected(ret.error());
@@ -964,6 +972,10 @@ auto MysqlConnection::commit() -> IoTask<bool> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
+    auto open_auto_commit = co_await mMysql->autoCommit(true);
+    if (!open_auto_commit) {
+        co_return Unexpected(open_auto_commit.error());
+    }
     co_return ret;
 }
 
@@ -972,11 +984,17 @@ auto MysqlConnection::rollback() -> IoTask<bool> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
+    auto open_auto_commit = co_await mMysql->autoCommit(true);
+    if (!open_auto_commit) {
+        co_return Unexpected(open_auto_commit.error());
+    }
     co_return ret;
 }
 
 auto MysqlConnection::syncRollback() -> bool {
-    return mMysql->syncRollback();
+    auto ret = mMysql->syncRollback();
+    mMysql->syncAutoCommit(true);
+    return ret;
 }
 
 auto MysqlConnection::lastInsertId() const -> int64_t {

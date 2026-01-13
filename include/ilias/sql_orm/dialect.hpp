@@ -7,6 +7,9 @@
 #include "ilias/sql/types.hpp"
 #include "ilias/sql_orm/detail/orm_types.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"
+#include "ilias/sql/sqlresult.hpp"
+
+#include <ilias/task.hpp>
 
 ILIAS_SQL_NS_BEGIN
 
@@ -16,6 +19,20 @@ struct PostgresTag {};
 
 template <typename BackendTag>
 struct Dialect;
+
+struct ColumnSchema {
+    std::string name;
+    std::string db_type; // 数据库报告的原始类型字符串, e.g., "VARCHAR(255)", "INTEGER"
+    SqlTags     tags;
+};
+
+// 用于封装校验结果
+struct ValidationResult {
+    std::vector<std::string> errors;
+
+    bool is_ok() const { return errors.empty(); }
+    void add_error(const std::string &error) { errors.push_back(error); }
+};
 
 // ================= SQLite 特化 =================
 template <>
@@ -94,6 +111,56 @@ struct Dialect<SqliteTag> {
         }
 
         return index_statements;
+    }
+
+    /**
+     * @brief 返回用于查询表结构的SQL语句。
+     */
+    static std::string get_schema_query(std::string_view table_name) {
+        // SQLite使用 PRAGMA table_info
+        return "PRAGMA table_info(" + std::string(table_name) + ");";
+    }
+
+    using SchemaQueryResultType = std::tuple<int, std::string, std::string, int, std::optional<std::string>, int>;
+    /**
+     * @brief 解析PRAGMA table_info的结果。
+     * @note PRAGMA table_info 返回: cid, name, type, notnull, dflt_value, pk
+     */
+    static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
+        -> IoTask<std::map<std::string, ColumnSchema>> {
+        std::map<std::string, ColumnSchema> schema_map;
+        ilias_for_await(auto &row, rs.range()) {
+            auto [cid, name, type, notnull, dflt_value, pk] = row;
+            ColumnSchema col;
+            col.name             = name;
+            col.db_type          = type;
+            col.tags.not_null    = (notnull == 1);
+            col.tags.primary_key = (pk == 1);
+            schema_map[col.name] = std::move(col);
+        }
+        co_return schema_map;
+    }
+
+    /**
+     * @brief 比较C++类型和数据库类型是否兼容。
+     */
+    template <typename FieldType>
+    static bool are_types_compatible(const std::string &db_type, const SqlTags &tags) {
+        // SQLite的类型亲和性比较宽松
+        std::string expected_type = type_name<FieldType>(tags); // e.g., "INTEGER", "REAL", "TEXT"
+        std::string upper_db_type = db_type;
+        std::transform(upper_db_type.begin(), upper_db_type.end(), upper_db_type.begin(), ::toupper);
+
+        if (expected_type == "INTEGER") {
+            return upper_db_type.find("INT") != std::string::npos;
+        }
+        if (expected_type == "REAL") {
+            return upper_db_type.find("REAL") != std::string::npos ||
+                   upper_db_type.find("FLOAT") != std::string::npos ||
+                   upper_db_type.find("DOUBLE") != std::string::npos;
+        }
+        // 对于TEXT, BLOB等，通常是直接比较
+        return upper_db_type.find(expected_type) != std::string::npos;
     }
 };
 
@@ -215,6 +282,48 @@ struct Dialect<MysqlTag> {
 
         return index_statements;
     }
+
+    /**
+     * @brief 返回用于查询表结构的SQL语句。
+     * @note 使用参数化查询以防止SQL注入，这里返回带'?'的模板。
+     */
+    static std::string get_schema_query() {
+        return "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY "
+               "FROM INFORMATION_SCHEMA.COLUMNS "
+               "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
+    }
+
+    using SchemaQueryResultType = std::tuple<std::string, std::string, std::string, std::string>;
+    /**
+     * @brief 解析INFORMATION_SCHEMA查询的结果。
+     */
+    static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
+        -> IoTask<std::map<std::string, ColumnSchema>> {
+        std::map<std::string, ColumnSchema> schema_map;
+        ilias_for_await(auto &row, rs.range()) {
+            auto [name, type, is_nullable, key_type] = row;
+            ColumnSchema col;
+            col.name             = name;
+            col.db_type          = type;
+            col.tags.not_null    = (is_nullable == "NO");
+            col.tags.primary_key = (key_type == "PRI");
+            schema_map[col.name] = std::move(col);
+        }
+        co_return schema_map;
+    }
+
+    template <typename FieldType>
+    static bool are_types_compatible(const std::string &db_type, const SqlTags &tags) {
+        using DT                       = detail::strip_wrapper_t<FieldType>;
+        std::string expected_base_type = type_name<DT>(tags);
+
+        // 简化比较逻辑：检查数据库类型字符串是否以期望的类型开头
+        // 例如，C++ int -> "INT"，数据库 "int(11)"。 "int(11)".startswith("int")
+        std::string base_db_type       = db_type.substr(0, db_type.find('('));
+        std::string base_expected_type = expected_base_type.substr(0, expected_base_type.find('('));
+
+        return base_db_type == base_expected_type;
+    }
 };
 
 // ================= PostgreSQL 特化 =================
@@ -333,6 +442,89 @@ struct Dialect<PostgresTag> {
         }
 
         return index_statements;
+    }
+    /**
+     * @brief 返回用于查询表结构元数据的SQL语句 (PostgreSQL原生版本)。
+     * @note 查询 pg_catalog 比 information_schema 更快且信息更全。
+     * @return 返回一个需要绑定表名作为第一个参数的SQL模板。
+     */
+    static std::string get_schema_query() {
+        return R"SQL(
+            SELECT
+                a.attname AS column_name,
+                format_type(a.atttypid, a.atttypmod) AS column_type,
+                a.attnotnull AS is_not_null,
+                COALESCE(con.contype = 'p', false) AS is_primary_key
+            FROM
+                pg_class AS c
+            JOIN
+                pg_attribute AS a ON a.attrelid = c.oid
+            LEFT JOIN
+                pg_constraint AS con ON con.conrelid = c.oid AND a.attnum = ANY(con.conkey) AND con.contype = 'p'
+            WHERE
+                c.relname = $1
+                AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())
+                AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY
+                a.attnum;
+        )SQL";
+    }
+    using SchemaQueryResultType = std::tuple<std::string, std::string, bool, bool>;
+
+    /**
+     * @brief 解析 get_schema_query 返回的结果集。
+     * @param rs 数据库驱动返回的结果集对象。
+     * @return 一个从列名到其Schema描述的map。
+     */
+    static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
+        -> IoTask<std::map<std::string, ColumnSchema>> {
+        std::map<std::string, ColumnSchema> schema_map;
+        ilias_for_await(auto &row, rs.range()) {
+            auto [name, type, is_not_null, is_pk] = row;
+            ColumnSchema col;
+            col.name             = name;
+            col.db_type          = type;
+            col.tags.not_null    = is_not_null;
+            col.tags.primary_key = is_pk;
+            schema_map[col.name] = std::move(col);
+        }
+        co_return schema_map;
+    }
+
+    /**
+     * @brief 比较C++类型和数据库类型字符串是否兼容 (PostgreSQL版本)。
+     */
+    template <typename FieldType>
+    static bool are_types_compatible(const std::string &db_type, const SqlTags &tags) {
+        std::string orm_type      = type_name<FieldType>(tags);
+        std::string lower_db_type = db_type;
+        std::transform(lower_db_type.begin(), lower_db_type.end(), lower_db_type.begin(), ::tolower);
+
+        // SERIAL 和 BIGSERIAL 在数据库中显示为 integer 和 bigint
+        if (tags.auto_increment) {
+            if (orm_type == "INTEGER" && lower_db_type == "integer")
+                return true;
+            if (orm_type == "BIGINT" && lower_db_type == "bigint")
+                return true;
+        }
+
+        // 处理 VARCHAR -> character varying 的同义词情况
+        if (orm_type.rfind("VARCHAR", 0) == 0) {  // orm_type starts with VARCHAR
+            auto orm_suffix = orm_type.substr(7); // (255)
+            if (lower_db_type.rfind("character varying", 0) == 0) {
+                return lower_db_type.substr(17) == orm_suffix;
+            }
+        }
+
+        // 处理 DOUBLE PRECISION 的大小写和空格
+        if (orm_type == "DOUBLE PRECISION" && lower_db_type == "double precision")
+            return true;
+
+        // 其他大部分类型可以直接比较(转为小写)
+        std::string lower_orm_type = orm_type;
+        std::transform(lower_orm_type.begin(), lower_orm_type.end(), lower_orm_type.begin(), ::tolower);
+
+        return lower_db_type == lower_orm_type;
     }
 };
 

@@ -418,7 +418,7 @@ public:
         // 如果存在上次的测试数据，先清空
         co_await db.execute("DROP TABLE IF EXISTS users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "users_full_test");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto       users = std::move(users_ret.value());
         SimpleUser user {0, "User0", 1};
@@ -591,8 +591,8 @@ public:
         co_await db.execute("DROP TABLE IF EXISTS test_users_join");
         co_await db.execute("DROP TABLE IF EXISTS test_orders_join");
 
-        auto users_ret  = co_await Form<SimpleUser, SqliteTag>::create(db, "test_users_join");
-        auto orders_ret = co_await Form<SimpleOrder, SqliteTag>::create(db, "test_orders_join");
+        auto users_ret  = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(db, "test_orders_join");
         CO_ASSERT_VAL(users_ret);
         CO_ASSERT_VAL(orders_ret);
 
@@ -783,20 +783,28 @@ public:
         // 1. 清理并创建表
         co_await db.execute("DROP TABLE IF EXISTS common_test_users_transaction");
         co_await db.execute("DROP TABLE IF EXISTS common_test_orders_transaction");
+
+        auto gusers_ret =
+            co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "common_test_users_transaction");
+        auto gorders_ret =
+            co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(db, "common_test_orders_transaction");
+
+        CO_ASSERT_VAL(gusers_ret);
+        CO_ASSERT_VAL(gorders_ret);
+
+        auto users  = std::move(gusers_ret.value());
+        auto orders = std::move(gorders_ret.value());
         // 在一个初始事务中设置好我们的基础数据
         {
-            auto transaction_ret = co_await db.transaction();
-            CO_ASSERT_VAL(transaction_ret);
-            auto transaction = std::move(transaction_ret.value());
-
             // 使用该事务创建 Form 对象
-            auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(transaction, "common_test_users_transaction");
+            auto ausers_ret = co_await users.transaction();
+            CO_ASSERT_VAL(ausers_ret);
+            auto users_ret = std::move(ausers_ret->second);
             auto orders_ret =
-                co_await Form<SimpleOrder, SqliteTag>::create(transaction, "common_test_orders_transaction");
-            CO_ASSERT_VAL(users_ret);
+                co_await Form<SimpleOrder, SqliteTag>::attach(users_ret.db(), "common_test_orders_transaction");
             CO_ASSERT_VAL(orders_ret);
 
-            auto users  = std::move(users_ret.value());
+            auto users  = std::move(users_ret);
             auto orders = std::move(orders_ret.value());
 
             // 2. 准备基础数据
@@ -809,9 +817,9 @@ public:
             co_await orders.insert(101, 1, 500, "Apple"); // Alice
             co_await orders.insert(102, 1, 50, "Banana"); // Alice
             co_await orders.insert(103, 2, 900, "TV");    // Bob
-
+            printf("%s\n", NekoProto::detail::mangled_name<decltype(orders_ret.value())>());
             // 提交这个初始设置
-            auto commit_setup_ret = co_await transaction.commit();
+            auto commit_setup_ret = co_await users.db().commit();
             CO_ASSERT_VAL(commit_setup_ret);
         }
 
@@ -825,8 +833,10 @@ public:
             auto tx = std::move(tx_ret.value());
 
             // 需要为这个新事务创建新的 Form 实例
-            auto users_in_tx  = co_await Form<SimpleUser, SqliteTag>::create(tx, "common_test_users_transaction");
-            auto orders_in_tx = co_await Form<SimpleOrder, SqliteTag>::create(tx, "common_test_orders_transaction");
+            auto users_in_tx =
+                co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            auto orders_in_tx =
+                co_await Form<SimpleOrder, SqliteTag>::create_if_not_exists(tx, "common_test_orders_transaction");
 
             CO_ASSERT_VAL(users_in_tx);
             CO_ASSERT_VAL(orders_in_tx);
@@ -839,7 +849,8 @@ public:
             CO_ASSERT_VAL(commit_ret);
         }
 
-        auto users_form = co_await Form<SimpleUser, SqliteTag>::create(db, "common_test_users_transaction");
+        auto users_form =
+            co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "common_test_users_transaction");
         CO_ASSERT_VAL(users_form);
         auto dave_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 4).query();
         CO_ASSERT_VAL(dave_count_ret);
@@ -859,7 +870,8 @@ public:
             CO_ASSERT_VAL(tx_ret);
             auto tx = std::move(tx_ret.value());
 
-            auto users_in_tx = co_await Form<SimpleUser, SqliteTag>::create(tx, "common_test_users_transaction");
+            auto users_in_tx =
+                co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(tx, "common_test_users_transaction");
             co_await users_in_tx->insert(5, "Eve", 500);
 
             // 回滚事务
@@ -965,6 +977,7 @@ int main(int argc, char **argv) {
     cpptrace::init();
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ILIAS_LOG_ADD_WHITELIST("ilias-sqlite");
+    ILIAS_LOG_ADD_WHITELIST("ilias-sql");
     ILIAS_LOG_ADD_WHITELIST("sqlite-test");
     ILIAS_LOG_ADD_WHITELIST("sql-test");
     ILIAS_LOG_ADD_WHITELIST("orm-test");

@@ -481,7 +481,7 @@ public:
         // 如果存在上次的测试数据，先清空
         co_await db.execute("DROP TABLE IF EXISTS common_users_full_test");
         // 1. 创建表 (Create)
-        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "common_users_full_test");
+        auto users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_users_full_test");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -646,9 +646,9 @@ public:
             auto transaction = std::move(transaction_ret.value());
 
             // 使用该事务创建 Form 对象
-            auto users_ret = co_await Form<SimpleUser, MysqlTag>::create(transaction, "common_test_users_transaction");
+            auto users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(transaction, "common_test_users_transaction");
             auto orders_ret =
-                co_await Form<SimpleOrder, MysqlTag>::create(transaction, "common_test_orders_transaction");
+                co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(transaction, "common_test_orders_transaction");
             CO_ASSERT_VAL(users_ret);
             CO_ASSERT_VAL(orders_ret);
 
@@ -681,8 +681,8 @@ public:
             auto tx = std::move(tx_ret.value());
 
             // 需要为这个新事务创建新的 Form 实例
-            auto users_in_tx  = co_await Form<SimpleUser, MysqlTag>::create(tx, "common_test_users_transaction");
-            auto orders_in_tx = co_await Form<SimpleOrder, MysqlTag>::create(tx, "common_test_orders_transaction");
+            auto users_in_tx  = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(tx, "common_test_users_transaction");
+            auto orders_in_tx = co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(tx, "common_test_orders_transaction");
 
             CO_ASSERT_VAL(users_in_tx);
             CO_ASSERT_VAL(orders_in_tx);
@@ -695,7 +695,7 @@ public:
             CO_ASSERT_VAL(commit_ret);
         }
 
-        auto users_form = co_await Form<SimpleUser, MysqlTag>::create(db, "common_test_users_transaction");
+        auto users_form = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_test_users_transaction");
         CO_ASSERT_VAL(users_form);
         auto dave_count_ret = co_await users_form->count().where(users_form->sql(&SimpleUser::id) == 4).query();
         CO_ASSERT_VAL(dave_count_ret);
@@ -714,12 +714,11 @@ public:
             auto tx_ret = co_await db.transaction();
             CO_ASSERT_VAL(tx_ret);
             auto tx = std::move(tx_ret.value());
-
-            auto users_in_tx = co_await Form<SimpleUser, MysqlTag>::create(tx, "common_test_users_transaction");
+            auto users_in_tx = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(tx, "common_test_users_transaction");
             co_await users_in_tx->insert(5, "Eve", 500);
 
             // 回滚事务
-            auto rollback_ret = co_await tx.rollback();
+            auto rollback_ret = co_await users_in_tx->db().rollback();
             CO_ASSERT_VAL(rollback_ret);
         }
 
@@ -753,8 +752,8 @@ public:
         co_await db.execute("DROP TABLE IF EXISTS common_test_users_join");
         co_await db.execute("DROP TABLE IF EXISTS common_test_orders_join");
 
-        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create(db, "common_test_users_join");
-        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create(db, "common_test_orders_join");
+        auto users_ret  = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "common_test_users_join");
+        auto orders_ret = co_await Form<SimpleOrder, MysqlTag>::create_if_not_exists(db, "common_test_orders_join");
         CO_ASSERT_VAL(users_ret);
         CO_ASSERT_VAL(orders_ret);
 

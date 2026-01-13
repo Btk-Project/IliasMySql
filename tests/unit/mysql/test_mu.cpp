@@ -282,7 +282,7 @@ public:
         auto db  = std::move(db_ret.value());
         auto ret = co_await db.execute("DROP TABLE IF EXISTS simple_users_v2");
         CO_EXPECT_RESULT(ret);
-        auto users_form_ret = co_await Form<SimpleUser, MysqlTag>::create(db, "simple_users_v2");
+        auto users_form_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(db, "simple_users_v2");
         CO_ASSERT_VAL(users_form_ret);
         auto users = std::move(users_form_ret.value());
 
@@ -311,7 +311,7 @@ public:
             // 每个协程使用独立的数据库连接
             auto conn             = co_await pool->getConnection();
             auto thread_db        = conn.operator->(); // 获取裸指针或引用
-            auto thread_users_ret = co_await Form<SimpleUser, MysqlTag>::create(*thread_db, "simple_users_v2");
+            auto thread_users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(*thread_db, "simple_users_v2");
             CO_ASSERT_VAL(thread_users_ret);
 
             std::mt19937 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() + task_id);
@@ -367,7 +367,7 @@ public:
         auto reader_task = [&](int task_id, std::shared_ptr<LatencyCollector> collector) -> IoTask<void> {
             auto conn             = co_await pool->getConnection();
             auto thread_db        = conn.operator->();
-            auto thread_users_ret = co_await Form<SimpleUser, MysqlTag>::create(*thread_db, "simple_users_v2");
+            auto thread_users_ret = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(*thread_db, "simple_users_v2");
             CO_ASSERT_VAL(thread_users_ret);
             auto thread_users = std::move(thread_users_ret.value());
 

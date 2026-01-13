@@ -1074,7 +1074,7 @@ IoTask<Result<User, AppError>> get_user_safe(int64_t id) {
   - 核心接口已定义，驱动实现进行中
 
 ### 计划中特性 📋
-- [ ] **基于raii的事务支持orm层**
+- [x] **基于raii的事务支持orm层**
 
 ### 长期目标 🎯
 - [ ] **更多数据库驱动**:

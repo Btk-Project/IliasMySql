@@ -162,7 +162,7 @@ public:
         ILIAS_INFO("orm-test", ">>> Running test_basic_crud_operations");
 
         // 创建用户表
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -428,7 +428,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_advanced_query_features");
 
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -515,7 +515,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_transaction_management");
 
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -592,7 +592,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_error_handling");
         co_await db.execute("DROP TABLE IF EXISTS simple_users");
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -742,7 +742,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_data_integrity_and_type_conversion");
 
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -941,7 +941,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_complex_data_scenarios");
 
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -1148,7 +1148,7 @@ public:
         auto db = (co_await setup_db()).value();
         ILIAS_INFO("orm-test", ">>> Running test_condition_builder_coverage");
 
-        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create(db, "simple_users");
+        auto users_ret = co_await Form<SimpleUser, SqliteTag>::create_if_not_exists(db, "simple_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -1334,7 +1334,7 @@ public:
 
     static auto test_new_condition_interfaces() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
-        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create(db, "extended_users");
+        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create_if_not_exists(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
         printf("create table schema:\n");
@@ -1497,7 +1497,7 @@ public:
 
     static auto test_aggregate_functions() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
-        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create(db, "extended_users");
+        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create_if_not_exists(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -1562,7 +1562,7 @@ public:
 
     static auto test_math_functions() -> IoTask<void> {
         auto db        = (co_await setup_db()).value();
-        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create(db, "extended_users");
+        auto users_ret = co_await Form<ExtendedUser, SqliteTag>::create_if_not_exists(db, "extended_users");
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 

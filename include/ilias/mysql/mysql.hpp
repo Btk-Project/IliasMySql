@@ -61,6 +61,7 @@ public:
     auto query(std::string_view sql) -> IoTask<int>;
     auto commit() -> IoTask<bool>;
     auto autoCommit(bool autoMode) -> IoTask<bool>;
+    auto syncAutoCommit(bool autoMode) -> bool;
 
     auto rollback() -> IoTask<bool>;
     auto syncRollback() -> bool;
