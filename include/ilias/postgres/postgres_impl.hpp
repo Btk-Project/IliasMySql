@@ -6,11 +6,12 @@
 #include <memory>
 #include <vector>
 #include <charconv>
+#include <unordered_map>
 
 ILIAS_POSTGRES_NS_BEGIN
 
 // #############################################################################
-// #  PostgresResultSet
+// #  PostgresResultSet (Legacy - full load mode)
 // #############################################################################
 class PostgresResultSet final : public IResultSet {
 public:
@@ -31,13 +32,51 @@ public:
     auto native() -> PGresult *;
 
 private:
-    auto toValue(const PGresult *res, int rowIndex, int colIndex) -> IoResult<SqlValue>;
+    auto toValueView(const PGresult *res, int rowIndex, int colIndex) -> IoResult<SqlValueView>;
 
 private:
     std::shared_ptr<Postgres>                     mPg;
     std::unique_ptr<PGresult, decltype(&PQclear)> mResult;
     int                                           mCurrentRow = -1;
     int                                           mTotalRows  = 0;
+};
+
+// #############################################################################
+// #  PostgresStreamingResultSet (Streaming mode - single row buffer)
+// #############################################################################
+class PostgresStreamingResultSet final : public IResultSet {
+public:
+    PostgresStreamingResultSet(std::shared_ptr<Postgres> pg);
+    ~PostgresStreamingResultSet();
+
+    PostgresStreamingResultSet(const PostgresStreamingResultSet &)            = delete;
+    PostgresStreamingResultSet(PostgresStreamingResultSet &&)                 = default;
+    PostgresStreamingResultSet &operator=(const PostgresStreamingResultSet &) = delete;
+    PostgresStreamingResultSet &operator=(PostgresStreamingResultSet &&)      = default;
+
+    auto next() -> IoTask<bool> override;
+    auto rowCount() const -> size_t override;
+    auto columnCount() const -> size_t override;
+    auto columnName(size_t index) const -> std::string_view override;
+    auto getValue(size_t index) -> IoResult<SqlValueView> override;
+    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
+
+private:
+    auto toValueView(int colIndex) -> IoResult<SqlValueView>;
+    auto initColumnMetadata() -> void;
+    auto drainRemainingResults() -> IoTask<void>;
+
+private:
+    std::shared_ptr<Postgres>                     mPg;
+    std::unique_ptr<PGresult, decltype(&PQclear)> mCurrentRow{nullptr, &PQclear};
+    int                                           mColumnCount = 0;
+    size_t                                        mRowsFetched = 0;
+    bool                                          mEndOfResults = false;
+    bool                                          mMetadataInitialized = false;
+    
+    // Column metadata cache
+    std::vector<std::string>               mColumnNames;
+    std::unordered_map<std::string, int>   mColumnIndex;
 };
 
 // #############################################################################
