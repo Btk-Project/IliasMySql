@@ -40,6 +40,7 @@ public:
 
     auto connect(std::string_view conninfo) -> IoTask<void>;
     auto disconnect() -> void;
+    auto disconnectAsync() -> IoTask<void>;
 
     // Asynchronous command sending
     auto sendQuery(std::string_view sql) -> IoTask<void>;
@@ -47,11 +48,16 @@ public:
     auto sendPrepare(std::string_view stmtName, std::string_view query, int nParams, const Oid *paramTypes) -> IoTask<void>;
     auto sendQueryPrepared(std::string_view stmtName, int nParams, const char *const *paramValues, const int *paramLengths, const int *paramFormats, int resultFormat) -> IoTask<void>;
     
+    // Streaming support
+    auto setSingleRowMode() -> bool;
+    
     // Asynchronous result fetching
     auto getResult() -> IoTask<PGresult *>;
 
     // Utility coroutines and functions
     auto waitForReadable() -> IoTask<void>;
+    auto waitForWritable() -> IoTask<void>;
+    auto flushOutput() -> IoTask<void>;
     auto consumeInput() -> IoResult<void>;
 
     // Status and error reporting
