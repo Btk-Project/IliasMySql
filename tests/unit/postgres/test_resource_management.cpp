@@ -30,11 +30,19 @@ using namespace ILIAS_NAMESPACE;
 // Helper to get connection options
 static ConnectOptions getConnectionOptions() {
     ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
+    auto           get_env = [](const char *name, const char *default_val) -> std::string {
+        const char *val = std::getenv(name);
+        return val ? std::string(val) : std::string(default_val);
+    };
+    auto get_env_int = [](const char *name, int default_val) -> int {
+        const char *val = std::getenv(name);
+        return val ? std::atoi(val) : default_val;
+    };
+    options.host     = get_env("PG_HOST", "localhost");
+    options.port     = get_env_int("PG_PORT", 5432);
+    options.user     = get_env("PG_USER", "test");
+    options.password = get_env("PG_PASS", "test");
+    options.database = get_env("PG_NAME", "testdb");
     return options;
 }
 

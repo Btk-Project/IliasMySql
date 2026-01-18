@@ -11,37 +11,6 @@
 ILIAS_POSTGRES_NS_BEGIN
 
 // #############################################################################
-// #  PostgresResultSet (Legacy - full load mode)
-// #############################################################################
-class PostgresResultSet final : public IResultSet {
-public:
-    PostgresResultSet(std::shared_ptr<Postgres> pg, PGresult *result);
-    ~PostgresResultSet();
-
-    PostgresResultSet(const PostgresResultSet &)            = delete;
-    PostgresResultSet(PostgresResultSet &&)                 = default;
-    PostgresResultSet &operator=(const PostgresResultSet &) = delete;
-    PostgresResultSet &operator=(PostgresResultSet &&)      = default;
-
-    auto next() -> IoTask<bool> override;
-    auto rowCount() const -> size_t override;
-    auto columnCount() const -> size_t override;
-    auto columnName(size_t index) const -> std::string_view override;
-    auto getValue(size_t index) -> IoResult<SqlValueView> override;
-    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
-    auto native() -> PGresult *;
-
-private:
-    auto toValueView(const PGresult *res, int rowIndex, int colIndex) -> IoResult<SqlValueView>;
-
-private:
-    std::shared_ptr<Postgres>                     mPg;
-    std::unique_ptr<PGresult, decltype(&PQclear)> mResult;
-    int                                           mCurrentRow = -1;
-    int                                           mTotalRows  = 0;
-};
-
-// #############################################################################
 // #  PostgresStreamingResultSet (Streaming mode - single row buffer)
 // #############################################################################
 class PostgresStreamingResultSet final : public IResultSet {
@@ -56,10 +25,15 @@ public:
 
     auto next() -> IoTask<bool> override;
     auto rowCount() const -> size_t override;
+    auto rowAffected() const -> size_t;
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
     auto getValue(size_t index) -> IoResult<SqlValueView> override;
     auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
+    auto native() -> PGresult * { return mCurrentRow.get(); }
+
+    auto bindStorage(std::shared_ptr<void> storage) -> void { mStorages.push_back(std::move(storage)); }
+    auto getResultForQuery() -> IoTask<void>;
 
 private:
     auto toValueView(int colIndex) -> IoResult<SqlValueView>;
@@ -68,15 +42,18 @@ private:
 
 private:
     std::shared_ptr<Postgres>                     mPg;
-    std::unique_ptr<PGresult, decltype(&PQclear)> mCurrentRow{nullptr, &PQclear};
-    int                                           mColumnCount = 0;
-    size_t                                        mRowsFetched = 0;
-    bool                                          mEndOfResults = false;
+    std::unique_ptr<PGresult, decltype(&PQclear)> mCurrentRow {nullptr, &PQclear};
+    int                                           mColumnCount         = 0;
+    size_t                                        mRowsFetched         = 0;
+    size_t                                        mRowsAffected        = 0;
+    bool                                          mEndOfResults        = false;
     bool                                          mMetadataInitialized = false;
-    
+    bool                                          mIsResultFetched     = false;
+
     // Column metadata cache
-    std::vector<std::string>               mColumnNames;
-    std::unordered_map<std::string, int>   mColumnIndex;
+    std::vector<std::string>             mColumnNames;
+    std::unordered_map<std::string, int> mColumnIndex;
+    std::vector<std::shared_ptr<void>>   mStorages;
 };
 
 // #############################################################################
@@ -95,14 +72,15 @@ public:
     auto prepare(std::string_view sql) -> IoTask<void>;
 
 private:
-    auto parser(std::string_view sql) -> std::string;
-    auto convertBinds() -> bool;
-    void clearBinds();
+    auto        parser(std::string_view sql) -> std::string;
+    auto        convertBinds() -> bool;
+    void        clearBinds();
+    static void deallocStatementName(const std::string &name, std::shared_ptr<Postgres> mPg);
 
 private:
-    std::shared_ptr<Postgres> mPg;
-    std::string               mStatementName;
-    std::string               mPreparedSql;
+    std::shared_ptr<Postgres>    mPg;
+    std::shared_ptr<std::string> mStatementName;
+    std::string                  mPreparedSql;
 
     // Storage for bound values
     std::vector<SqlValuePointer>         mBindValues;
@@ -138,10 +116,10 @@ public:
     auto ping() -> IoTask<bool> override;
 
 private:
-    std::shared_ptr<Postgres>            mPg;
-    ConnectOptions                       mOptions;
-    bool                                 mIsConnected  = false;
-    int64_t                              mLastInsertId = 0;
+    std::shared_ptr<Postgres> mPg;
+    ConnectOptions            mOptions;
+    bool                      mIsConnected  = false;
+    int64_t                   mLastInsertId = 0;
 };
 
 ILIAS_POSTGRES_NS_END

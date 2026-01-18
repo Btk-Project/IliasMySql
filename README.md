@@ -1071,7 +1071,9 @@ IoTask<Result<User, AppError>> get_user_safe(int64_t id) {
 
 ### 开发中特性 🚧
 - [ ] **PostgreSQL 驱动**: 基于 libpq 的异步实现
-  - 核心接口已定义，驱动实现进行中
+  - [x] 核心接口已定义，驱动实现进行中
+  - [ ] 绑定和获取数据采用数据流，而非字符串
+  - [ ] 完善数据库option设置
 
 ### 计划中特性 📋
 - [x] **基于raii的事务支持orm层**

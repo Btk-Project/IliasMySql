@@ -22,6 +22,22 @@ jobs:
         auto-start: true
         root-password: 'root'
 
+    - name: Setup PostgreSQL
+      shell: powershell
+      run: |
+        # 查找安装路径并添加到 PATH
+        $pgPath = Get-ChildItem "C:\Program Files\PostgreSQL" | Select-Object -First 1
+        $pgBin = "$($pgPath.FullName)\bin"
+        echo "$pgBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        
+        # 启动服务 (Windows 服务名通常是 postgresql-x64-<version>)
+        $serviceName = Get-Service | Where-Object { $_.Name -like "postgresql*" } | Select-Object -ExpandProperty Name
+        Write-Host "Starting service: $serviceName"
+        net start $serviceName
+
+        # 等待启动
+        Start-Sleep -Seconds 5
+
     # 2. 创建测试数据库
     - name: Create Database
       shell: powershell
@@ -39,6 +55,13 @@ jobs:
 
         # 初始管理操作通过 localhost（通常拥有 socket 特权），然后创建一个 TCP-friendly CI 用户 ci@'%'
         & mysql -h localhost -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root'; CREATE USER IF NOT EXISTS 'ci'@'%' IDENTIFIED WITH mysql_native_password BY 'ci'; GRANT ALL PRIVILEGES ON *.* TO 'ci'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES; CREATE DATABASE IF NOT EXISTS test_db;"
+
+        # --- PostgreSQL 初始化 ---
+        # 默认 postgres 用户在 Windows CI 上通常没有密码或者使用系统认证
+        # 创建 ci 用户和测试数据库
+        $env:PGPASSWORD = "" # 尝试空密码登录
+        & psql -h localhost -U postgres -c "CREATE USER ci WITH PASSWORD 'ci' SUPERUSER;"
+        & psql -h localhost -U postgres -c "CREATE DATABASE test_db;"
 
     # 3. 安装 XMake
     - name: Setup XMake
@@ -65,4 +88,10 @@ jobs:
         DB_PASS: ci
         DB_NAME: test_db
         DB_PORT: 3306
+        # PostgreSQL 配置
+        PG_HOST: 127.0.0.1
+        PG_USER: ci
+        PG_PASS: ci
+        PG_NAME: test_db
+        PG_PORT: 5432
       run: xmake test -v

@@ -33,6 +33,24 @@ using namespace ILIAS_NAMESPACE;
 // Random number generator with fixed seed for reproducibility
 static std::mt19937 g_rng(42);
 
+static auto get_options() -> ConnectOptions {
+    ConnectOptions options;
+    auto           get_env = [](const char *name, const char *default_val) -> std::string {
+        const char *val = std::getenv(name);
+        return val ? std::string(val) : std::string(default_val);
+    };
+    auto get_env_int = [](const char *name, int default_val) -> int {
+        const char *val = std::getenv(name);
+        return val ? std::atoi(val) : default_val;
+    };
+    options.host     = get_env("PG_HOST", "localhost");
+    options.port     = get_env_int("PG_PORT", 5432);
+    options.user     = get_env("PG_USER", "test");
+    options.password = get_env("PG_PASS", "test");
+    options.database = get_env("PG_NAME", "testdb");
+    return options;
+}
+
 /**
  * Property 2a: Integer Type Round-Trip (int2, int4, int8)
  * 
@@ -42,12 +60,7 @@ static std::mt19937 g_rng(42);
  * **Validates: Requirements 2.2**
  */
 static auto test_integer_roundtrip_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
+    ConnectOptions options = get_options();
     
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
@@ -113,13 +126,8 @@ static auto test_integer_roundtrip_property() -> IoTask<void> {
  * **Validates: Requirements 2.3**
  */
 static auto test_float_roundtrip_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
-    
+    ConnectOptions options = get_options();
+
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
     auto db = std::move(ret.value());
@@ -173,13 +181,8 @@ static auto test_float_roundtrip_property() -> IoTask<void> {
  * **Validates: Requirements 2.4**
  */
 static auto test_boolean_roundtrip_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
-    
+    ConnectOptions options = get_options();
+
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
     auto db = std::move(ret.value());
@@ -224,13 +227,8 @@ static auto test_boolean_roundtrip_property() -> IoTask<void> {
  * **Validates: Requirements 2.2 (text as default type)**
  */
 static auto test_text_roundtrip_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
-    
+    ConnectOptions options = get_options();
+
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
     auto db = std::move(ret.value());
@@ -294,13 +292,8 @@ static auto test_text_roundtrip_property() -> IoTask<void> {
  * **Validates: Requirements 2.7**
  */
 static auto test_null_handling_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
-    
+    ConnectOptions options = get_options();
+
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
     auto db = std::move(ret.value());
@@ -339,13 +332,8 @@ static auto test_null_handling_property() -> IoTask<void> {
  * **Validates: Requirements 2.6**
  */
 static auto test_datetime_roundtrip_property() -> IoTask<void> {
-    ConnectOptions options;
-    options.host = "localhost";
-    options.port = 5432;
-    options.user = "test";
-    options.password = "test";
-    options.database = "testdb";
-    
+    ConnectOptions options = get_options();
+
     auto ret = co_await SqlDatabase::open("postgres", options);
     CO_ASSERT_VAL(ret);
     auto db = std::move(ret.value());
