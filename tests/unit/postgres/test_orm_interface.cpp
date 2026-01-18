@@ -1,14 +1,14 @@
 /**
  * @file test_orm_interface.cpp
  * @brief ORM interface tests for PostgreSQL backend
- * 
+ *
  * Tests ORM layer integration with PostgreSQL backend including:
  * - Basic CRUD operations
  * - Advanced query features
  * - Transaction management
  * - Error handling
  * - Type conversion
- * 
+ *
  * Validates: Requirements 1.x, 2.x, 3.x, 4.x, 5.x, 6.x
  */
 
@@ -161,13 +161,13 @@ public:
         };
 
         ConnectOptions options;
-        options.host     = get_env("DB_HOST", "localhost");
-        options.port     = get_env_int("DB_PORT", 5432);
-        options.user     = get_env("DB_USER", "test");
-        options.password = get_env("DB_PASS", "test");
-        options.database = get_env("DB_NAME", "testdb");
-        ILIAS_INFO("pgsql-test", "Connecting to PostgreSQL: host={}, port={}, user={}, database={}",
-                   options.host, options.port, options.user, options.database);
+        options.host     = get_env("PG_HOST", "localhost");
+        options.port     = get_env_int("PG_PORT", 5432);
+        options.user     = get_env("PG_USER", "test");
+        options.password = get_env("PG_PASS", "test");
+        options.database = get_env("PG_NAME", "testdb");
+        ILIAS_INFO("pgsql-test", "Connecting to PostgreSQL: host={}, port={}, user={}, database={}", options.host,
+                   options.port, options.user, options.database);
 
         return options;
     }
@@ -199,6 +199,15 @@ public:
 
         // 创建用户表
         auto users_ret = co_await Form<SimpleUser, PostgresTag>::create_if_not_exists(db, "simple_users");
+        auto ret1      = co_await db.query("SELECT * FROM simple_users WHERE 1=0");
+        CO_ASSERT_VAL(ret1);
+        auto result1 = std::move(ret1.value());
+        int  count1  = 0;
+        ilias_for_await(auto &row, result1.range()) {
+            count1++;
+        }
+        EXPECT_EQ(count1, 0) << "Query on empty result set should return zero rows";
+
         CO_ASSERT_VAL(users_ret);
         auto users = std::move(users_ret.value());
 
@@ -726,7 +735,8 @@ public:
         // 3. 测试 blob 类型转换 (PostgreSQL uses BYTEA)
         {
             // PostgreSQL uses hex format for bytea by default
-            auto insert_ret = co_await db.execute("INSERT INTO type_test (id, blob_val) VALUES (3, E'\\\\x62696e617279')");
+            auto insert_ret =
+                co_await db.execute("INSERT INTO type_test (id, blob_val) VALUES (3, E'\\\\x62696e617279')");
             CO_ASSERT_VAL(insert_ret);
 
             auto query_ret = co_await db.query<std::vector<uint8_t>>("SELECT blob_val FROM type_test WHERE id = 3");
@@ -784,8 +794,8 @@ public:
             PERF_TIMER("boundary_values");
 
             // 测试极大值
-            auto insert_large = co_await users.insert(
-                1, "LargeBalance", 100, "large@test.com", SqlDate(2024, 12, 31, 23, 59, 59), true, 999999999.99);
+            auto insert_large = co_await users.insert(1, "LargeBalance", 100, "large@test.com",
+                                                      SqlDate(2024, 12, 31, 23, 59, 59), true, 999999999.99);
             CO_ASSERT_VAL(insert_large);
 
             auto verify_large = co_await users.select().where(users.sql(&SimpleUser::id) == 1).query();
@@ -823,8 +833,8 @@ public:
             PERF_TIMER("special_characters");
 
             // 测试包含特殊字符的字符串
-            auto insert_special = co_await users.insert(
-                3, "User'With\"Special<>Chars", 25, "special@test.com", SqlDate(2024, 6, 15), true, 100.0);
+            auto insert_special = co_await users.insert(3, "User'With\"Special<>Chars", 25, "special@test.com",
+                                                        SqlDate(2024, 6, 15), true, 100.0);
             CO_ASSERT_VAL(insert_special);
 
             auto verify_special = co_await users.select().where(users.sql(&SimpleUser::id) == 3).query();
