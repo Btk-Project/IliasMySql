@@ -29,7 +29,7 @@ ILIAS_SQL_USE_NAMESPACE
 
 class ILIAS_SQL_API SqliteStatement final : public IStatement {
 public:
-    SqliteStatement(std::shared_ptr<sqlite3> sqlite);
+    SqliteStatement(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<SqlValueConverterContext> context);
     ~SqliteStatement();
     auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> override;
     auto bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> override;
@@ -47,13 +47,15 @@ public:
     auto close() -> IoTask<void>;
 
 private:
-    std::shared_ptr<sqlite3>      mSqlite     = nullptr;
-    std::shared_ptr<sqlite3_stmt> mSqliteStmt = nullptr;
+    std::shared_ptr<sqlite3>                  mSqlite     = nullptr;
+    std::shared_ptr<sqlite3_stmt>             mSqliteStmt = nullptr;
+    std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
 class ILIAS_SQL_API SqliteStmtResultSet final : public IResultSet {
 public:
-    SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<sqlite3_stmt> stmt);
+    SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<sqlite3_stmt> stmt,
+                        std::shared_ptr<SqlValueConverterContext> context);
     ~SqliteStmtResultSet();
     auto next() -> IoTask<bool> override;
 
@@ -64,18 +66,19 @@ public:
 
     // 获取当前行的某一列数据 (零拷贝尽可能)
     // 如果是 Text/Blob，返回的 View 有效期通常仅在下一次 next() 之前
-    auto getValue(size_t index) -> IoResult<SqlValueView> override;
+    auto getValue(size_t index) -> IoResult<SqlCellView> override;
 
     // 按列名获取
-    auto getValue(std::string_view name) -> IoResult<SqlValueView> override;
+    auto getValue(std::string_view name) -> IoResult<SqlCellView> override;
     auto setPrivate(std::unique_ptr<SqliteStatement> mp);
 
 private:
-    std::shared_ptr<sqlite3>             mSqlite     = nullptr;
-    std::shared_ptr<sqlite3_stmt>        mSqliteStmt = nullptr;
-    bool                                 mIsFirst    = true;
-    std::unordered_map<std::string, int> mIndexs;
-    std::unique_ptr<SqliteStatement>     mPrivate;
+    std::shared_ptr<sqlite3>                  mSqlite     = nullptr;
+    std::shared_ptr<sqlite3_stmt>             mSqliteStmt = nullptr;
+    bool                                      mIsFirst    = true;
+    std::unordered_map<std::string, int>      mIndexs;
+    std::unique_ptr<SqliteStatement>          mPrivate;
+    std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
 class ILIAS_SQL_API Sqlite final : public IConnection {
@@ -108,9 +111,13 @@ public:
     // 连通性检测
     auto ping() -> IoTask<bool> override;
 
+    auto findTypeParser(std::type_index type) -> SqlParserFunc override;
+    auto registerType(std::type_index type, SqlParserFunc func) -> void override;
+
 private:
-    std::shared_ptr<sqlite3> mSqlite = nullptr;
-    ConnectOptions           mOptions;
+    std::shared_ptr<sqlite3>                  mSqlite = nullptr;
+    ConnectOptions                            mOptions;
+    std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
 ILIAS_SQLITE_NS_END

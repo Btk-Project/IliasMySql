@@ -3,6 +3,7 @@
 #include <ilias/task.hpp>
 #include <ilias/detail/config.hpp>
 #include <ilias/defines.hpp>
+#include <ilias/io/error.hpp>
 
 #include "config.h"
 
