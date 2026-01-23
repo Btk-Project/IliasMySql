@@ -42,12 +42,10 @@ public:
     virtual auto columnCount() const -> size_t                      = 0;
     virtual auto columnName(size_t index) const -> std::string_view = 0;
 
-    // 获取当前行的某一列数据 (零拷贝尽可能)
-    // 如果是 Text/Blob，返回的 View 有效期通常仅在下一次 next() 之前
-    virtual auto getValue(size_t index) -> IoResult<SqlValueView> = 0;
+    virtual auto getValue(size_t index) -> IoResult<SqlCellView> = 0;
 
     // 按列名获取
-    virtual auto getValue(std::string_view name) -> IoResult<SqlValueView> = 0;
+    virtual auto getValue(std::string_view name) -> IoResult<SqlCellView> = 0;
 };
 
 /**
@@ -99,8 +97,22 @@ public:
     // 获取最后一次插入的 ID
     virtual auto lastInsertId() const -> int64_t = 0;
 
+    // 注册自定义的类型解析
+    template <typename T>
+    auto registerType(SqlParserFunc func) -> void;
+
+    virtual auto findTypeParser(std::type_index type) -> SqlParserFunc = 0;
+
     // 连通性检测
     virtual auto ping() -> IoTask<bool> = 0;
+
+protected:
+    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void = 0;
 };
+
+template <typename T>
+auto IConnection::registerType(SqlParserFunc func) -> void {
+    registerType(std::type_index(typeid(T)), func);
+}
 
 ILIAS_SQL_NS_END

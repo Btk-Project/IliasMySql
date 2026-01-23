@@ -8,8 +8,11 @@
 #include <variant>
 #include <chrono>
 #include <span>
+#include <typeindex>
+#include <any>
 
 #include "ilias/sql/global/global.hpp"
+#include "ilias/sql/sqlerror.hpp"
 
 ILIAS_SQL_NS_BEGIN
 
@@ -27,7 +30,8 @@ struct ILIAS_SQL_API SqlDate {
         kTime,          // 00:00:00.000000
     };
     SqlDate() {}
-    SqlDate(int year, int month, int day, int hour = 0, int minute = 0, int second = 0, int time_zone_offset_minutes = 0) {
+    SqlDate(int year, int month, int day, int hour = 0, int minute = 0, int second = 0,
+            int time_zone_offset_minutes = 0) {
         setTime(year, month, day, hour, minute, second, 0, time_zone_offset_minutes);
     }
     explicit SqlDate(struct tm *timeinfo) { setTime(timeinfo); }
@@ -57,8 +61,8 @@ struct ILIAS_SQL_API SqlDate {
 
     auto setTime(std::chrono::system_clock::time_point tp) -> void;
     auto setTime(std::chrono::milliseconds timestamp) -> void;
-    auto setTime(int year, int month, int day, int hour, int minute, int second, int microsecond = 0, int time_zone_offset_minutes = 0)
-        -> void;
+    auto setTime(int year, int month, int day, int hour, int minute, int second, int microsecond = 0,
+                 int time_zone_offset_minutes = 0) -> void;
     auto setDate(int year, int month, int day) -> void;
     auto setTime(int hour, int minute, int second) -> void;
     auto setTime(struct tm *timeinfo) -> void;
@@ -82,40 +86,184 @@ struct ILIAS_SQL_API SqlDate {
     TimeType type        = kErrorTime;
 };
 
-// 空值类型
+// 通用默认支持类型
 struct SqlNull {};
+using SqlBool     = bool;
+using SqlTinyInt  = int8_t;
+using SqlInt      = int32_t;
+using SqlBigInt   = int64_t;
+using SqlFloat    = float;
+using SqlDouble   = double;
+using SqlText     = std::string;
+using SqlTextView = std::string_view;
+using SqlBlobView = std::span<const std::byte>;
+using SqlBlobRef  = std::span<std::byte>;
+using SqlBlob     = std::vector<std::byte>;
+
 // 全局静态 SqlNull 实例，用于返回指向 NULL 的指针（避免返回 nullptr）
 inline SqlNull g_sql_null {};
 
-// 二进制视图
-using SqlBlobView = std::span<const std::byte>;
-using SqlBlobRef  = std::span<std::byte>;
-// 二进制拥有权对象
-using SqlBlob = std::vector<std::byte>;
-
 // 数据库值的通用变体
-using SqlValue = std::variant<SqlNull,     // NULL
-                              bool,        // Bool
-                              char,        // TinyInt
-                              int32_t,     // Int
-                              int64_t,     // BigInt
-                              float,       // Float
-                              double,      // Double
-                              std::string, // Text
-                              SqlBlob,     // Binary
-                              SqlDate      // Timestamp/Date
+using SqlValue = std::variant<SqlNull,    // NULL
+                              SqlBool,    // Bool
+                              SqlTinyInt, // TinyInt
+                              SqlInt,     // Int
+                              SqlBigInt,  // BigInt
+                              SqlFloat,   // Float
+                              SqlDouble,  // Double
+                              SqlText,    // Text
+                              SqlBlob,    // Binary
+                              SqlDate     // Timestamp/Date
                               >;
+// 用于参数绑定的轻量级变体 (避免拷贝 string/blob)
+using SqlValueView = std::variant<SqlNull, SqlBool, SqlTinyInt, SqlInt, SqlBigInt, SqlFloat, SqlDouble, SqlTextView,
+                                  SqlBlobView, SqlDate>;
+
+using SqlValuePointer = std::variant<SqlNull *, SqlBool *, SqlTinyInt *, SqlInt *, SqlBigInt *, SqlFloat *, SqlDouble *,
+                                     SqlTextView, SqlBlobView, SqlDate *>;
+
+using SqlValueRef = std::variant<SqlNull, SqlBool &, SqlTinyInt &, SqlInt &, SqlBigInt &, SqlFloat &, SqlDouble &,
+                                 SqlText &, SqlBlob &, SqlDate &>;
+
 // 类型索引对应的枚举
 enum class SqlValueType { kNull = 0, kBool, kChar, kInt, kBigInt, kFloat, kDouble, kText, kBlob, kDate, kMax };
 
-// 用于参数绑定的轻量级变体 (避免拷贝 string/blob)
-using SqlValueView =
-    std::variant<SqlNull, bool, char, int32_t, int64_t, float, double, std::string_view, SqlBlobView, SqlDate>;
+class SqlCellView;
+using SqlParserFunc = std::function<IoResult<std::any>(const SqlCellView &)>;
 
-using SqlValuePointer = std::variant<SqlNull *, bool *, char *, int32_t *, int64_t *, float *, double *,
-                                     std::string_view, SqlBlobView, SqlDate *>;
-using SqlValueRef =
-    std::variant<SqlNull, bool &, char &, int32_t &, int64_t &, float &, double &, std::string &, SqlBlob &, SqlDate &>;
+class SqlValueConverterContext {
+public:
+    virtual ~SqlValueConverterContext() = default;
+    virtual auto findTypeParser(std::type_index type) const -> SqlParserFunc {
+        if (mCtxts.count(type) > 0) {
+            return mCtxts.at(type);
+        }
+        return nullptr;
+    }
+
+    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void { mCtxts[type] = func; }
+
+    template <typename T>
+    auto registerType(SqlParserFunc func) -> void {
+        registerType(std::type_index(typeid(T)), func);
+    }
+
+protected:
+    std::unordered_map<std::type_index, SqlParserFunc> mCtxts;
+};
+
+/**
+ * @brief 数据库单元格视图
+ * 该数据视图在Result::next()和Result释放数据前有效
+ */
+class SqlCellView {
+public:
+    enum class DataFormat { kUnknown = 0, kString, kNativeValuePointer, kSqlValuePointer };
+
+    SqlCellView()                               = default;
+    SqlCellView(const SqlCellView &)            = default;
+    SqlCellView(SqlCellView &&)                 = default;
+    SqlCellView &operator=(const SqlCellView &) = default;
+    SqlCellView &operator=(SqlCellView &&)      = default;
+    ~SqlCellView()                              = default;
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, const std::byte *data, size_t size, DataFormat format,
+                uint32_t native_type, int index, const std::any &sql_value = std::any())
+        : mData(data), mSize(size), mFormat(format), mNativeType(native_type), mIndex(index), mSqlValue(sql_value) {
+        mContext = ctxt;
+    }
+    /**
+     * @brief 将数据转换为指定类型
+     * 通过查找构造时提供的上下文中注册的解析器函数，将单元格数据解析为指定类型，如果解析失败，则返回错误
+     * @tparam T 期望的类型
+     * @return IoResult<T>
+     */
+    template <typename T>
+    auto as() const -> IoResult<T>;
+    /**
+     * @brief 获取数据指针
+     * 在作为返回值时，该指针在Result::next()和Result释放数据前有效，
+     * 指针为从数据库获取的数据的原始指针，其具体含义由DataFormat决定
+     * @note 当数据为NULL时，返回 nullptr
+     * @par DataFormat::kString
+     * 可读的字符串数据
+     * @par DataFormat::kNativeValuePointer
+     * 指向原生类型的指针，如 int*、double* 等，具体类型请通过native_type()获取数据库后端的类型枚举并确认。
+     * @par DataFormat::kSqlValuePointer
+     * 指向底层数据库自行封装的value对象指针，如 MySQL::MYSQL_BIND*， sqlite3_value* 等,
+     * 该类型请通过sql_value()获取并尝试类型安全的转化访问。防止类型不符合预期
+     * @return const char*
+     */
+    auto data() const -> const std::byte * { return mData; }
+    /**
+     * @brief 获取数据大小
+     * 对于DataFormat::kString以外的数据，该值可能为0
+     * @return size_t
+     */
+    auto size() const -> size_t { return mSize; }
+    /**
+     * @brief SqlCellView中的数据格式
+     * @par DataFormat::kString
+     * 可读的字符串数据
+     * @par DataFormat::kNativeValuePointer
+     * 指向原生类型的指针，如 int*、double* 等，具体类型请通过native_type()获取数据库后端的类型枚举并确认。
+     * @par DataFormat::kSqlValuePointer
+     * 指向底层数据库自行封装的value对象指针，如 MySQL::MYSQL_BIND*， sqlite3_value* 等,
+     * @return DataFormat
+     */
+    auto format() const -> DataFormat { return mFormat; }
+    /**
+     * @brief 获取数据库后端实际的类型枚举
+     * @return uint32_t
+     */
+    auto native_type() const -> uint32_t { return mNativeType; }
+    /**
+     * @brief 该单元格数据是否为空
+     *
+     * @return true
+     * @return false
+     */
+    auto is_null() const -> bool { return mData == nullptr; }
+    /**
+     * @brief 获取单元格在列中的索引
+     *
+     * @return int
+     */
+    auto index() const -> int { return mIndex; }
+    /**
+     * @brief 获取来自后端实现的通用类型指针
+     *
+     * @return const std::any&
+     */
+    auto sql_value() const -> const std::any & { return mSqlValue; }
+
+private:
+    const std::byte                          *mData       = nullptr;
+    size_t                                    mSize       = 0;
+    DataFormat                                mFormat     = DataFormat::kUnknown;
+    uint32_t                                  mNativeType = 0;
+    int                                       mIndex      = 0;
+    std::any                                  mSqlValue;
+    std::shared_ptr<SqlValueConverterContext> mContext;
+};
+
+template <typename T>
+auto SqlCellView::as() const -> IoResult<T> {
+    auto parser_func = mContext->findTypeParser(std::type_index(typeid(T)));
+    if (!parser_func) {
+        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    }
+    IoResult<std::any> result_any = parser_func(*this);
+    if (!result_any) {
+        return Unexpected(result_any.error());
+    }
+    if (const T *ptr = std::any_cast<T>(&result_any.value())) {
+        return *ptr;
+    }
+    else {
+        ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", typeid(T).name());
+        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    }
+}
 
 // =========================================================
 // 3. 运行时 NULL 检测 (修复 -Waddress 警告)
@@ -171,56 +319,56 @@ struct SqlValueTraits<SqlValueType::kNull, void> {
 
 template <>
 struct SqlValueTraits<SqlValueType::kBool, void> {
-    using type                              = bool;
-    using viewType                          = bool;
+    using type                              = SqlBool;
+    using viewType                          = SqlBool;
     constexpr static SqlValueType valueType = SqlValueType::kBool;
     constexpr static auto         name      = "Bool";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kChar, void> {
-    using type                              = char;
-    using viewType                          = char;
+    using type                              = SqlTinyInt;
+    using viewType                          = SqlTinyInt;
     constexpr static SqlValueType valueType = SqlValueType::kChar;
     constexpr static auto         name      = "Char";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kInt, void> {
-    using type                              = int32_t;
-    using viewType                          = int32_t;
+    using type                              = SqlInt;
+    using viewType                          = SqlInt;
     constexpr static SqlValueType valueType = SqlValueType::kInt;
     constexpr static auto         name      = "Int";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kBigInt, void> {
-    using type                              = int64_t;
-    using viewType                          = int64_t;
+    using type                              = SqlBigInt;
+    using viewType                          = SqlBigInt;
     constexpr static SqlValueType valueType = SqlValueType::kBigInt;
     constexpr static auto         name      = "BigInt";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kFloat, void> {
-    using type                              = float;
-    using viewType                          = float;
+    using type                              = SqlFloat;
+    using viewType                          = SqlFloat;
     constexpr static SqlValueType valueType = SqlValueType::kFloat;
     constexpr static auto         name      = "Float";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kDouble, void> {
-    using type                              = double;
-    using viewType                          = double;
+    using type                              = SqlDouble;
+    using viewType                          = SqlDouble;
     constexpr static SqlValueType valueType = SqlValueType::kDouble;
     constexpr static auto         name      = "Double";
 };
 
 template <>
 struct SqlValueTraits<SqlValueType::kText, void> {
-    using type                              = std::string;
-    using viewType                          = std::string_view;
+    using type                              = SqlText;
+    using viewType                          = SqlTextView;
     constexpr static SqlValueType valueType = SqlValueType::kText;
     constexpr static auto         name      = "Text";
 };
