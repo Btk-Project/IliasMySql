@@ -10,9 +10,11 @@
 #include <span>
 #include <typeindex>
 #include <any>
+#include <map>
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/sqlerror.hpp"
+#include "nekoproto/global/reflect.hpp"
 
 ILIAS_SQL_NS_BEGIN
 
@@ -135,13 +137,15 @@ class SqlValueConverterContext {
 public:
     virtual ~SqlValueConverterContext() = default;
     virtual auto findTypeParser(std::type_index type) const -> SqlParserFunc {
-        if (mCtxts.count(type) > 0) {
-            return mCtxts.at(type);
+        auto item = mParsers.find(type);
+        if (item != mParsers.end()) {
+            return item->second;
         }
         return nullptr;
     }
+    virtual auto parserTypes() const -> const std::map<std::type_index, SqlParserFunc> & { return mParsers; }
 
-    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void { mCtxts[type] = func; }
+    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void { mParsers[type] = func; }
 
     template <typename T>
     auto registerType(SqlParserFunc func) -> void {
@@ -149,7 +153,7 @@ public:
     }
 
 protected:
-    std::unordered_map<std::type_index, SqlParserFunc> mCtxts;
+    std::map<std::type_index, SqlParserFunc> mParsers;
 };
 
 /**
@@ -158,7 +162,10 @@ protected:
  */
 class SqlCellView {
 public:
-    enum class DataFormat { kUnknown = 0, kString, kNativeValuePointer, kSqlValuePointer };
+    using ValueString  = std::tuple<std::string_view, int>;
+    using NativeValue  = std::any;
+    using ValuePointer = std::tuple<const void *, std::type_index>;
+    enum class DataFormat { kUnknown = 0, kString, kNativeValue, kValuePointer };
 
     SqlCellView()                               = default;
     SqlCellView(const SqlCellView &)            = default;
@@ -166,11 +173,12 @@ public:
     SqlCellView &operator=(const SqlCellView &) = default;
     SqlCellView &operator=(SqlCellView &&)      = default;
     ~SqlCellView()                              = default;
-    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, const std::byte *data, size_t size, DataFormat format,
-                uint32_t native_type, int index, const std::any &sql_value = std::any())
-        : mData(data), mSize(size), mFormat(format), mNativeType(native_type), mIndex(index), mSqlValue(sql_value) {
-        mContext = ctxt;
-    }
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, std::string_view data, uint32_t native_type, int index)
+        : mContext(ctxt), mSqlValue(ValueString(data, native_type)), mIndex(index) {}
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, NativeValue data, int index)
+        : mContext(ctxt), mSqlValue(data), mIndex(index) {}
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, const void *data, std::type_index type, int index)
+        : mContext(ctxt), mSqlValue(ValuePointer(data, type)), mIndex(index) {}
     /**
      * @brief 将数据转换为指定类型
      * 通过查找构造时提供的上下文中注册的解析器函数，将单元格数据解析为指定类型，如果解析失败，则返回错误
@@ -180,49 +188,35 @@ public:
     template <typename T>
     auto as() const -> IoResult<T>;
     /**
-     * @brief 获取数据指针
-     * 在作为返回值时，该指针在Result::next()和Result释放数据前有效，
-     * 指针为从数据库获取的数据的原始指针，其具体含义由DataFormat决定
-     * @note 当数据为NULL时，返回 nullptr
-     * @par DataFormat::kString
-     * 可读的字符串数据
-     * @par DataFormat::kNativeValuePointer
-     * 指向原生类型的指针，如 int*、double* 等，具体类型请通过native_type()获取数据库后端的类型枚举并确认。
-     * @par DataFormat::kSqlValuePointer
-     * 指向底层数据库自行封装的value对象指针，如 MySQL::MYSQL_BIND*， sqlite3_value* 等,
-     * 该类型请通过sql_value()获取并尝试类型安全的转化访问。防止类型不符合预期
-     * @return const char*
-     */
-    auto data() const -> const std::byte * { return mData; }
-    /**
-     * @brief 获取数据大小
-     * 对于DataFormat::kString以外的数据，该值可能为0
-     * @return size_t
-     */
-    auto size() const -> size_t { return mSize; }
-    /**
      * @brief SqlCellView中的数据格式
      * @par DataFormat::kString
      * 可读的字符串数据
-     * @par DataFormat::kNativeValuePointer
-     * 指向原生类型的指针，如 int*、double* 等，具体类型请通过native_type()获取数据库后端的类型枚举并确认。
-     * @par DataFormat::kSqlValuePointer
+     * @par DataFormat::kNativeValue
      * 指向底层数据库自行封装的value对象指针，如 MySQL::MYSQL_BIND*， sqlite3_value* 等,
+     * @par DataFormat::kValuePointer
+     *  指向原生类型的指针，如 int*、double* 等，具体类型请通过native_type()获取数据库后端的类型枚举并确认。
      * @return DataFormat
      */
-    auto format() const -> DataFormat { return mFormat; }
-    /**
-     * @brief 获取数据库后端实际的类型枚举
-     * @return uint32_t
-     */
-    auto native_type() const -> uint32_t { return mNativeType; }
+    auto format() const -> DataFormat {
+        switch (mSqlValue.index()) {
+            case 0:
+                return DataFormat::kUnknown;
+            case 1:
+                return DataFormat::kString;
+            case 2:
+                return DataFormat::kNativeValue;
+            case 3:
+                return DataFormat::kValuePointer;
+        }
+        return DataFormat::kUnknown;
+    }
     /**
      * @brief 该单元格数据是否为空
      *
      * @return true
      * @return false
      */
-    auto is_null() const -> bool { return mData == nullptr; }
+    auto is_null() const -> bool { return mSqlValue.index() == 0; }
     /**
      * @brief 获取单元格在列中的索引
      *
@@ -234,35 +228,79 @@ public:
      *
      * @return const std::any&
      */
-    auto sql_value() const -> const std::any & { return mSqlValue; }
+    auto sql_value() const -> const std::any & { return std::get<NativeValue>(mSqlValue); }
+    /**
+     * @brief 获取原始数据指针
+     *
+     * @return const void*
+     */
+    auto raw_value() const -> const void * { return std::get<0>(std::get<ValuePointer>(mSqlValue)); }
+    /**
+     * @brief 获取原始数据类型
+     *
+     * @return std::type_index
+     */
+    auto raw_type() const -> std::type_index { return std::get<1>(std::get<ValuePointer>(mSqlValue)); }
+    /**
+     * @brief 获取格式化后的数据
+     *
+     * @return std::string
+     */
+    auto formatted_value() const -> std::string_view { return std::get<0>(std::get<ValueString>(mSqlValue)); }
+    /**
+     * @brief   获取格式化后的数据类型
+     *
+     * @return  int
+     */
+    auto formatted_type() const -> int { return std::get<1>(std::get<ValueString>(mSqlValue)); }
 
 private:
-    const std::byte                          *mData       = nullptr;
-    size_t                                    mSize       = 0;
-    DataFormat                                mFormat     = DataFormat::kUnknown;
-    uint32_t                                  mNativeType = 0;
-    int                                       mIndex      = 0;
-    std::any                                  mSqlValue;
-    std::shared_ptr<SqlValueConverterContext> mContext;
+    std::shared_ptr<SqlValueConverterContext>                            mContext;
+    std::variant<std::monostate, ValueString, NativeValue, ValuePointer> mSqlValue;
+    int                                                                  mIndex = 0;
 };
 
 template <typename T>
 auto SqlCellView::as() const -> IoResult<T> {
-    auto parser_func = mContext->findTypeParser(std::type_index(typeid(T)));
+    constexpr bool is_optional = NEKO_NAMESPACE::detail::is_optional<T>::value;
+    constexpr bool is_pointer  = std::is_pointer_v<T>;
+    constexpr bool is_nullable = is_optional || is_pointer || std::is_same_v<T, SqlDate>;
+    auto           type_index  = std::type_index(typeid(std::remove_cvref_t<T>));
+    if constexpr (is_optional) {
+        type_index = std::type_index(typeid(typename T::value_type));
+    }
+    auto parser_func = mContext->findTypeParser(type_index);
     if (!parser_func) {
+        ILIAS_ERROR("ilias-sql", "Unsupport convert from sql type: {}", type_index.name());
         return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
     }
+    if constexpr (is_nullable) {
+        if (is_null()) {
+            return T {};
+        }
+    }
     IoResult<std::any> result_any = parser_func(*this);
+    if constexpr (is_nullable) {
+        if (!result_any && result_any.error() == SqlError::NullValue) {
+            return T {};
+        }
+    }
     if (!result_any) {
         return Unexpected(result_any.error());
     }
-    if (const T *ptr = std::any_cast<T>(&result_any.value())) {
-        return *ptr;
+    if constexpr (is_optional) {
+        using value_type = typename T::value_type;
+        if (const value_type *ptr = std::any_cast<value_type>(&result_any.value())) {
+            return T {std::move(*ptr)};
+        }
     }
     else {
-        ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", typeid(T).name());
-        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+        if (const T *ptr = std::any_cast<T>(&result_any.value())) {
+            return *ptr;
+        }
     }
+    ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", typeid(T).name());
+    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 // =========================================================

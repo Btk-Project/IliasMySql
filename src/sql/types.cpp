@@ -191,27 +191,27 @@ auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, i
     type        = kDateTime;
 }
 
-auto SqlDate::setDate(int year, int month, int day) -> void {
+auto SqlDate::setDate(int _year, int _month, int _day) -> void {
     clear();
-    if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31) {
-        ILIAS_ERROR("sql", "error date set {}-{}-{}", year, month, day);
+    if (_year < 0 || _month < 1 || _month > 12 || _day < 1 || _day > 31) {
+        ILIAS_ERROR("sql", "error date set {}-{}-{}", _year, _month, _day);
         return;
     }
-    this->year  = year;
-    this->month = month;
-    this->day   = day;
+    this->year  = _year;
+    this->month = _month;
+    this->day   = _day;
     type        = kDate;
 }
 
-auto SqlDate::setTime(int hour, int minute, int second) -> void {
+auto SqlDate::setTime(int _hour, int _minute, int _second) -> void {
     clear();
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
-        ILIAS_ERROR("sql", "error time set {}:{}:{}", hour, minute, second);
+    if (_hour < 0 || _hour > 23 || _minute < 0 || _minute > 59 || _second < 0 || _second > 59) {
+        ILIAS_ERROR("sql", "error time set {}:{}:{}", _hour, _minute, _second);
         return;
     }
-    this->hour   = hour;
-    this->minute = minute;
-    this->second = second;
+    this->hour   = _hour;
+    this->minute = _minute;
+    this->second = _second;
     type         = kTime;
 }
 

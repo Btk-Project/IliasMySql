@@ -58,9 +58,6 @@ public:
 
 private:
     template <typename U>
-    auto unpack(SqlValueView &value, U &u) -> IoResult<void>;
-
-    template <typename U>
     friend class SqlResult;
 
 protected:
@@ -105,30 +102,37 @@ public:
 };
 
 template <typename U>
-auto SqlResult<void>::unpack(SqlValueView &ret, U &value) -> IoResult<void> {
-    return SqlValueConverter<std::decay_t<U>>::convert(ret, value);
-}
-
-template <typename U>
-auto SqlResult<void>::load(int index, U &value) -> IoResult<void> {
+auto SqlResult<void>::load(int index, U &arg) -> IoResult<void> {
     auto ret = mImp->getValue(index);
     if (!ret) {
         ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", index, ret.error().message());
         return Unexpected(ret.error());
     }
-    // ILIAS_TRACE("ilias-sql", "load {} : {}", index, ret.value());
-    return unpack(*ret, value);
+    auto ret2 = ret->as<U>();
+    if (!ret2) {
+        ILIAS_TRACE("ilias-sql", "Failed to convert column '{}' with type {}: {}", index,
+                    NEKO_NAMESPACE::detail::class_nameof<U>, ret2.error().message());
+        return Unexpected(ret2.error());
+    }
+    arg = std::move(ret2.value());
+    return {};
 }
 
 template <typename U>
-auto SqlResult<void>::load(std::string_view name, U &value) -> IoResult<void> {
+auto SqlResult<void>::load(std::string_view name, U &arg) -> IoResult<void> {
     auto ret = mImp->getValue(name);
     if (!ret) {
         ILIAS_WARN("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
         return Unexpected(ret.error());
     }
-    // ILIAS_TRACE("ilias-sql", "load {} : {}", name, ret.value());
-    return unpack(*ret, value);
+    auto ret2 = ret->as<U>();
+    if (!ret2) {
+        ILIAS_WARN("ilias-sql", "Failed to load column '{}' with type {}: {}", name,
+                   NEKO_NAMESPACE::detail::class_nameof<U>, ret2.error().message());
+        return Unexpected(ret2.error());
+    }
+    arg = std::move(ret2.value());
+    return {};
 }
 
 template <typename... Args>
@@ -137,9 +141,11 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
+            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         if (!*rc) {
+            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         IoResult<void> ret = {};
@@ -157,9 +163,11 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
+            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: end of result set");
             break;
         }
         if (!*rc) {
+            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         IoResult<void> ret = {};
