@@ -46,6 +46,7 @@ public:
 
     // 按列名获取
     virtual auto getValue(std::string_view name) -> IoResult<SqlCellView> = 0;
+    virtual auto nativeHandle() const -> void *                           = 0;
 };
 
 /**
@@ -65,7 +66,8 @@ public:
     virtual auto execute() -> IoTask<size_t> = 0;
 
     // 重置状态以便复用
-    virtual auto reset() -> void = 0;
+    virtual auto reset() -> void                = 0;
+    virtual auto nativeHandle() const -> void * = 0;
 };
 
 /**
@@ -97,22 +99,12 @@ public:
     // 获取最后一次插入的 ID
     virtual auto lastInsertId() const -> int64_t = 0;
 
-    // 注册自定义的类型解析
-    template <typename T>
-    auto registerType(SqlParserFunc func) -> void;
-
-    virtual auto findTypeParser(std::type_index type) -> SqlParserFunc = 0;
+    // 类型转换上下文
+    virtual auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> = 0;
 
     // 连通性检测
-    virtual auto ping() -> IoTask<bool> = 0;
-
-protected:
-    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void = 0;
+    virtual auto ping() -> IoTask<bool>         = 0;
+    virtual auto nativeHandle() const -> void * = 0;
 };
-
-template <typename T>
-auto IConnection::registerType(SqlParserFunc func) -> void {
-    registerType(std::type_index(typeid(T)), func);
-}
 
 ILIAS_SQL_NS_END

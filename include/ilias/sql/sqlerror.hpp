@@ -44,7 +44,11 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(UnsupportConvertFromSqlType, "Unsupported convert from SQL type")                                  \
     SQL_ERROR_ENTRY(NumericValueOutOfRange, "Numeric value out of range")                                              \
     SQL_ERROR_ENTRY(TableNotFound, "Table not found")                                                                  \
-    SQL_ERROR_ENTRY(SchemaMismatch, "Schema mismatch")
+    SQL_ERROR_ENTRY(SchemaMismatch, "Schema mismatch")                                                                 \
+    SQL_ERROR_ENTRY(InvalidSqlStatement, "Invalid SQL statement, please prepare befor use or check your SQL syntax")   \
+    SQL_ERROR_ENTRY(                                                                                                   \
+        InvalidDataFormat,                                                                                             \
+        "Invalid data format, cell view must have a specific type, please refer to the documentation for details.")
 
 class ILIAS_SQL_API SqlError {
 public:

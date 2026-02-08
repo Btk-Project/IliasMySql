@@ -6,8 +6,6 @@
 
 ILIAS_SQLITE_NS_BEGIN
 
-using SqlParserResult = Result<std::any, std::error_code>;
-
 SqlParserResult sqlite_parse_null(const SqlCellView &cell) {
     if (cell.is_null()) {
         return std::any(g_sql_null);
@@ -221,6 +219,129 @@ SqlParserResult sqlite_parse_date(const SqlCellView &cell) {
     return std::any(date);
 }
 
+SqlBinderResult sqlite_bind_null(const SqlCellView &cell, std::any data) {
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (int ret = sqlite3_bind_null(nativeSqliteStmt, cell.index()); ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
+SqlBinderResult sqlite_bind_string(const SqlCellView &cell, std::any data) {
+    if (cell.is_null()) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
+        cell.raw_type() != std::type_index(typeid(const char))) {
+        return Unexpected(SqlError::Code::InvalidDataFormat);
+    }
+    if (int ret = sqlite3_bind_text(nativeSqliteStmt, cell.index(), reinterpret_cast<const char *>(cell.raw_value()),
+                                    cell.raw_value_size(), SQLITE_STATIC);
+        ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
+template <typename T>
+    requires std::is_integral_v<T>
+SqlBinderResult sqlite_bind_int(const SqlCellView &cell, std::any data) {
+    if (cell.is_null()) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
+        cell.raw_type() != std::type_index(typeid(const T))) {
+        return Unexpected(SqlError::Code::InvalidDataFormat);
+    }
+    if (int ret = sqlite3_bind_int64(nativeSqliteStmt, cell.index(), *reinterpret_cast<const T *>(cell.raw_value()));
+        ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
+template <typename T>
+    requires std::is_floating_point_v<T>
+SqlBinderResult sqlite_bind_real(const SqlCellView &cell, std::any data) {
+    if (cell.is_null()) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
+        cell.raw_type() != std::type_index(typeid(const T))) {
+        return Unexpected(SqlError::Code::InvalidDataFormat);
+    }
+    if (int ret = sqlite3_bind_double(nativeSqliteStmt, cell.index(), *reinterpret_cast<const T *>(cell.raw_value()));
+        ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
+SqlBinderResult sqlite_bind_blob(const SqlCellView &cell, std::any data) {
+    if (cell.is_null()) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
+        cell.raw_type() != std::type_index(typeid(const std::byte))) {
+        return Unexpected(SqlError::Code::InvalidDataFormat);
+    }
+    if (int ret =
+            sqlite3_bind_blob(nativeSqliteStmt, cell.index(), cell.raw_value(), cell.raw_value_size(), SQLITE_STATIC);
+        ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
+SqlBinderResult sqlite_bind_date(const SqlCellView &cell, std::any data) {
+    if (cell.is_null()) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
+    if (sqliteStmt == nullptr) {
+        return Unexpected(SqlError::Code::InvalidSqlStatement);
+    }
+    auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
+    if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
+        cell.raw_type() != std::type_index(typeid(const SqlDate))) {
+        return Unexpected(SqlError::Code::InvalidDataFormat);
+    }
+    auto date = reinterpret_cast<const SqlDate *>(cell.raw_value());
+    if (date == nullptr || date->type == SqlDate::kErrorTime) {
+        return sqlite_bind_null(cell, data);
+    }
+    auto dateStr = date->toUTCString();
+    if (int ret = sqlite3_bind_text(nativeSqliteStmt, cell.index(), dateStr.c_str(), dateStr.size(), SQLITE_TRANSIENT);
+        ret != SQLITE_OK) {
+        return Unexpected((SqlError::Code)ret);
+    }
+    return make_null_sql_binder_result();
+}
+
 SqliteStmtResultSet::SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<sqlite3_stmt> stmt,
                                          std::shared_ptr<SqlValueConverterContext> context)
     : mSqlite(sqlite), mSqliteStmt(stmt), mContext(context) {
@@ -228,6 +349,10 @@ SqliteStmtResultSet::SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::s
     for (int i = 0; i < column_count; i++) {
         mIndexs.insert(std::make_pair(sqlite3_column_name(mSqliteStmt.get(), i), i));
     }
+}
+
+auto SqliteStmtResultSet::nativeHandle() const -> void * {
+    return mSqliteStmt.get();
 }
 
 SqliteStmtResultSet::~SqliteStmtResultSet() {
@@ -300,6 +425,10 @@ SqliteStatement::~SqliteStatement() {
     mSqliteStmt.reset();
 }
 
+auto SqliteStatement::native() const -> sqlite3_stmt * {
+    return mSqliteStmt.get();
+}
+
 auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
     // ILIAS_TRACE("ilias-sqlite", "sqlite({}) Binding index {} value {}", (void *)mSqlite.get(), index, value);
     if (!mSqlite || !mSqliteStmt) {
@@ -364,6 +493,10 @@ auto SqliteStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
     co_return std::make_unique<SqliteStmtResultSet>(mSqlite, mSqliteStmt, mContext);
+}
+
+auto SqliteStatement::nativeHandle() const -> void * {
+    return mSqliteStmt.get();
 }
 
 auto SqliteStatement::execute() -> IoTask<size_t> {
@@ -441,18 +574,27 @@ auto SqliteStatement::close() -> IoTask<void> {
 Sqlite::Sqlite(const ConnectOptions &options) {
     mOptions = options;
     mContext = std::make_unique<SqlValueConverterContext>();
-
     mContext->registerType<SqlNull>(sqlite_parse_null);
+    mContext->registerType<SqlNull>(sqlite_bind_null);
     mContext->registerType<SqlBool>(sqlite_parse_bool);
+    mContext->registerType<SqlBool>(sqlite_bind_int<SqlBool>);
     mContext->registerType<SqlTinyInt>(sqlite_parse_int<SqlTinyInt>);
+    mContext->registerType<SqlTinyInt>(sqlite_bind_int<SqlTinyInt>);
     mContext->registerType<SqlInt>(sqlite_parse_int<SqlInt>);
+    mContext->registerType<SqlInt>(sqlite_bind_int<SqlInt>);
     mContext->registerType<SqlBigInt>(sqlite_parse_int<SqlBigInt>);
+    mContext->registerType<SqlBigInt>(sqlite_bind_int<SqlBigInt>);
     mContext->registerType<SqlFloat>(sqlite_parse_real<SqlFloat>);
+    mContext->registerType<SqlFloat>(sqlite_bind_real<SqlFloat>);
     mContext->registerType<double>(sqlite_parse_real<double>);
+    mContext->registerType<double>(sqlite_bind_real<double>);
     mContext->registerType<SqlText>(sqlite_parse_string);
+    mContext->registerType<const char>(sqlite_bind_string);
     mContext->registerType<SqlTextView>(sqlite_parse_string_view);
     mContext->registerType<SqlBlob>(sqlite_parse_blob);
+    mContext->registerType<SqlBlob>(sqlite_bind_blob);
     mContext->registerType<SqlDate>(sqlite_parse_date);
+    mContext->registerType<SqlDate>(sqlite_bind_date);
 }
 
 Sqlite::~Sqlite() {
@@ -469,6 +611,10 @@ auto Sqlite::sqlname() -> std::string {
 
 auto Sqlite::sqlinfo() -> std::string {
     return sqlite3_libversion();
+}
+
+auto Sqlite::nativeHandle() const -> void * {
+    return mSqlite.get();
 }
 
 auto Sqlite::connect() -> IoTask<void> {
@@ -694,13 +840,10 @@ auto Sqlite::ping() -> IoTask<bool> {
     co_return true;
 }
 
-auto Sqlite::findTypeParser(std::type_index type) -> SqlParserFunc {
-    return mContext->findTypeParser(type);
+auto Sqlite::valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> {
+    return mContext;
 }
 
-auto Sqlite::registerType(std::type_index type, SqlParserFunc func) -> void {
-    mContext->registerType(type, func);
-}
 ILIAS_SQLITE_NS_END
 
 ILIAS_SQL_REGISTER_PLUGIN(sqlite) {
