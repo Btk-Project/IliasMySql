@@ -31,6 +31,7 @@ class ILIAS_SQL_API SqliteStatement final : public IStatement {
 public:
     SqliteStatement(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<SqlValueConverterContext> context);
     ~SqliteStatement();
+    auto native() const -> sqlite3_stmt*;
     auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> override;
     auto bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> override;
 
@@ -45,6 +46,7 @@ public:
     auto prepare(std::string_view sql) -> IoTask<void>;
     auto clearBinds() -> void;
     auto close() -> IoTask<void>;
+    auto nativeHandle() const -> void * override;
 
 private:
     std::shared_ptr<sqlite3>                  mSqlite     = nullptr;
@@ -71,6 +73,7 @@ public:
     // 按列名获取
     auto getValue(std::string_view name) -> IoResult<SqlCellView> override;
     auto setPrivate(std::unique_ptr<SqliteStatement> mp);
+    auto nativeHandle() const -> void * override;
 
 private:
     std::shared_ptr<sqlite3>                  mSqlite     = nullptr;
@@ -111,8 +114,8 @@ public:
     // 连通性检测
     auto ping() -> IoTask<bool> override;
 
-    auto findTypeParser(std::type_index type) -> SqlParserFunc override;
-    auto registerType(std::type_index type, SqlParserFunc func) -> void override;
+    auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> override;
+    auto nativeHandle() const -> void * override;
 
 private:
     std::shared_ptr<sqlite3>                  mSqlite = nullptr;

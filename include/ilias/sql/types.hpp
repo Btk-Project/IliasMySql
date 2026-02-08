@@ -131,8 +131,13 @@ using SqlValueRef = std::variant<SqlNull, SqlBool &, SqlTinyInt &, SqlInt &, Sql
 enum class SqlValueType { kNull = 0, kBool, kChar, kInt, kBigInt, kFloat, kDouble, kText, kBlob, kDate, kMax };
 
 class SqlCellView;
-using SqlParserFunc = std::function<IoResult<std::any>(const SqlCellView &)>;
-
+using SqlParserResult = IoResult<std::any>;
+using SqlParserFunc   = std::function<SqlParserResult(const SqlCellView &)>;
+using SqlBinderResult = IoResult<std::unique_ptr<void, void (*)(void *)>>;
+inline auto make_null_sql_binder_result() {
+    return std::unique_ptr<void, void (*)(void *)> {nullptr, [](void *) {}};
+}
+using SqlBindFunc = std::function<SqlBinderResult(const SqlCellView &, const std::any &)>;
 class SqlValueConverterContext {
 public:
     virtual ~SqlValueConverterContext() = default;
@@ -143,17 +148,31 @@ public:
         }
         return nullptr;
     }
+    virtual auto findTypeBinder(std::type_index type) const -> SqlBindFunc {
+        auto item = mBinders.find(type);
+        if (item != mBinders.end()) {
+            return item->second;
+        }
+        return nullptr;
+    }
     virtual auto parserTypes() const -> const std::map<std::type_index, SqlParserFunc> & { return mParsers; }
+    virtual auto binderTypes() const -> const std::map<std::type_index, SqlBindFunc> & { return mBinders; }
 
     virtual auto registerType(std::type_index type, SqlParserFunc func) -> void { mParsers[type] = func; }
-
+    virtual auto registerType(std::type_index type, SqlBindFunc func) -> void { mBinders[type] = func; }
     template <typename T>
     auto registerType(SqlParserFunc func) -> void {
         registerType(std::type_index(typeid(T)), func);
     }
+    template <typename T>
+    auto registerType(SqlBindFunc func) -> void {
+        using value_type = std::remove_const<T>;
+        registerType(std::type_index(typeid(const value_type)), func);
+    }
 
 protected:
     std::map<std::type_index, SqlParserFunc> mParsers;
+    std::map<std::type_index, SqlBindFunc>   mBinders;
 };
 
 /**
@@ -164,7 +183,7 @@ class SqlCellView {
 public:
     using ValueString  = std::tuple<std::string_view, int>;
     using NativeValue  = std::any;
-    using ValuePointer = std::tuple<const void *, std::type_index>;
+    using ValuePointer = std::tuple<const void *, int, std::type_index>;
     enum class DataFormat { kUnknown = 0, kString, kNativeValue, kValuePointer };
 
     SqlCellView()                               = default;
@@ -177,8 +196,9 @@ public:
         : mContext(ctxt), mSqlValue(ValueString(data, native_type)), mIndex(index) {}
     SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, NativeValue data, int index)
         : mContext(ctxt), mSqlValue(data), mIndex(index) {}
-    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, const void *data, std::type_index type, int index)
-        : mContext(ctxt), mSqlValue(ValuePointer(data, type)), mIndex(index) {}
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, const void *data, int size, std::type_index type,
+                int index)
+        : mContext(ctxt), mSqlValue(ValuePointer(data, size, type)), mIndex(index) {}
     /**
      * @brief 将数据转换为指定类型
      * 通过查找构造时提供的上下文中注册的解析器函数，将单元格数据解析为指定类型，如果解析失败，则返回错误
@@ -235,12 +255,13 @@ public:
      * @return const void*
      */
     auto raw_value() const -> const void * { return std::get<0>(std::get<ValuePointer>(mSqlValue)); }
+    auto raw_value_size() const -> size_t { return std::get<1>(std::get<ValuePointer>(mSqlValue)); }
     /**
      * @brief 获取原始数据类型
      *
      * @return std::type_index
      */
-    auto raw_type() const -> std::type_index { return std::get<1>(std::get<ValuePointer>(mSqlValue)); }
+    auto raw_type() const -> std::type_index { return std::get<2>(std::get<ValuePointer>(mSqlValue)); }
     /**
      * @brief 获取格式化后的数据
      *
