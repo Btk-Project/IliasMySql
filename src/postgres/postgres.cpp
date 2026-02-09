@@ -388,7 +388,7 @@ auto Postgres::connect(std::string_view conninfo) -> IoTask<void> {
         }
     }
 
-    ILIAS_INFO("ilias-pgsql", "PostgreSQL connection established.");
+    ILIAS_TRACE("ilias-pgsql", "PostgreSQL connection established.");
     if (int ret = PQsetnonblocking(mConn, 1); ret != 0) {
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());

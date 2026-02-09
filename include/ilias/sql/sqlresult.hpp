@@ -141,11 +141,9 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
-            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         if (!*rc) {
-            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         IoResult<void> ret = {};
@@ -163,11 +161,9 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
-            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: end of result set");
             break;
         }
         if (!*rc) {
-            ILIAS_INFO("ilias-sql", "SqlResult<void>::range: empty result set");
             break;
         }
         IoResult<void> ret = {};

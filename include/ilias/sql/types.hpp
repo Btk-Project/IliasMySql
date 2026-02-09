@@ -11,6 +11,10 @@
 #include <typeindex>
 #include <any>
 #include <map>
+#include <typeindex>
+#ifdef __GNUC__
+#include <cxxabi.h>
+#endif
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/sqlerror.hpp"
@@ -101,35 +105,34 @@ using SqlTextView = std::string_view;
 using SqlBlobView = std::span<const std::byte>;
 using SqlBlobRef  = std::span<std::byte>;
 using SqlBlob     = std::vector<std::byte>;
-
 // 全局静态 SqlNull 实例，用于返回指向 NULL 的指针（避免返回 nullptr）
 inline SqlNull g_sql_null {};
-
-// 数据库值的通用变体
-using SqlValue = std::variant<SqlNull,    // NULL
-                              SqlBool,    // Bool
-                              SqlTinyInt, // TinyInt
-                              SqlInt,     // Int
-                              SqlBigInt,  // BigInt
-                              SqlFloat,   // Float
-                              SqlDouble,  // Double
-                              SqlText,    // Text
-                              SqlBlob,    // Binary
-                              SqlDate     // Timestamp/Date
-                              >;
-// 用于参数绑定的轻量级变体 (避免拷贝 string/blob)
-using SqlValueView = std::variant<SqlNull, SqlBool, SqlTinyInt, SqlInt, SqlBigInt, SqlFloat, SqlDouble, SqlTextView,
-                                  SqlBlobView, SqlDate>;
-
-using SqlValuePointer = std::variant<SqlNull *, SqlBool *, SqlTinyInt *, SqlInt *, SqlBigInt *, SqlFloat *, SqlDouble *,
-                                     SqlTextView, SqlBlobView, SqlDate *>;
-
-using SqlValueRef = std::variant<SqlNull, SqlBool &, SqlTinyInt &, SqlInt &, SqlBigInt &, SqlFloat &, SqlDouble &,
-                                 SqlText &, SqlBlob &, SqlDate &>;
 
 // 类型索引对应的枚举
 enum class SqlValueType { kNull = 0, kBool, kChar, kInt, kBigInt, kFloat, kDouble, kText, kBlob, kDate, kMax };
 
+template <typename T>
+concept DereferenceableAndNullable = requires(T &t) {
+    { t.has_value() } -> std::convertible_to<bool>; // optional-like
+    { t.reset() };                                  // optional-like
+    { *t };                                         // dereferenceable
+};
+template <typename T>
+struct OptionalLikeType;
+template <typename T>
+    requires(!DereferenceableAndNullable<T>)
+struct OptionalLikeType<T> {
+    constexpr static bool value = false;
+    using type                  = T;
+};
+
+template <typename T>
+    requires DereferenceableAndNullable<T>
+struct OptionalLikeType<T> {
+    constexpr static bool value = true;
+    using type                  = std::decay_t<decltype(*std::declval<T>())>;
+    bool has_value(const T &t) const noexcept { return t.has_value(); }
+};
 class SqlCellView;
 using SqlParserResult = IoResult<std::any>;
 using SqlParserFunc   = std::function<SqlParserResult(const SqlCellView &)>;
@@ -138,10 +141,11 @@ inline auto make_null_sql_binder_result() {
     return std::unique_ptr<void, void (*)(void *)> {nullptr, [](void *) {}};
 }
 using SqlBindFunc = std::function<SqlBinderResult(const SqlCellView &, const std::any &)>;
-class SqlValueConverterContext {
+class ILIAS_SQL_API SqlValueConverterContext {
 public:
     virtual ~SqlValueConverterContext() = default;
     virtual auto findTypeParser(std::type_index type) const -> SqlParserFunc {
+        // ILIAS_TRACE("ilias-sql", "find parser for type {}", type.name());
         auto item = mParsers.find(type);
         if (item != mParsers.end()) {
             return item->second;
@@ -149,6 +153,7 @@ public:
         return nullptr;
     }
     virtual auto findTypeBinder(std::type_index type) const -> SqlBindFunc {
+        // ILIAS_TRACE("ilias-sql", "find binder for type {}", type.name());
         auto item = mBinders.find(type);
         if (item != mBinders.end()) {
             return item->second;
@@ -158,19 +163,23 @@ public:
     virtual auto parserTypes() const -> const std::map<std::type_index, SqlParserFunc> & { return mParsers; }
     virtual auto binderTypes() const -> const std::map<std::type_index, SqlBindFunc> & { return mBinders; }
 
-    virtual auto registerType(std::type_index type, SqlParserFunc func) -> void { mParsers[type] = func; }
-    virtual auto registerType(std::type_index type, SqlBindFunc func) -> void { mBinders[type] = func; }
     template <typename T>
     auto registerType(SqlParserFunc func) -> void {
         registerType(std::type_index(typeid(T)), func);
     }
     template <typename T>
     auto registerType(SqlBindFunc func) -> void {
-        using value_type = std::remove_const<T>;
+        using value_type = std::remove_const_t<T>;
         registerType(std::type_index(typeid(const value_type)), func);
     }
 
 protected:
+    auto registerType(std::type_index type, SqlParserFunc func) -> void;
+    auto registerType(std::type_index type, SqlBindFunc func) -> void;
+    auto parserTypes() -> std::map<std::type_index, SqlParserFunc> &;
+    auto binderTypes() -> std::map<std::type_index, SqlBindFunc> &;
+
+private:
     std::map<std::type_index, SqlParserFunc> mParsers;
     std::map<std::type_index, SqlBindFunc>   mBinders;
 };
@@ -248,81 +257,72 @@ public:
      *
      * @return const std::any&
      */
-    auto sql_value() const -> const std::any & { return std::get<NativeValue>(mSqlValue); }
+    auto sql_value() const -> const std::any & {
+        if (std::holds_alternative<NativeValue>(mSqlValue)) {
+            return std::get<NativeValue>(mSqlValue);
+        }
+        return mNullValue;
+    }
     /**
      * @brief 获取原始数据指针
      *
      * @return const void*
      */
-    auto raw_value() const -> const void * { return std::get<0>(std::get<ValuePointer>(mSqlValue)); }
-    auto raw_value_size() const -> size_t { return std::get<1>(std::get<ValuePointer>(mSqlValue)); }
+    auto raw_value() const -> const void * {
+        if (std::holds_alternative<ValuePointer>(mSqlValue)) {
+            return std::get<0>(std::get<ValuePointer>(mSqlValue));
+        }
+        return nullptr;
+    }
+    auto raw_value_size() const -> size_t {
+        if (std::holds_alternative<ValuePointer>(mSqlValue)) {
+            return std::get<1>(std::get<ValuePointer>(mSqlValue));
+        }
+        return 0;
+    }
     /**
      * @brief 获取原始数据类型
      *
      * @return std::type_index
      */
-    auto raw_type() const -> std::type_index { return std::get<2>(std::get<ValuePointer>(mSqlValue)); }
+    auto raw_type() const -> std::type_index {
+        if (std::holds_alternative<ValuePointer>(mSqlValue)) {
+            return std::get<2>(std::get<ValuePointer>(mSqlValue));
+        }
+        return std::type_index {typeid(void)};
+    }
     /**
      * @brief 获取格式化后的数据
      *
      * @return std::string
      */
-    auto formatted_value() const -> std::string_view { return std::get<0>(std::get<ValueString>(mSqlValue)); }
+    auto formatted_value() const -> std::string_view {
+        if (std::holds_alternative<ValueString>(mSqlValue)) {
+            return std::get<0>(std::get<ValueString>(mSqlValue));
+        }
+        return std::string_view {};
+    }
     /**
      * @brief   获取格式化后的数据类型
      *
      * @return  int
      */
-    auto formatted_type() const -> int { return std::get<1>(std::get<ValueString>(mSqlValue)); }
+    auto formatted_type() const -> int {
+        if (std::holds_alternative<ValueString>(mSqlValue)) {
+            return std::get<1>(std::get<ValueString>(mSqlValue));
+        }
+        return -1;
+    }
+    auto context() const -> SqlValueConverterContext * { return mContext.get(); }
 
 private:
     std::shared_ptr<SqlValueConverterContext>                            mContext;
     std::variant<std::monostate, ValueString, NativeValue, ValuePointer> mSqlValue;
     int                                                                  mIndex = 0;
+    const static std::any                                                mNullValue;
 };
 
-template <typename T>
-auto SqlCellView::as() const -> IoResult<T> {
-    constexpr bool is_optional = NEKO_NAMESPACE::detail::is_optional<T>::value;
-    constexpr bool is_pointer  = std::is_pointer_v<T>;
-    constexpr bool is_nullable = is_optional || is_pointer || std::is_same_v<T, SqlDate>;
-    auto           type_index  = std::type_index(typeid(std::remove_cvref_t<T>));
-    if constexpr (is_optional) {
-        type_index = std::type_index(typeid(typename T::value_type));
-    }
-    auto parser_func = mContext->findTypeParser(type_index);
-    if (!parser_func) {
-        ILIAS_ERROR("ilias-sql", "Unsupport convert from sql type: {}", type_index.name());
-        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
-    }
-    if constexpr (is_nullable) {
-        if (is_null()) {
-            return T {};
-        }
-    }
-    IoResult<std::any> result_any = parser_func(*this);
-    if constexpr (is_nullable) {
-        if (!result_any && result_any.error() == SqlError::NullValue) {
-            return T {};
-        }
-    }
-    if (!result_any) {
-        return Unexpected(result_any.error());
-    }
-    if constexpr (is_optional) {
-        using value_type = typename T::value_type;
-        if (const value_type *ptr = std::any_cast<value_type>(&result_any.value())) {
-            return T {std::move(*ptr)};
-        }
-    }
-    else {
-        if (const T *ptr = std::any_cast<T>(&result_any.value())) {
-            return *ptr;
-        }
-    }
-    ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", typeid(T).name());
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
-}
+inline const std::any SqlCellView::mNullValue = std::any {};
 
 // =========================================================
 // 3. 运行时 NULL 检测 (修复 -Waddress 警告)
@@ -355,277 +355,7 @@ constexpr bool is_sql_null(const T &val) {
         return false;
     }
 }
-
-// 明确处理 nullptr_t，确保绑定 nullptr 时返回指向 g_sql_null 的指针
-inline auto to_sql_pointer(std::nullptr_t) -> SqlValuePointer {
-    return SqlValuePointer {&g_sql_null};
-}
-inline auto to_sql_pointer(std::nullopt_t) -> SqlValuePointer {
-    return SqlValuePointer {&g_sql_null};
-}
-template <SqlValueType T, class enable = void>
-struct SqlValueTraits {
-    static_assert(T == SqlValueType::kNull, "Invalid SqlValueType");
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kNull, void> {
-    using type                              = SqlNull;
-    using viewType                          = SqlNull;
-    constexpr static SqlValueType valueType = SqlValueType::kNull;
-    constexpr static auto         name      = "NULL";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kBool, void> {
-    using type                              = SqlBool;
-    using viewType                          = SqlBool;
-    constexpr static SqlValueType valueType = SqlValueType::kBool;
-    constexpr static auto         name      = "Bool";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kChar, void> {
-    using type                              = SqlTinyInt;
-    using viewType                          = SqlTinyInt;
-    constexpr static SqlValueType valueType = SqlValueType::kChar;
-    constexpr static auto         name      = "Char";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kInt, void> {
-    using type                              = SqlInt;
-    using viewType                          = SqlInt;
-    constexpr static SqlValueType valueType = SqlValueType::kInt;
-    constexpr static auto         name      = "Int";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kBigInt, void> {
-    using type                              = SqlBigInt;
-    using viewType                          = SqlBigInt;
-    constexpr static SqlValueType valueType = SqlValueType::kBigInt;
-    constexpr static auto         name      = "BigInt";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kFloat, void> {
-    using type                              = SqlFloat;
-    using viewType                          = SqlFloat;
-    constexpr static SqlValueType valueType = SqlValueType::kFloat;
-    constexpr static auto         name      = "Float";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kDouble, void> {
-    using type                              = SqlDouble;
-    using viewType                          = SqlDouble;
-    constexpr static SqlValueType valueType = SqlValueType::kDouble;
-    constexpr static auto         name      = "Double";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kText, void> {
-    using type                              = SqlText;
-    using viewType                          = SqlTextView;
-    constexpr static SqlValueType valueType = SqlValueType::kText;
-    constexpr static auto         name      = "Text";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kBlob, void> {
-    using type                              = SqlBlob;
-    using viewType                          = SqlBlobView;
-    constexpr static SqlValueType valueType = SqlValueType::kBlob;
-    constexpr static auto         name      = "Blob";
-};
-
-template <>
-struct SqlValueTraits<SqlValueType::kDate, void> {
-    using type                              = SqlDate;
-    using viewType                          = SqlDate;
-    constexpr static SqlValueType valueType = SqlValueType::kDate;
-    constexpr static auto         name      = "Date";
-};
-
-template <typename T>
-    requires(std::is_same_v<std::decay_t<T>, SqlValue> || std::is_same_v<std::decay_t<T>, SqlValueView> ||
-             std::is_same_v<std::decay_t<T>, SqlValuePointer> || std::is_same_v<std::decay_t<T>, SqlValueRef>)
-inline auto getSqltypeName(T &&v) -> std::string_view {
-    int type = v.index();
-    switch ((SqlValueType)type) {
-        case SqlValueType::kNull:
-            return SqlValueTraits<SqlValueType::kNull>::name;
-        case SqlValueType::kBool:
-            return SqlValueTraits<SqlValueType::kBool>::name;
-        case SqlValueType::kChar:
-            return SqlValueTraits<SqlValueType::kChar>::name;
-        case SqlValueType::kInt:
-            return SqlValueTraits<SqlValueType::kInt>::name;
-        case SqlValueType::kBigInt:
-            return SqlValueTraits<SqlValueType::kBigInt>::name;
-        case SqlValueType::kFloat:
-            return SqlValueTraits<SqlValueType::kFloat>::name;
-        case SqlValueType::kDouble:
-            return SqlValueTraits<SqlValueType::kDouble>::name;
-        case SqlValueType::kText:
-            return SqlValueTraits<SqlValueType::kText>::name;
-        case SqlValueType::kBlob:
-            return SqlValueTraits<SqlValueType::kBlob>::name;
-        case SqlValueType::kDate:
-            return SqlValueTraits<SqlValueType::kDate>::name;
-        default:
-            return "Unknown";
-    }
-}
-
-template <SqlValueType T>
-auto &get(const SqlValue &v) {
-    return *std::get_if<typename SqlValueTraits<T>::type>(&v);
-}
-
-template <SqlValueType T>
-auto &get(SqlValue &v) {
-    return *std::get_if<typename SqlValueTraits<T>::type>(&v);
-}
-
-template <SqlValueType T>
-auto &get(const SqlValueView &v) {
-    return *std::get_if<typename SqlValueTraits<T>::viewType>(&v);
-}
-
-template <SqlValueType T>
-auto &get(SqlValueView &v) {
-    return *std::get_if<typename SqlValueTraits<T>::viewType>(&v);
-}
-
-template <SqlValueType T>
-auto &get(const SqlValuePointer &v) {
-    if constexpr (T == SqlValueType::kText) {
-        return std::get<std::string_view>(v);
-    }
-    else if constexpr (T == SqlValueType::kBlob) {
-        return std::get<SqlBlobView>(v);
-    }
-    else {
-        return *std::get<(int)T>(v);
-    }
-}
-
-template <SqlValueType T>
-auto &get(SqlValuePointer &v) {
-    if constexpr (T == SqlValueType::kText) {
-        return std::get<std::string_view>(v);
-    }
-    else if constexpr (T == SqlValueType::kBlob) {
-        return std::get<SqlBlobView>(v);
-    }
-    else {
-        return *std::get<(int)T>(v);
-    }
-}
-
-template <typename T>
-concept ISqlValue = requires(T t) {
-    { t } -> std::convertible_to<SqlValue>;
-};
-
-template <typename T>
-concept ISqlValueView = requires(T t) {
-    { t } -> std::convertible_to<SqlValueView>;
-};
-
-template <typename T>
-concept ISqlValueCovervable = requires(T t) {
-    { t.toSqlValue() } -> std::convertible_to<SqlValue>;
-};
-
-template <typename T>
-concept ISqlValueViewCovervable = requires(T t) {
-    { t.toSqlValueView() } -> std::convertible_to<SqlValueView>;
-};
-
-template <typename T>
-    requires ISqlValueCovervable<T> || ISqlValue<T>
-auto to_sql_value(T &&t) -> SqlValue {
-    if constexpr (ISqlValueCovervable<T>) {
-        return t.toSqlValue();
-    }
-    else {
-        return std::forward<T>(t);
-    }
-}
-
-template <typename T>
-    requires ISqlValueViewCovervable<T> || ISqlValueView<T>
-auto to_sql_value_view(T &&t) -> SqlValueView {
-    if constexpr (ISqlValueViewCovervable<T>) {
-        return t.toSqlValueView();
-    }
-    else {
-        return std::forward<T>(t);
-    }
-}
-
-template <typename T>
-    requires(ISqlValue<T> && !std::is_integral_v<T>)
-auto to_sql_pointer(T &t) -> SqlValuePointer {
-    if (is_sql_null(t)) {
-        return SqlValuePointer {&g_sql_null};
-    }
-    if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
-                  std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        return SqlValuePointer {std::string_view {t}};
-    }
-    else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
-                       std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {
-        return SqlValuePointer {SqlBlobView {t}};
-    }
-    else {
-        return std::addressof(t);
-    }
-}
-
-template <typename T>
-    requires(ISqlValue<T> && !std::is_integral_v<T>)
-auto to_sql_pointer(const T &t) -> SqlValuePointer {
-    if (is_sql_null(t)) {
-        return SqlValuePointer {&g_sql_null};
-    }
-    if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view> ||
-                  std::is_convertible_v<std::decay_t<T>, std::string_view>) {
-        return SqlValuePointer {std::string_view {t}};
-    }
-    else if constexpr (std::is_same_v<std::decay_t<T>, SqlBlob> ||
-                       std::is_convertible_v<std::decay_t<T>, SqlBlobView>) {
-        return SqlValuePointer {SqlBlobView {t}};
-    }
-    else {
-        return const_cast<T *>(std::addressof(t));
-    }
-}
-
-template <typename T>
-    requires(std::is_integral_v<T> && sizeof(T) <= sizeof(int64_t))
-auto to_sql_pointer(T &t) -> SqlValuePointer {
-    using type = std::decay_t<T>;
-    if constexpr (std::is_same_v<type, bool>) {
-        return SqlValuePointer {(bool *)std::addressof(t)};
-    }
-    else if constexpr (sizeof(T) <= sizeof(char) && std::is_signed_v<type>) {
-        return SqlValuePointer {(char *)std::addressof(t)};
-    }
-    else if constexpr ((sizeof(T) <= sizeof(int32_t) && std::is_signed_v<type>) || sizeof(T) < sizeof(int32_t)) {
-        return SqlValuePointer {(int32_t *)std::addressof(t)};
-    }
-    else if constexpr ((sizeof(T) <= sizeof(int64_t) && std::is_signed_v<type>) || sizeof(T) < sizeof(int64_t)) {
-        return SqlValuePointer {(int64_t *)std::addressof(t)};
-    }
-    else {
-        static_assert(sizeof(T) <= sizeof(int32_t), "Integral type too large");
-    }
-}
-
+using std::type_index;
 ILIAS_SQL_NS_END
 
 // clang-format off
@@ -672,108 +402,24 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlobView) {
         return format_to(ctx.out(), "bytes({}):[{}]", blob.size_bytes(), hex);
     }
 };
-
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValue) {
+ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::type_index) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValue & value, Context &ctx) const {
-        using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
-        switch ((SqlValueType)value.index()) {
-            case SqlValueType::kNull:
-                return format_to(ctx.out(), "{}", "NULL");
-            case SqlValueType::kBool:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
-            case SqlValueType::kChar:
-                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
-            case SqlValueType::kInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
-            case SqlValueType::kBigInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBigInt>(value));
-            case SqlValueType::kFloat:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kFloat>(value));
-            case SqlValueType::kDouble:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
-            case SqlValueType::kText:
-                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
-            case SqlValueType::kBlob:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
-            case SqlValueType::kDate:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDate>(value));
-            default:
-                return format_to(ctx.out(), "{}", "Unknown");
-        }
+    auto format(const std::type_index & value, Context &ctx) const {
+#ifdef __GNUC__
+        static char buffer[256];
+        static size_t size = sizeof(buffer);
+        memset(buffer, 0, sizeof(buffer));
+        auto name = abi::__cxa_demangle(value.name(), buffer, &size, nullptr);
+        return format_to(ctx.out(), "{}", name);
+#else
+        return format_to(ctx.out(), "{}", value.name());
+#endif
     }
 };
 
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValueView) {
-    constexpr auto parse(std::format_parse_context& ctx) {
-        return ctx.begin();
-    }
-    template <typename Context> 
-    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueView & value, Context &ctx) const {
-        using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
-        switch ((SqlValueType)value.index()) {
-            case SqlValueType::kNull:
-                return format_to(ctx.out(), "{}", "NULL");
-            case SqlValueType::kBool:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
-            case SqlValueType::kChar:
-                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
-            case SqlValueType::kInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
-            case SqlValueType::kBigInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBigInt>(value));
-            case SqlValueType::kFloat:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kFloat>(value));
-            case SqlValueType::kDouble:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
-            case SqlValueType::kText:
-                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
-            case SqlValueType::kBlob:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
-            case SqlValueType::kDate:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDate>(value));
-            default:
-                return format_to(ctx.out(), "{}", "Unknown");
-        }
-    }
-};
-
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlValuePointer) {
-    constexpr auto parse(std::format_parse_context& ctx) {
-        return ctx.begin();
-    }
-    template <typename Context> 
-    auto format(const ILIAS_SQL_COMPLETE_NAMESPACE::SqlValuePointer & value, Context &ctx) const {
-        using SqlValueType = ILIAS_SQL_COMPLETE_NAMESPACE::SqlValueType;
-        switch ((SqlValueType)value.index()) {
-            case SqlValueType::kNull:
-                return format_to(ctx.out(), "{}", "NULL");
-            case SqlValueType::kBool:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBool>(value));
-            case SqlValueType::kChar:
-                return format_to(ctx.out(), "{}", (int)get<SqlValueType::kChar>(value));
-            case SqlValueType::kInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kInt>(value));
-            case SqlValueType::kBigInt:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBigInt>(value));
-            case SqlValueType::kFloat:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kFloat>(value));
-            case SqlValueType::kDouble:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDouble>(value));
-            case SqlValueType::kText:
-                return format_to(ctx.out(), "\"{}\"", get<SqlValueType::kText>(value));
-            case SqlValueType::kBlob:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kBlob>(value));
-            case SqlValueType::kDate:
-                return format_to(ctx.out(), "{}", get<SqlValueType::kDate>(value));
-            default:
-                return format_to(ctx.out(), "{}", "Unknown");
-        }
-    }
-};
 ILIAS_FORMATTER_T_RAW(,std::span<const char>) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
@@ -784,3 +430,48 @@ ILIAS_FORMATTER_T_RAW(,std::span<const char>) {
     }
 };
 // clang-format on
+
+ILIAS_SQL_NS_BEGIN
+template <typename T>
+auto SqlCellView::as() const -> IoResult<T> {
+    constexpr bool is_optional = NEKO_NAMESPACE::detail::is_optional<T>::value;
+    constexpr bool is_pointer  = std::is_pointer_v<T>;
+    constexpr bool is_nullable = is_optional || is_pointer || std::is_same_v<T, SqlDate>;
+    auto           type_index  = std::type_index(typeid(std::remove_cvref_t<T>));
+    if constexpr (is_optional) {
+        type_index = std::type_index(typeid(typename T::value_type));
+    }
+    auto parser_func = mContext->findTypeParser(type_index);
+    if (!parser_func) {
+        ILIAS_ERROR("ilias-sql", "Unsupport convert from sql type: {}", type_index);
+        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    }
+    if constexpr (is_nullable) {
+        if (is_null()) {
+            return T {};
+        }
+    }
+    IoResult<std::any> result_any = parser_func(*this);
+    if constexpr (is_nullable) {
+        if (!result_any && result_any.error() == SqlError::NullValue) {
+            return T {};
+        }
+    }
+    if (!result_any) {
+        return Unexpected(result_any.error());
+    }
+    if constexpr (is_optional) {
+        using value_type = typename T::value_type;
+        if (const value_type *ptr = std::any_cast<value_type>(&result_any.value())) {
+            return T {std::move(*ptr)};
+        }
+    }
+    else {
+        if (const T *ptr = std::any_cast<T>(&result_any.value())) {
+            return *ptr;
+        }
+    }
+    ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", std::type_index(typeid(T)));
+    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+}
+ILIAS_SQL_NS_END
