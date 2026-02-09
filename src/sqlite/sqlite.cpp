@@ -206,11 +206,11 @@ SqlParserResult sqlite_parse_bool(const SqlCellView &cell) {
 }
 
 SqlParserResult sqlite_parse_date(const SqlCellView &cell) {
-    auto value_str = sqlite_parse_string(cell);
+    auto value_str = sqlite_parse_string_view(cell);
     if (!value_str) {
         return Unexpected(value_str.error());
     }
-    auto any_string = std::any_cast<std::string>(&(*value_str));
+    auto any_string = std::any_cast<std::string_view>(&(*value_str));
     if (any_string == nullptr) {
         return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
     }
@@ -241,7 +241,7 @@ SqlBinderResult sqlite_bind_string(const SqlCellView &cell, std::any data) {
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
-        cell.raw_type() != std::type_index(typeid(const char))) {
+        cell.raw_type() != std::type_index(typeid(const char *))) {
         return Unexpected(SqlError::Code::InvalidDataFormat);
     }
     if (int ret = sqlite3_bind_text(nativeSqliteStmt, cell.index(), reinterpret_cast<const char *>(cell.raw_value()),
@@ -306,7 +306,7 @@ SqlBinderResult sqlite_bind_blob(const SqlCellView &cell, std::any data) {
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
-        cell.raw_type() != std::type_index(typeid(const std::byte))) {
+        cell.raw_type() != std::type_index(typeid(const std::byte *))) {
         return Unexpected(SqlError::Code::InvalidDataFormat);
     }
     if (int ret =
@@ -553,7 +553,9 @@ Sqlite::Sqlite(const ConnectOptions &options) {
     mContext->registerType<SqlBool>(sqlite_parse_bool);
     mContext->registerType<SqlBool>(sqlite_bind_int<SqlBool>);
     mContext->registerType<SqlTinyInt>(sqlite_parse_int<SqlTinyInt>);
+    mContext->registerType<char>(sqlite_parse_int<char>);
     mContext->registerType<SqlTinyInt>(sqlite_bind_int<SqlTinyInt>);
+    mContext->registerType<char>(sqlite_bind_int<char>);
     mContext->registerType<SqlInt>(sqlite_parse_int<SqlInt>);
     mContext->registerType<SqlInt>(sqlite_bind_int<SqlInt>);
     mContext->registerType<SqlBigInt>(sqlite_parse_int<SqlBigInt>);
@@ -563,10 +565,10 @@ Sqlite::Sqlite(const ConnectOptions &options) {
     mContext->registerType<double>(sqlite_parse_real<double>);
     mContext->registerType<double>(sqlite_bind_real<double>);
     mContext->registerType<SqlText>(sqlite_parse_string);
-    mContext->registerType<const char>(sqlite_bind_string);
+    mContext->registerType<const char *>(sqlite_bind_string);
     mContext->registerType<SqlTextView>(sqlite_parse_string_view);
     mContext->registerType<SqlBlob>(sqlite_parse_blob);
-    mContext->registerType<SqlBlob>(sqlite_bind_blob);
+    mContext->registerType<const std::byte *>(sqlite_bind_blob);
     mContext->registerType<SqlDate>(sqlite_parse_date);
     mContext->registerType<SqlDate>(sqlite_bind_date);
 }

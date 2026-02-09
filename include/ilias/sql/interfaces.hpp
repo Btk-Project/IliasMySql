@@ -134,16 +134,16 @@ auto IStatement::bind(std::string_view name, T &&value) -> IoResult<void> {
         return bind(value.raw_type(), name, value);
     }
     else if constexpr (std::is_same_v<value_type, std::string_view> || std::is_same_v<value_type, std::string> ||
-                       (std::is_array_v<value_type> && std::is_constructible_v<std::string_view, T>)) {
+                       std::is_constructible_v<std::string_view, T>) {
         auto strView = std::string_view(value);
-        return bind(std::type_index(typeid(const char)), name,
-                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char), -1));
+        return bind(std::type_index(typeid(const char *)), name,
+                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char *), -1));
     }
     else if constexpr (std::is_convertible_v<value_type, std::span<const std::byte>> ||
                        std::is_convertible_v<value_type, std::span<const char>>) {
         auto span = std::span(value);
-        return bind(std::type_index(typeid(const std::byte)), name,
-                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte), -1));
+        return bind(std::type_index(typeid(const std::byte *)), name,
+                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte *), -1));
     }
     else {
         return bind(std::type_index(typeid(const value_type)), name,
@@ -176,16 +176,16 @@ auto IStatement::bind(size_t index, T &&value) -> IoResult<void> {
                        std::is_constructible_v<std::string_view, T>) {
         // 统一处理字符串类型
         auto strView = std::string_view(value);
-        return bind(std::type_index(typeid(const char)), index,
-                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char), -1));
+        return bind(std::type_index(typeid(const char *)), index,
+                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char *), -1));
     }
     else if constexpr (std::is_same_v<value_type, std::span<const std::byte>> ||
                        std::is_same_v<value_type, std::span<const char>> ||
                        std::is_constructible_v<std::span<const std::byte>, T>) {
         // 统一处理字节数组类型
         auto span = std::span(value);
-        return bind(std::type_index(typeid(const std::byte)), index,
-                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte), -1));
+        return bind(std::type_index(typeid(const std::byte *)), index,
+                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte *), -1));
     }
     else {
         // 其他类型

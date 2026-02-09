@@ -22,9 +22,12 @@
 #include "global.hpp"
 #include "mysqlopt.hpp"
 #include "ilias/sql/types.hpp"
+#include "ilias/sql/interfaces.hpp"
 
 ILIAS_MYSQL_NS_BEGIN
+ILIAS_SQL_USE_NAMESPACE
 
+class MySqlResultBase;
 class ILIAS_SQL_API MySql final {
 public:
     using SqlError = sql::SqlError;
@@ -95,10 +98,101 @@ public:
 
     bool operator==(MySql &other);
 
+    auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext>;
+
 private:
-    IoContext *mCtxt = nullptr;
-    MYSQL      mMysql;
-    Poller     mPoller;
+    IoContext                                *mCtxt = nullptr;
+    MYSQL                                     mMysql;
+    Poller                                    mPoller;
+    std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
+class MysqlResultSet : public IResultSet {
+public:
+    MysqlResultSet(const MysqlResultSet &)            = delete;
+    MysqlResultSet(MysqlResultSet &&)                 = default;
+    MysqlResultSet &operator=(const MysqlResultSet &) = delete;
+    MysqlResultSet &operator=(MysqlResultSet &&)      = default;
+    MysqlResultSet(std::unique_ptr<MySqlResultBase> imp);
+    virtual ~MysqlResultSet();
+    auto next() -> IoTask<bool> override;
+    auto rowCount() const -> size_t override;
+    auto columnCount() const -> size_t override;
+    auto columnName(size_t index) const -> std::string_view override;
+    auto getValue(size_t index) -> IoResult<SqlCellView> override;
+    auto getValue(std::string_view name) -> IoResult<SqlCellView> override;
+    auto nativeHandle() const -> void * override;
+    auto native() -> MYSQL_RES *;
+
+private:
+    std::unique_ptr<MySqlResultBase> mImp;
+};
+
+class MysqlStatement : public IStatement {
+public:
+    using SqlError                                    = sql::SqlError;
+    MysqlStatement(const MysqlStatement &)            = delete;
+    MysqlStatement(MysqlStatement &&)                 = default;
+    MysqlStatement &operator=(const MysqlStatement &) = delete;
+    MysqlStatement &operator=(MysqlStatement &&)      = default;
+    MysqlStatement(std::shared_ptr<MySql> mysql);
+    ~MysqlStatement();
+
+    auto bind(std::type_index type_index, size_t index, const SqlCellView &value) -> IoResult<void> override;
+    auto bind(std::type_index type_index, std::string_view name, const SqlCellView &value) -> IoResult<void> override;
+    // 执行查询 (SELECT)，返回结果集
+    auto query() -> IoTask<std::unique_ptr<IResultSet>> override;
+    // 执行命令 (INSERT, UPDATE, DELETE)，返回影响行数
+    auto execute() -> IoTask<size_t> override;
+    // 重置状态以便复用
+    auto reset() -> void override;
+    auto prepare(std::string_view sql) -> IoTask<void>;
+    auto clearBinds() -> void;
+    auto close() -> IoTask<void>;
+    auto nativeHandle() const -> void * override;
+
+    auto dataBind(size_t index) -> MYSQL_BIND *;
+private:
+    // this query should like "SELECT * FROM table WHERE name=:name,age=:age;"
+    // return query like "SELECT * FROM table WHERE name=?,age=?;"
+    auto parser(std::string_view sql) -> std::string;
+private:
+    std::shared_ptr<MySql>                   mMysql;
+    std::shared_ptr<MYSQL_STMT>              mMysqlStmt = nullptr;
+    std::vector<MYSQL_BIND>                  mBinds;
+    std::unordered_map<std::string, int>     mIndexs;
+    std::vector<std::unique_ptr<void, void (*)(void *)>> mDataGuards;
+};
+
+class MysqlConnection : public IConnection {
+public:
+    MysqlConnection(std::shared_ptr<MySql> mysql, ConnectOptions options) : mMysql(mysql), mOptions(options) {}
+    auto sqlname() -> std::string override;
+    auto sqlinfo() -> std::string override;
+    auto connect() -> IoTask<void> override;
+    auto disconnect() -> IoTask<void> override;
+    auto selectDatabase(std::string_view name) -> IoTask<void> override;
+    // 预编译 SQL
+    auto prepare(std::string_view sql) -> IoTask<std::unique_ptr<IStatement>> override;
+    // 直接执行 SQL (不带参)
+    auto execute(std::string_view sql) -> IoTask<size_t> override;
+    auto query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> override;
+    // 事务控制
+    auto beginTransaction() -> IoTask<bool> override;
+    auto commit() -> IoTask<bool> override;
+    auto rollback() -> IoTask<bool> override;
+    auto syncRollback() -> bool override;
+    // 获取最后一次插入的 ID
+    auto lastInsertId() const -> int64_t override;
+    // 连通性检测
+    auto ping() -> IoTask<bool> override;
+    auto mysql() -> std::shared_ptr<MySql> { return mMysql; }
+    auto nativeHandle() const -> void * override;
+    auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> override;
+
+private:
+    std::shared_ptr<MySql> mMysql;
+    ConnectOptions         mOptions;
+    bool                   mIsConnected = false;
+};
 ILIAS_MYSQL_NS_END
