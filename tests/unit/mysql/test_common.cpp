@@ -930,7 +930,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
 int main(int argc, char **argv) {
     cpptrace::init();
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
-    ILIAS_LOG_ADD_WHITELIST("ilias-mysql");
+    ILIAS_LOG_ADD_WHITELIST("ilias-sql");
     ILIAS_LOG_ADD_WHITELIST("mysql-test");
     ilias::PlatformContext ioContext;
     ioContext.install();

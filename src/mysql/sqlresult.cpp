@@ -44,208 +44,39 @@
 ILIAS_MYSQL_NS_BEGIN
 
 auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull)
-    -> Result<SqlValueView, std::error_code> {
-    SqlValueView result;
+    -> IoResult<SqlCellView> {
     // Check the is_null indicator first - this is the proper way to detect NULL values
     if (isNull) {
-        result.emplace<sql::SqlNull>();
-        return result;
+        return SqlCellView {mContext, &g_sql_null, sizeof(g_sql_null), std::type_index(typeid(g_sql_null)), -1};
     }
     if (buffer == nullptr) {
-        result.emplace<sql::SqlNull>();
-        return result;
+        return SqlCellView {mContext, &g_sql_null, sizeof(g_sql_null), std::type_index(typeid(g_sql_null)), -1};
     }
     switch (field->type) {
-        case MYSQL_TYPE_TINY: // char
-            if (field->length == 1) {
-                result.emplace<bool>(*reinterpret_cast<int32_t *>(buffer) != 0);
-            }
-            else {
-                result.emplace<char>(*reinterpret_cast<int32_t *>(buffer));
-            }
-            break;
+        case MYSQL_TYPE_TINY:  // char
         case MYSQL_TYPE_SHORT: // short
         case MYSQL_TYPE_LONG:  // int
         case MYSQL_TYPE_INT24:
-            result.emplace<int32_t>(*reinterpret_cast<int32_t *>(buffer));
-            break;
+            return SqlCellView {mContext, buffer, (int)bufferSize, std::type_index(typeid(int32_t)), -1};
         case MYSQL_TYPE_FLOAT:
-            result.emplace<float>(*reinterpret_cast<double *>(buffer));
-            break;
         case MYSQL_TYPE_DOUBLE:
-            result.emplace<double>(*reinterpret_cast<double *>(buffer));
-            break;
-        case MYSQL_TYPE_NULL:
-            result.emplace<sql::SqlNull>();
-            break;
-        case MYSQL_TYPE_TIMESTAMP:
-        case MYSQL_TYPE_DATETIME:
-        case MYSQL_TYPE_DATE:
-        case MYSQL_TYPE_TIME:
-            result.emplace<sql::SqlDate>();
-            std::get<sql::SqlDate>(result).fromUTCString(std::string_view((char *)buffer, bufferSize));
+            return SqlCellView {mContext, buffer, (int)bufferSize, std::type_index(typeid(double)), -1};
             break;
         case MYSQL_TYPE_LONGLONG: // long long
-            result.emplace<int64_t>(*reinterpret_cast<int64_t *>(buffer));
-            break;
-        case MYSQL_TYPE_DECIMAL:
-        case MYSQL_TYPE_NEWDECIMAL: {
-            const char      *start = reinterpret_cast<const char *>(buffer);
-            const char      *end   = start + bufferSize;
-            std::string_view sv(start, bufferSize);
-            if (sv.find('.') == std::string_view::npos) {
-                int64_t value;
-                auto    res = std::from_chars(start, end, value);
-                if (res.ec == std::errc() && res.ptr == end) {
-                    result.emplace<int64_t>(value);
-                }
-                else {
-                    result.emplace<std::string_view>(sv);
-                }
-            }
-            else {
-                try {
-                    std::string temp(start, bufferSize);
-                    result.emplace<double>(std::stod(temp));
-                } catch (const std::exception &) {
-                    result.emplace<std::string_view>(sv);
-                }
-            }
-            break;
-        }
-        case MYSQL_TYPE_VARCHAR:
-        case MYSQL_TYPE_VAR_STRING:
-        case MYSQL_TYPE_STRING:
-        case MYSQL_TYPE_JSON:
-        case MYSQL_TYPE_ENUM:
-        case MYSQL_TYPE_SET:
-            result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
-            break;
-        case MYSQL_TYPE_BLOB:
-        case MYSQL_TYPE_LONG_BLOB:
-        case MYSQL_TYPE_MEDIUM_BLOB:
-        case MYSQL_TYPE_TINY_BLOB:
-            result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>((char *)buffer), bufferSize);
-            break;
+            return SqlCellView {mContext, buffer, (int)bufferSize, std::type_index(typeid(int64_t)), -1};
         default:
-            ILIAS_WARN("ilias-sql", "unsuported type: {}", (int)field->type);
-            return Unexpected(sql::SqlError::Code::UnsupportSqlType);
+            return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), field->type, -1};
     }
-    return result;
 }
 
-auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize)
-    -> Result<SqlValueView, std::error_code> {
-    SqlValueView result;
+auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> IoResult<SqlCellView> {
     if (buffer == nullptr) {
-        result.emplace<sql::SqlNull>();
-        return result;
+        return SqlCellView {mContext, &g_sql_null, sizeof(g_sql_null), std::type_index(typeid(g_sql_null)), -1};
     }
-    switch (field->type) {
-        case MYSQL_TYPE_TINY: { // char
-            int res;
-            auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
-            if (ec != std::errc() || ptr != buffer + bufferSize) {
-                auto str = std::string_view(buffer, bufferSize);
-                // if is a boolean
-                if (str == "true" || str == "false") {
-                    result.emplace<bool>(str == "true");
-                    break;
-                }
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
-            }
-            result.emplace<char>(res);
-            break;
-        }
-        case MYSQL_TYPE_SHORT: // short
-        case MYSQL_TYPE_LONG:  // int
-        case MYSQL_TYPE_INT24: {
-            int32_t res;
-            auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
-            if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
-            }
-            result.emplace<int32_t>(res);
-            break;
-        }
-        case MYSQL_TYPE_FLOAT: {
-            float res;
-            auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
-            if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
-            }
-            result.emplace<float>(res);
-            break;
-        }
-        case MYSQL_TYPE_DOUBLE: {
-            double res;
-            auto [ptr, ec] = std::from_chars(buffer, buffer + bufferSize, res);
-            if (ec != std::errc() || ptr != buffer + bufferSize) {
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
-            }
-            result.emplace<double>(res);
-            break;
-        }
-        case MYSQL_TYPE_DECIMAL:
-        case MYSQL_TYPE_NEWDECIMAL: {
-            const char      *start = reinterpret_cast<const char *>(buffer);
-            const char      *end   = start + bufferSize;
-            std::string_view sv(start, bufferSize);
-            if (sv.find('.') == std::string_view::npos) {
-                int64_t value;
-                auto    res = std::from_chars(start, end, value);
-                if (res.ec == std::errc() && res.ptr == end) {
-                    result.emplace<int64_t>(value);
-                }
-                else {
-                    result.emplace<std::string_view>(sv);
-                }
-            }
-            else {
-                try {
-                    std::string temp(start, bufferSize);
-                    result.emplace<double>(std::stod(temp));
-                } catch (const std::exception &) {
-                    result.emplace<std::string_view>(sv);
-                }
-            }
-            break;
-        }
-        case MYSQL_TYPE_NULL:
-            result.emplace<sql::SqlNull>();
-            break;
-        case MYSQL_TYPE_TIMESTAMP:
-        case MYSQL_TYPE_DATETIME:
-        case MYSQL_TYPE_TIME:
-        case MYSQL_TYPE_DATE:
-            result.emplace<sql::SqlDate>();
-            std::get<sql::SqlDate>(result).fromUTCString(std::string_view(buffer, bufferSize));
-            break;
-        case MYSQL_TYPE_LONGLONG: // long long
-            result.emplace<int64_t>(std::stoll(std::string(buffer), nullptr, 10));
-            break;
-        case MYSQL_TYPE_VARCHAR:
-        case MYSQL_TYPE_VAR_STRING:
-        case MYSQL_TYPE_STRING:
-        case MYSQL_TYPE_JSON:
-        case MYSQL_TYPE_ENUM:
-        case MYSQL_TYPE_SET:
-            result.emplace<std::string_view>(reinterpret_cast<char *>(buffer), bufferSize);
-            break;
-        case MYSQL_TYPE_BLOB:
-        case MYSQL_TYPE_LONG_BLOB:
-        case MYSQL_TYPE_MEDIUM_BLOB:
-        case MYSQL_TYPE_TINY_BLOB:
-            result.emplace<std::span<const std::byte>>(reinterpret_cast<std::byte *>(buffer), bufferSize);
-            break;
-        default:
-            ILIAS_WARN("ilias-mysql", "Unsupport sql type {}", (int)field->type);
-            return Unexpected(sql::SqlError::Code::UnsupportSqlType);
-    }
-    return result;
+    return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), field->type, -1};
 }
 
-SqlQueryResult::SqlQueryResult(SqlQueryResult &&other) {
+SqlQueryResult::SqlQueryResult(SqlQueryResult &&other) : MySqlResultBase(other.mMysql->valueConverterContext()) {
     mMysql            = std::move(other.mMysql);
     mResult           = std::move(other.mResult);
     mCurrentRow       = other.mCurrentRow;
@@ -271,7 +102,8 @@ SqlQueryResult &SqlQueryResult::operator=(SqlQueryResult &&other) {
     return *this;
 }
 
-SqlQueryResult::SqlQueryResult(std::shared_ptr<MySql> sql) : mMysql(sql) {
+SqlQueryResult::SqlQueryResult(std::shared_ptr<MySql> sql)
+    : MySqlResultBase(sql->valueConverterContext()), mMysql(sql) {
 }
 
 SqlQueryResult::~SqlQueryResult() {
@@ -344,7 +176,7 @@ auto SqlQueryResult::next() -> IoTask<bool> {
     }
 }
 
-auto SqlQueryResult::get(size_t index) -> IoResult<SqlValueView> {
+auto SqlQueryResult::get(size_t index) -> IoResult<SqlCellView> {
     if (mCurrentRow == nullptr) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -367,7 +199,7 @@ auto SqlQueryResult::get(size_t index) -> IoResult<SqlValueView> {
 }
 
 // TODO: optimize
-auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlValueView> {
+auto SqlQueryResult::get(std::string_view name) -> IoResult<SqlCellView> {
     if (mResult == nullptr || mCurrentRow == nullptr) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -447,7 +279,7 @@ auto SqlQueryResult::freeResult() -> void {
     }
 }
 
-SqlStmtResult::SqlStmtResult(SqlStmtResult &&other) {
+SqlStmtResult::SqlStmtResult(SqlStmtResult &&other) : MySqlResultBase(other.mMysql->valueConverterContext()) {
     mMysql  = std::move(other.mMysql);
     mStmt   = std::move(other.mStmt);
     mResult = std::move(other.mResult);
@@ -465,7 +297,8 @@ SqlStmtResult &SqlStmtResult::operator=(SqlStmtResult &&other) {
     return *this;
 }
 
-SqlStmtResult::SqlStmtResult(std::shared_ptr<MySql> sql, std::shared_ptr<MYSQL_STMT> stmt) : mMysql(sql), mStmt(stmt) {
+SqlStmtResult::SqlStmtResult(std::shared_ptr<MySql> sql, std::shared_ptr<MYSQL_STMT> stmt)
+    : MySqlResultBase(sql->valueConverterContext()), mMysql(sql), mStmt(stmt) {
 }
 
 SqlStmtResult::~SqlStmtResult() {
@@ -545,7 +378,7 @@ auto SqlStmtResult::next() -> IoTask<bool> {
     }
 }
 
-auto SqlStmtResult::get(size_t index) -> IoResult<SqlValueView> {
+auto SqlStmtResult::get(size_t index) -> IoResult<SqlCellView> {
     if (mFields.empty() || mFieldMetas.empty()) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -559,7 +392,7 @@ auto SqlStmtResult::get(size_t index) -> IoResult<SqlValueView> {
 }
 
 // TODO: optimize
-auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlValueView> {
+auto SqlStmtResult::get(std::string_view name) -> IoResult<SqlCellView> {
     if (mResult == nullptr || mFieldMetas.empty()) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
