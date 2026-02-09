@@ -429,63 +429,37 @@ auto SqliteStatement::native() const -> sqlite3_stmt * {
     return mSqliteStmt.get();
 }
 
-auto SqliteStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    // ILIAS_TRACE("ilias-sqlite", "sqlite({}) Binding index {} value {}", (void *)mSqlite.get(), index, value);
-    if (!mSqlite || !mSqliteStmt) {
-        ILIAS_TRACE("ilias-sqlite", "{} bind failed: not connected", index);
-        return Unexpected(SqlError::Code::NotConnected);
+auto SqliteStatement::bind(std::type_index type_index, size_t index, const SqlCellView &value) -> IoResult<void> {
+    auto ctxt = mContext.get();
+    if (value.context() != nullptr) {
+        ctxt = value.context();
     }
-    switch ((SqlValueType)value.index()) {
-        case SqlValueType::kNull:
-            sqlite3_bind_null(mSqliteStmt.get(), static_cast<int>(index));
-            break;
-        case SqlValueType::kBool:
-            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kBool>(value));
-            break;
-        case SqlValueType::kChar:
-            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kChar>(value));
-            break;
-        case SqlValueType::kInt:
-            sqlite3_bind_int(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kInt>(value));
-            break;
-        case SqlValueType::kBigInt:
-            sqlite3_bind_int64(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kBigInt>(value));
-            break;
-        case SqlValueType::kFloat:
-            sqlite3_bind_double(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kFloat>(value));
-            break;
-        case SqlValueType::kDouble:
-            sqlite3_bind_double(mSqliteStmt.get(), static_cast<int>(index), get<SqlValueType::kDouble>(value));
-            break;
-        case SqlValueType::kText: {
-            auto string = get<SqlValueType::kText>(value);
-            sqlite3_bind_text(mSqliteStmt.get(), static_cast<int>(index), string.data(),
-                              static_cast<int>(string.size()), SQLITE_STATIC);
-        } break;
-        case SqlValueType::kBlob: {
-            auto data = get<SqlValueType::kBlob>(value);
-            sqlite3_bind_blob(mSqliteStmt.get(), static_cast<int>(index), data.data(),
-                              static_cast<int>(data.size_bytes()), SQLITE_STATIC);
-        } break;
-        case SqlValueType::kDate: {
-            auto string = get<SqlValueType::kDate>(value).toUTCString();
-            sqlite3_bind_text(mSqliteStmt.get(), static_cast<int>(index), string.data(),
-                              static_cast<int>(string.size()), SQLITE_TRANSIENT);
-        } break;
-        default:
-            ILIAS_TRACE("ilias-sqlite", "{} bind failed: invalid argument", index);
-            return Unexpected(std::make_error_code(std::errc::invalid_argument));
+    auto binder = ctxt->findTypeBinder(type_index);
+    if (binder) {
+        auto store =
+            binder(SqlCellView(nullptr, value.raw_value(), value.raw_value_size(), value.raw_type(), index), this);
+        if (store) {
+            if (*store) {
+                mDataGuards.emplace_back(std::move(store.value()));
+            }
+        }
+        else {
+            return Unexpected(store.error());
+        }
+        return {};
     }
-    return {};
+    ILIAS_ERROR("ilias-sqlite", "Unsupport bind type: {}", type_index);
+    return Unexpected(SqlError::Code::UnsupportBindType);
 }
 
-auto SqliteStatement::bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> {
+auto SqliteStatement::bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
+    -> Result<void, std::error_code> {
     if (!mSqlite || !mSqliteStmt) {
         return Unexpected(SqlError::Code::NotConnected);
     }
     std::string key   = ":" + std::string(name);
     auto        index = sqlite3_bind_parameter_index(mSqliteStmt.get(), key.c_str());
-    return bind(index, value);
+    return bind(type_index, index, value);
 }
 
 auto SqliteStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {

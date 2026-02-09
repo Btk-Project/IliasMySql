@@ -308,4 +308,19 @@ auto SqlDate::now() -> SqlDate {
     return date;
 }
 
+auto SqlValueConverterContext::registerType(std::type_index type, SqlParserFunc func) -> void {
+    ILIAS_TRACE("ilias-sql", "registering parser for type {}", type);
+    mParsers[type] = func;
+}
+auto SqlValueConverterContext::registerType(std::type_index type, SqlBindFunc func) -> void {
+    ILIAS_TRACE("ilias-sql", "registering binder for type {}", type);
+    mBinders[type] = func;
+}
+auto SqlValueConverterContext::parserTypes() -> std::map<std::type_index, SqlParserFunc> & {
+    return mParsers;
+}
+auto SqlValueConverterContext::binderTypes() -> std::map<std::type_index, SqlBindFunc> & {
+    return mBinders;
+}
+
 ILIAS_SQL_NS_END

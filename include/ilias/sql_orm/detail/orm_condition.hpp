@@ -280,12 +280,7 @@ public:
 
     template <typename U>
     SqlAssignment operator=(U &&value) const {
-        if constexpr (ISqlValue<std::decay_t<U>> || ISqlValueView<std::decay_t<U>>) {
-            static_assert((std::is_same_v<std::decay_t<U>, std::decay_t<typename OptionalLikeType<T>::type>>) ||
-                        (std::is_convertible_v<std::decay_t<U>, std::decay_t<typename OptionalLikeType<T>::type>>),
-                          "raw value type mismatch");
-        }
-        else if constexpr (std::is_invocable_v<U>) {
+        if constexpr (std::is_invocable_v<U>) {
             using ResultT = std::invoke_result_t<U>;
             static_assert(std::is_same_v<std::decay_t<ResultT>, std::decay_t<T>>, "function result type mismatch");
         }
@@ -295,7 +290,11 @@ public:
             // TODO: check string can be converted to T ?
         }
         else {
-            static_assert(std::is_same_v<std::decay_t<U>, std::decay_t<T>>, "unknown bind type");
+            static_assert((std::is_same_v<typename OptionalLikeType<U>::type,
+                                          std::decay_t<typename OptionalLikeType<T>::type>>) ||
+                              (std::is_convertible_v<typename OptionalLikeType<U>::type,
+                                                     std::decay_t<typename OptionalLikeType<T>::type>>),
+                          "raw value type mismatch");
         }
         return SqlVariable::operator=(std::forward<U>(value));
     }

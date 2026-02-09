@@ -48,7 +48,9 @@ class SqlErrorCategory;
     SQL_ERROR_ENTRY(InvalidSqlStatement, "Invalid SQL statement, please prepare befor use or check your SQL syntax")   \
     SQL_ERROR_ENTRY(                                                                                                   \
         InvalidDataFormat,                                                                                             \
-        "Invalid data format, cell view must have a specific type, please refer to the documentation for details.")
+        "Invalid data format, cell view must have a specific type, please refer to the documentation for details.")    \
+    SQL_ERROR_ENTRY(UnsupportBindType,                                                                                 \
+                    "Unsupported bind type, Please check the binder to ensure your type is registered.")
 
 class ILIAS_SQL_API SqlError {
 public:

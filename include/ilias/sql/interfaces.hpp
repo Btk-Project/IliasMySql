@@ -57,8 +57,6 @@ class IStatement {
 public:
     virtual ~IStatement() = default;
 
-    virtual auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code>          = 0;
-    virtual auto bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> = 0;
     // 执行查询 (SELECT)，返回结果集
     virtual auto query() -> IoTask<std::unique_ptr<IResultSet>> = 0;
 
@@ -68,6 +66,16 @@ public:
     // 重置状态以便复用
     virtual auto reset() -> void                = 0;
     virtual auto nativeHandle() const -> void * = 0;
+
+    template <typename T>
+    auto bind(size_t index, T &&value) -> IoResult<void>;
+    template <typename T>
+    auto bind(std::string_view name, T &&value) -> IoResult<void>;
+
+protected:
+    virtual auto bind(std::type_index type_index, size_t index, const SqlCellView &value) -> IoResult<void> = 0;
+    virtual auto bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
+        -> IoResult<void> = 0;
 };
 
 /**
@@ -106,5 +114,84 @@ public:
     virtual auto ping() -> IoTask<bool>         = 0;
     virtual auto nativeHandle() const -> void * = 0;
 };
+
+template <typename T>
+auto IStatement::bind(std::string_view name, T &&value) -> IoResult<void> {
+    static_assert(std::is_lvalue_reference<T>::value, "bind() only accepts lvalue reference");
+    using value_type = std::remove_cvref_t<T>;
+    if constexpr (std::is_same_v<value_type, std::nullptr_t> || std::is_same_v<value_type, std::nullopt_t>) {
+        return bind(std::type_index(typeid(SqlNull)), name, SqlCellView {});
+    }
+    else if constexpr (OptionalLikeType<value_type>::value) {
+        if (OptionalLikeType<value_type>::has_value(value)) {
+            return bind(name, *value);
+        }
+        else {
+            return bind(std::type_index(typeid(const SqlNull)), name, SqlCellView {});
+        }
+    }
+    else if constexpr (std::is_same_v<value_type, SqlCellView>) {
+        return bind(value.raw_type(), name, value);
+    }
+    else if constexpr (std::is_same_v<value_type, std::string_view> || std::is_same_v<value_type, std::string> ||
+                       (std::is_array_v<value_type> && std::is_constructible_v<std::string_view, T>)) {
+        auto strView = std::string_view(value);
+        return bind(std::type_index(typeid(const char)), name,
+                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char), -1));
+    }
+    else if constexpr (std::is_convertible_v<value_type, std::span<const std::byte>> ||
+                       std::is_convertible_v<value_type, std::span<const char>>) {
+        auto span = std::span(value);
+        return bind(std::type_index(typeid(const std::byte)), name,
+                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte), -1));
+    }
+    else {
+        return bind(std::type_index(typeid(const value_type)), name,
+                    SqlCellView(nullptr, &value, sizeof(value_type), typeid(const value_type), -1));
+    }
+}
+
+template <typename T>
+auto IStatement::bind(size_t index, T &&value) -> IoResult<void> {
+    static_assert(std::is_lvalue_reference<T>::value, "bind() only accepts lvalue reference");
+    using value_type = std::remove_cvref_t<T>;
+    if constexpr (std::is_same_v<value_type, std::nullptr_t> || std::is_same_v<value_type, std::nullopt_t>) {
+        // 空值不携带类型信息，因此需要显式指定SqlNull类型
+        return bind(std::type_index(typeid(SqlNull)), index, SqlCellView {});
+    }
+    else if constexpr (OptionalLikeType<value_type>::value) {
+        // 类似于std::optional的值类型，需要判断是否有值
+        if (OptionalLikeType<value_type>::has_value(value)) {
+            return bind(index, *value);
+        }
+        else {
+            return bind(std::type_index(typeid(const SqlNull)), index, SqlCellView {});
+        }
+    }
+    else if constexpr (std::is_same_v<value_type, SqlCellView>) {
+        // 特殊类型，直接绑定
+        return bind(value.raw_type(), index, value);
+    }
+    else if constexpr (std::is_same_v<value_type, std::string_view> || std::is_same_v<value_type, std::string> ||
+                       std::is_constructible_v<std::string_view, T>) {
+        // 统一处理字符串类型
+        auto strView = std::string_view(value);
+        return bind(std::type_index(typeid(const char)), index,
+                    SqlCellView(nullptr, strView.data(), strView.size(), typeid(const char), -1));
+    }
+    else if constexpr (std::is_same_v<value_type, std::span<const std::byte>> ||
+                       std::is_same_v<value_type, std::span<const char>> ||
+                       std::is_constructible_v<std::span<const std::byte>, T>) {
+        // 统一处理字节数组类型
+        auto span = std::span(value);
+        return bind(std::type_index(typeid(const std::byte)), index,
+                    SqlCellView(nullptr, span.data(), span.size(), typeid(const std::byte), -1));
+    }
+    else {
+        // 其他类型
+        return bind(std::type_index(typeid(const value_type)), index,
+                    SqlCellView(nullptr, &value, sizeof(value_type), typeid(const value_type), -1));
+    }
+}
 
 ILIAS_SQL_NS_END

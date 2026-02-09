@@ -51,7 +51,7 @@ auto DriverManager::registerDriver(std::string_view name, DriverFactoryFn factor
         ILIAS_WARN("ilias-sql", "{} has already registerd", name);
         return Unexpected(SqlError::Code::DriverAlreadyRegistered);
     }
-    ILIAS_INFO("ilias-sql", "Register driver: {}", name);
+    ILIAS_TRACE("ilias-sql", "Register driver: {}", name);
     drivers_[std::string(name)] = std::move(factory);
     return {};
 }
