@@ -361,7 +361,7 @@ auto MySql::valueConverterContext() const -> std::shared_ptr<SqlValueConverterCo
 MysqlResultSet::~MysqlResultSet() {
 }
 
-MysqlResultSet::MysqlResultSet(std::unique_ptr<MySqlResultBase> imp) : mImp(std::move(imp)) {
+MysqlResultSet::MysqlResultSet(std::unique_ptr<MySqlResultBase> &&imp) : mImp(std::move(imp)) {
 }
 
 auto MysqlResultSet::next() -> IoTask<bool> {
@@ -732,6 +732,9 @@ auto MysqlStatement::clearBinds() -> void {
     mDataGuards.clear();
 }
 
+MysqlConnection::~MysqlConnection() {
+}
+
 auto MysqlConnection::sqlname() -> std::string {
     auto info = sqlinfo();
     if (info.find("MariaDB") != std::string::npos) {
@@ -909,8 +912,8 @@ SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
     switch (cell.formatted_type()) {
         case MYSQL_TYPE_TINY: {
             int res;
-            auto [ptr, ec] = std::from_chars(string.begin(), string.end(), res);
-            if (ec != std::errc() || ptr != string.end()) {
+            auto [ptr, ec] = std::from_chars(string.data(), string.data() + string.size(), res);
+            if (ec != std::errc() || ptr != (string.data() + string.size())) {
                 // 可能是数字 或者 true/false
                 if (string == "true" || string == "false") {
                     return std::any(static_cast<T>(string == "true"));
@@ -926,8 +929,8 @@ SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
         case MYSQL_TYPE_LONGLONG:
         case MYSQL_TYPE_NEWDECIMAL: {
             int64_t res;
-            auto [ptr, ec] = std::from_chars(string.begin(), string.end(), res);
-            if (ec != std::errc() || ptr != string.end()) {
+            auto [ptr, ec] = std::from_chars(string.data(), string.data() + string.size(), res);
+            if (ec != std::errc() || ptr != (string.data() + string.size())) {
                 return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             return std::any(static_cast<T>(res));
@@ -998,8 +1001,8 @@ SqlParserResult mysql_parse_real(const SqlCellView &cell) {
         case MYSQL_TYPE_DECIMAL:
         case MYSQL_TYPE_NEWDECIMAL: {
             T res;
-            auto [ptr, ec] = std::from_chars(string.begin(), string.end(), res);
-            if (ec != std::errc() || ptr != string.end()) {
+            auto [ptr, ec] = std::from_chars(string.data(), string.data() + string.size(), res);
+            if (ec != std::errc() || ptr != (string.data() + string.size())) {
                 return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
             }
             return std::any(static_cast<T>(res));

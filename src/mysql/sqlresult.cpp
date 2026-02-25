@@ -65,7 +65,7 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
         case MYSQL_TYPE_LONGLONG: // long long
             return SqlCellView {mContext, buffer, (int)bufferSize, std::type_index(typeid(int64_t)), -1};
         default:
-            return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), field->type, -1};
+            return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), static_cast<uint32_t>(field->type), -1};
     }
 }
 
@@ -73,7 +73,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
     if (buffer == nullptr) {
         return SqlCellView {mContext, &g_sql_null, sizeof(g_sql_null), std::type_index(typeid(g_sql_null)), -1};
     }
-    return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), field->type, -1};
+    return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize),  static_cast<uint32_t>(field->type), -1};
 }
 
 SqlQueryResult::SqlQueryResult(SqlQueryResult &&other) : MySqlResultBase(other.mMysql->valueConverterContext()) {

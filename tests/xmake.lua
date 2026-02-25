@@ -22,12 +22,12 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         sql_backend = string.match(dir, "unit\\(%w+)")
     end
     if sql_backend == nil then
-        print("skip " .. dir .. "/" .. name)
+        -- print("skip " .. dir .. "/" .. name)
         goto continue
     end
 
     if not has_config("enable_" .. sql_backend) then
-        print("skip " .. dir .. "/" .. name .. " because " .. sql_backend .. " is disabled")
+        -- print("skip " .. dir .. "/" .. name .. " because " .. sql_backend .. " is disabled")
         goto continue
     end
 

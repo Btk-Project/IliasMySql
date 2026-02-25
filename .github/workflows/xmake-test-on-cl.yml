@@ -22,21 +22,21 @@ jobs:
         auto-start: true
         root-password: 'root'
 
-    - name: Setup PostgreSQL
-      shell: powershell
-      run: |
-        # 查找安装路径并添加到 PATH
-        $pgPath = Get-ChildItem "C:\Program Files\PostgreSQL" | Select-Object -First 1
-        $pgBin = "$($pgPath.FullName)\bin"
-        echo "$pgBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    # - name: Setup PostgreSQL
+    #   shell: powershell
+    #   run: |
+    #     # 查找安装路径并添加到 PATH
+    #     $pgPath = Get-ChildItem "C:\Program Files\PostgreSQL" | Select-Object -First 1
+    #     $pgBin = "$($pgPath.FullName)\bin"
+    #     echo "$pgBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         
-        # 启动服务 (Windows 服务名通常是 postgresql-x64-<version>)
-        $serviceName = Get-Service | Where-Object { $_.Name -like "postgresql*" } | Select-Object -ExpandProperty Name
-        Write-Host "Starting service: $serviceName"
-        net start $serviceName
+    #     # 启动服务 (Windows 服务名通常是 postgresql-x64-<version>)
+    #     $serviceName = Get-Service | Where-Object { $_.Name -like "postgresql*" } | Select-Object -ExpandProperty Name
+    #     Write-Host "Starting service: $serviceName"
+    #     net start $serviceName
 
-        # 等待启动
-        Start-Sleep -Seconds 5
+    #     # 等待启动
+    #     Start-Sleep -Seconds 5
 
     # 2. 创建测试数据库
     - name: Create Database
@@ -59,9 +59,9 @@ jobs:
         # --- PostgreSQL 初始化 ---
         # 默认 postgres 用户在 Windows CI 上通常没有密码或者使用系统认证
         # 创建 ci 用户和测试数据库
-        $env:PGPASSWORD = "" # 尝试空密码登录
-        & psql -h localhost -U postgres -c "CREATE USER ci WITH PASSWORD 'ci' SUPERUSER;"
-        & psql -h localhost -U postgres -c "CREATE DATABASE test_db;"
+        # $env:PGPASSWORD = "" # 尝试空密码登录
+        # & psql -h localhost -U postgres -c "CREATE USER ci WITH PASSWORD 'ci' SUPERUSER;"
+        # & psql -h localhost -U postgres -c "CREATE DATABASE test_db;"
 
     # 3. 安装 XMake
     - name: Setup XMake
@@ -73,7 +73,7 @@ jobs:
     # 4. 配置构建 (使用 MSVC 编译器)
     # 这里的 -y 自动确认包安装 (如果有 add_requires 的话)
     - name: Configure XMake
-      run: xmake f -p windows -a x64 -m debug -k shared --enable_test=y --enable_postgres=y -y
+      run: xmake f -p windows -a x64 -m debug -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=n -y
 
     # 5. 构建项目
     - name: Build

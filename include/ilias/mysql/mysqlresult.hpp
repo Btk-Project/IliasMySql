@@ -8,31 +8,6 @@
 
 ILIAS_MYSQL_NS_BEGIN
 
-class ILIAS_SQL_API MySqlResultBase {
-public:
-    MySqlResultBase(std::shared_ptr<SqlValueConverterContext> context) : mContext(context) {}
-    MySqlResultBase(MySqlResultBase &&)            = default;
-    MySqlResultBase &operator=(MySqlResultBase &&) = default;
-    virtual ~MySqlResultBase()                     = default;
-
-    MySqlResultBase(const MySqlResultBase &)            = delete;
-    MySqlResultBase &operator=(const MySqlResultBase &) = delete;
-
-    [[nodiscard("Don't forget to use co_await")]]
-    virtual auto next() -> IoTask<bool>                              = 0;
-    virtual auto countRows() -> size_t                               = 0;
-    virtual auto countFields() -> size_t                             = 0;
-    virtual auto fieldName(size_t index) -> std::string_view         = 0;
-    virtual auto get(size_t index) -> IoResult<SqlCellView>          = 0;
-    virtual auto get(std::string_view name) -> IoResult<SqlCellView> = 0;
-    auto stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull) -> IoResult<SqlCellView>;
-    auto toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> IoResult<SqlCellView>;
-    virtual auto nativeResult() -> MYSQL_RES * = 0;
-
-private:
-    std::shared_ptr<SqlValueConverterContext> mContext;
-};
-
 class ILIAS_SQL_API SqlQueryResult final : public MySqlResultBase {
     using SqlError = sql::SqlError;
 
