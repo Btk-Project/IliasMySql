@@ -30,6 +30,8 @@ ILIAS_SQL_USE_NAMESPACE
 class ILIAS_SQL_API SqliteStatement final : public IStatement {
 public:
     SqliteStatement(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<SqlValueConverterContext> context);
+    SqliteStatement(const SqliteStatement &) = delete;
+    SqliteStatement &operator=(const SqliteStatement &) = delete;
     ~SqliteStatement();
     auto native() const -> sqlite3_stmt *;
     auto bind(std::type_index type_index, size_t index, const SqlCellView &value) -> IoResult<void> override;

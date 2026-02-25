@@ -27,7 +27,31 @@
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
 
-class MySqlResultBase;
+class ILIAS_SQL_API MySqlResultBase {
+public:
+    MySqlResultBase(std::shared_ptr<SqlValueConverterContext> context) : mContext(context) {}
+    MySqlResultBase(MySqlResultBase &&)            = default;
+    MySqlResultBase &operator=(MySqlResultBase &&) = default;
+    virtual ~MySqlResultBase()                     = default;
+
+    MySqlResultBase(const MySqlResultBase &)            = delete;
+    MySqlResultBase &operator=(const MySqlResultBase &) = delete;
+
+    [[nodiscard("Don't forget to use co_await")]]
+    virtual auto next() -> IoTask<bool>                              = 0;
+    virtual auto countRows() -> size_t                               = 0;
+    virtual auto countFields() -> size_t                             = 0;
+    virtual auto fieldName(size_t index) -> std::string_view         = 0;
+    virtual auto get(size_t index) -> IoResult<SqlCellView>          = 0;
+    virtual auto get(std::string_view name) -> IoResult<SqlCellView> = 0;
+    auto stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull) -> IoResult<SqlCellView>;
+    auto toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> IoResult<SqlCellView>;
+    virtual auto nativeResult() -> MYSQL_RES * = 0;
+
+private:
+    std::shared_ptr<SqlValueConverterContext> mContext;
+};
+
 class ILIAS_SQL_API MySql final {
 public:
     using SqlError = sql::SqlError;
@@ -107,14 +131,14 @@ private:
     std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
-class MysqlResultSet : public IResultSet {
+class ILIAS_SQL_API MysqlResultSet final : public IResultSet {
 public:
     MysqlResultSet(const MysqlResultSet &)            = delete;
     MysqlResultSet(MysqlResultSet &&)                 = default;
     MysqlResultSet &operator=(const MysqlResultSet &) = delete;
     MysqlResultSet &operator=(MysqlResultSet &&)      = default;
-    MysqlResultSet(std::unique_ptr<MySqlResultBase> imp);
-    virtual ~MysqlResultSet();
+    MysqlResultSet(std::unique_ptr<MySqlResultBase>&& imp);
+    ~MysqlResultSet();
     auto next() -> IoTask<bool> override;
     auto rowCount() const -> size_t override;
     auto columnCount() const -> size_t override;
@@ -128,7 +152,7 @@ private:
     std::unique_ptr<MySqlResultBase> mImp;
 };
 
-class MysqlStatement : public IStatement {
+class ILIAS_SQL_API MysqlStatement final : public IStatement {
 public:
     using SqlError                                    = sql::SqlError;
     MysqlStatement(const MysqlStatement &)            = delete;
@@ -164,9 +188,10 @@ private:
     std::vector<std::unique_ptr<void, void (*)(void *)>> mDataGuards;
 };
 
-class MysqlConnection : public IConnection {
+class ILIAS_SQL_API MysqlConnection final : public IConnection {
 public:
     MysqlConnection(std::shared_ptr<MySql> mysql, ConnectOptions options) : mMysql(mysql), mOptions(options) {}
+    ~MysqlConnection();
     auto sqlname() -> std::string override;
     auto sqlinfo() -> std::string override;
     auto connect() -> IoTask<void> override;

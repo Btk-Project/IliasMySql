@@ -47,7 +47,7 @@ jobs:
 
     - name: Configure XMake
       # We configure for Release (or Debug) and ensure we check for dependencies
-      run: xmake f -m asan -k shared --enable_test=y -y
+      run: xmake f -m asan -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=n -y
 
     - name: Build
       run: xmake -y
