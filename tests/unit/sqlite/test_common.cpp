@@ -841,8 +841,8 @@ public:
             CO_ASSERT_VAL(users_in_tx);
             CO_ASSERT_VAL(orders_in_tx);
 
-            co_await users_in_tx->insert(std::vector<SimpleUser> {{4, "Dave", 300}});
-            co_await orders_in_tx->insert(std::vector<SimpleOrder> {{104, 4, 100, "Book"}});
+            co_await users_in_tx->emplace(4, "Dave", 300);
+            co_await orders_in_tx->emplace(104, 4, 100, "Book");
 
             // 提交事务
             auto commit_ret = co_await tx.commit();
