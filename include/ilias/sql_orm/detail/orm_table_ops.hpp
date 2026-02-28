@@ -134,7 +134,6 @@ public:
                 // 否则，将此列加入到 INSERT 语句中
                 columnsToInsert.emplace_back(name); // 假设可以从tags获取列名
             });
-        std::string placeholders;
         std::string rowPlaceholder = "(";
         for ([[maybe_unused]] int i = 0; i < (int)columnsToInsert.size(); ++i) {
             if (rowPlaceholder.back() != '(')
@@ -182,8 +181,8 @@ public:
     }
     template <typename... Args>
         requires(std::is_constructible_v<T, Args...> && sizeof...(Args) > 0)
-    auto insert(Args &&...args) -> IoTask<size_t> {
-        co_return co_await insert(std::vector {T {std::forward<Args>(args)...}});
+    auto emplace(Args &&...args) -> IoTask<size_t> {
+        co_return co_await insert(std::array {T {std::forward<Args>(args)...}});
     }
     auto insert() {
         if constexpr (Dialect<BackendTag>::support_timestamp_default()) {

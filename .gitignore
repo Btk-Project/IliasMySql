@@ -12,3 +12,4 @@ a.out
 /vsxmake*
 include/ilias/sql/global/config.h
 /.kiro
+bin/
