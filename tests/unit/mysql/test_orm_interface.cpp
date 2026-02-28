@@ -204,7 +204,7 @@ public:
 
             // 单条插入 - 验证所有字段的精确性
             auto insert_ret =
-                co_await users.insert(1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1, 10, 0, 0), true, 1000.50);
+                co_await users.emplace(1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1, 10, 0, 0), true, 1000.50);
             CO_ASSERT_VAL(insert_ret);
             EXPECT_EQ(insert_ret.value(), 1);
 
@@ -634,12 +634,12 @@ public:
 
             // 插入第一条记录
             auto insert1_ret =
-                co_await users.insert(1, "User1", 25, "user1@test.com", SqlDate(2024, 1, 1), true, 100.0);
+                co_await users.emplace(1, "User1", 25, "user1@test.com", SqlDate(2024, 1, 1), true, 100.0);
             CO_ASSERT_VAL(insert1_ret);
 
             // 尝试插入相同主键的记录
             auto insert2_ret =
-                co_await users.insert(1, "User2", 30, "user2@test.com", SqlDate(2024, 1, 2), true, 200.0);
+                co_await users.emplace(1, "User2", 30, "user2@test.com", SqlDate(2024, 1, 2), true, 200.0);
             CO_EXPECT_NOT_RESULT(insert2_ret); // 应该失败
         }
 
@@ -648,7 +648,7 @@ public:
             PERF_TIMER("unique_key_conflict");
 
             // 尝试插入相同email的记录
-            auto insert_ret = co_await users.insert(2, "User3", 35, "user1@test.com", SqlDate(2024, 1, 3), true, 300.0);
+            auto insert_ret = co_await users.emplace(2, "User3", 35, "user1@test.com", SqlDate(2024, 1, 3), true, 300.0);
             CO_EXPECT_NOT_RESULT(insert_ret); // 应该失败，email重复
         }
 
@@ -864,7 +864,7 @@ public:
 
             // 测试NULL值的插入和检索
             auto null_test_ret =
-                co_await users.insert(6, "NullTest", std::nullopt, std::nullopt, SqlDate(2024, 1, 1), true, 0.0);
+                co_await users.emplace(6, "NullTest", std::nullopt, std::nullopt, SqlDate(2024, 1, 1), true, 0.0);
             CO_ASSERT_VAL(null_test_ret);
 
             auto null_verify = co_await users.select().where(users.sql(&SimpleUser::id) == 6).query();
@@ -905,7 +905,7 @@ public:
                 int  user_id = 100 + static_cast<int>(i);
                 auto balance = test_balances[i];
 
-                auto insert_ret = co_await users.insert(user_id, "FloatTest" + std::to_string(i), 25,
+                auto insert_ret = co_await users.emplace(user_id, "FloatTest" + std::to_string(i), 25,
                                                         "float" + std::to_string(i) + "@test.com", SqlDate(2024, 1, 1),
                                                         true, balance);
                 CO_ASSERT_VAL(insert_ret);
@@ -944,7 +944,7 @@ public:
                 int user_id                    = 200 + static_cast<int>(i);
                 auto &[test_name, test_string] = test_strings[i];
 
-                auto insert_ret = co_await users.insert(user_id, test_string, 25, test_name + "@test.com",
+                auto insert_ret = co_await users.emplace(user_id, test_string, 25, test_name + "@test.com",
                                                         SqlDate(2024, 1, 1), true, 1000.0);
                 CO_ASSERT_VAL(insert_ret);
 

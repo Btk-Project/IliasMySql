@@ -486,7 +486,7 @@ public:
         auto users = std::move(users_ret.value());
 
         for (int i = 0; i < 100; ++i) {
-            auto insert_ret = co_await users.insert(i, fmtlib::format("User{}", i), i * 10 + 1);
+            auto insert_ret = co_await users.emplace(i, fmtlib::format("User{}", i), i * 10 + 1);
             CO_ASSERT_VAL(insert_ret);
         }
         ILIAS_INFO("mysql-test", ">>> Insert 100 users finished");
@@ -657,14 +657,14 @@ public:
 
             // 2. 准备基础数据
             // 用户: 1(Alice), 2(Bob), 3(Charlie)
-            co_await users.insert(1, "Alice", 100);
-            co_await users.insert(2, "Bob", 200);
-            co_await users.insert(3, "Charlie", 50);
+            co_await users.emplace(1, "Alice", 100);
+            co_await users.emplace(2, "Bob", 200);
+            co_await users.emplace(3, "Charlie", 50);
 
             // 订单: Alice买了两单，Bob买了一单，Charlie没买
-            co_await orders.insert(101, 1, 500, "Apple"); // Alice
-            co_await orders.insert(102, 1, 50, "Banana"); // Alice
-            co_await orders.insert(103, 2, 900, "TV");    // Bob
+            co_await orders.emplace(101, 1, 500, "Apple"); // Alice
+            co_await orders.emplace(102, 1, 50, "Banana"); // Alice
+            co_await orders.emplace(103, 2, 900, "TV");    // Bob
 
             // 提交这个初始设置
             auto commit_setup_ret = co_await transaction.commit();
@@ -687,8 +687,8 @@ public:
             CO_ASSERT_VAL(users_in_tx);
             CO_ASSERT_VAL(orders_in_tx);
 
-            co_await users_in_tx->insert(4, "Dave", 300);
-            co_await orders_in_tx->insert(104, 4, 100, "Book");
+            co_await users_in_tx->emplace(4, "Dave", 300);
+            co_await orders_in_tx->emplace(104, 4, 100, "Book");
 
             // 提交事务
             auto commit_ret = co_await tx.commit();
@@ -715,7 +715,7 @@ public:
             CO_ASSERT_VAL(tx_ret);
             auto tx = std::move(tx_ret.value());
             auto users_in_tx = co_await Form<SimpleUser, MysqlTag>::create_if_not_exists(tx, "common_test_users_transaction");
-            co_await users_in_tx->insert(5, "Eve", 500);
+            co_await users_in_tx->emplace(5, "Eve", 500);
 
             // 回滚事务
             auto rollback_ret = co_await users_in_tx->db().rollback();
@@ -762,14 +762,14 @@ public:
 
         // 2. 准备数据
         // 用户: 1(Alice), 2(Bob), 3(Charlie)
-        co_await users.insert(1, "Alice", 100);
-        co_await users.insert(2, "Bob", 200);
-        co_await users.insert(3, "Charlie", 50);
+        co_await users.emplace(1, "Alice", 100);
+        co_await users.emplace(2, "Bob", 200);
+        co_await users.emplace(3, "Charlie", 50);
 
         // 订单: Alice买了两单，Bob买了一单，Charlie没买
-        co_await orders.insert(101, 1, 500, "Apple"); // Alice
-        co_await orders.insert(102, 1, 50, "Banana"); // Alice
-        co_await orders.insert(103, 2, 900, "TV");    // Bob
+        co_await orders.emplace(101, 1, 500, "Apple"); // Alice
+        co_await orders.emplace(102, 1, 50, "Banana"); // Alice
+        co_await orders.emplace(103, 2, 900, "TV");    // Bob
 
         ILIAS_INFO("mysql-test", ">>> Data prepared");
 
