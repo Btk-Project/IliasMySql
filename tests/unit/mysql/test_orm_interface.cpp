@@ -150,8 +150,8 @@ public:
         options.host     = get_env("DB_HOST", "127.0.0.1");
         options.port     = get_env_int("DB_PORT", 3306);
         options.user     = get_env("DB_USER", "root");
-        options.password = get_env("DB_PASS", "123456");
-        options.database = get_env("DB_NAME", "test");
+        options.password = get_env("DB_PASS", "root");
+        options.database = get_env("DB_NAME", "test_db");
         ILIAS_INFO("mysql-test", "Connecting to MySQL: host={}, port={}, user={}, password={}, database={}",
                    options.host, options.port, options.user, options.password, options.database);
 

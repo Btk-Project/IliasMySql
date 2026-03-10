@@ -4,7 +4,6 @@
 #include "ilias/postgres/postgres_parsers.hpp"
 #include <libpq/libpq-fs.h>
 
-#include <poll.h>
 #include <atomic>
 #include <string>
 #include <variant>
@@ -174,6 +173,41 @@ static auto registerPostgresError(int ret, PGconn *conn) -> SqlError::Code {
     return code;
 }
 
+template <typename Fn>
+static auto withBlockingConnection(PGconn *conn, Fn &&fn) -> void {
+    if (!conn) {
+        return;
+    }
+
+    const int wasNonblocking = PQisnonblocking(conn);
+    if (wasNonblocking == 1) {
+        if (int ret = PQsetnonblocking(conn, 0); ret != 0) {
+            auto code = registerPostgresError(ret, conn);
+            ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code),
+                        std::error_code(code).message());
+            return;
+        }
+    }
+
+    fn();
+
+    if (wasNonblocking == 1) {
+        if (int ret = PQsetnonblocking(conn, 1); ret != 0) {
+            auto code = registerPostgresError(ret, conn);
+            ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code),
+                        std::error_code(code).message());
+        }
+    }
+}
+
+static auto drainPendingResultsBlocking(PGconn *conn) -> void {
+    withBlockingConnection(conn, [conn]() {
+        while (auto *res = PQgetResult(conn)) {
+            PQclear(res);
+        }
+    });
+}
+
 // #############################################################################
 // #  Postgres (Low-Level Wrapper) Implementation
 // #############################################################################
@@ -201,33 +235,8 @@ bool Postgres::operator==(Postgres &other) {
 
 auto Postgres::disconnect() -> void {
     if (mConn) {
-        // First, drain any pending results from the connection synchronously
-        // This is necessary to avoid leaving the connection in a bad state
-        PQconsumeInput(mConn);
-        while (true) {
-            // Wait for the connection to be ready (not busy)
-            while (PQisBusy(mConn)) {
-                int sock = PQsocket(mConn);
-                if (sock < 0)
-                    break;
-
-                struct pollfd pfd;
-                pfd.fd      = sock;
-                pfd.events  = POLLIN;
-                pfd.revents = 0;
-
-                int ret = poll(&pfd, 1, 1000); // 1 second timeout
-                if (ret <= 0)
-                    break; // Timeout or error
-
-                PQconsumeInput(mConn);
-            }
-
-            PGresult *res = PQgetResult(mConn);
-            if (res == nullptr)
-                break;
-            PQclear(res);
-        }
+        // Drain pending async results with libpq's blocking API before close.
+        drainPendingResultsBlocking(mConn);
 
         // Close the poller before finishing the connection
         mPoller.close();
@@ -586,32 +595,6 @@ auto Postgres::getResult() -> IoTask<PGresult *> {
     co_return result;
 }
 
-// Helper function to decode PostgreSQL bytea hex format (\xDEADBEEF)
-static auto decodeByteaHex(const char *value_str, int len) -> std::pair<const std::byte *, size_t> {
-    // PostgreSQL bytea in hex format starts with \x
-    // The actual binary data follows after the \x prefix
-    // Note: PQgetvalue returns the raw text representation, and PQgetlength returns its length
-    // For hex format, we need to decode it, but since we're returning a view,
-    // we can't decode in place. The caller should use PQunescapeBytea for owned data.
-    // For now, return the raw bytes as-is (the hex-encoded string)
-    return {reinterpret_cast<const std::byte *>(value_str), static_cast<size_t>(len)};
-}
-
-// Helper function to parse SqlDate with appropriate TimeType
-static auto parseSqlDate(std::string_view value_str, std::string_view type_name) -> SqlDate {
-    SqlDate date(value_str);
-    // Set the appropriate TimeType based on PostgreSQL type
-    if (type_name == "date") {
-        date.setTimeType(SqlDate::kDate);
-    }
-    else if (type_name == "time" || type_name == "timetz") {
-        date.setTimeType(SqlDate::kTime);
-    }
-    else if (type_name == "timestamp" || type_name == "timestamptz") {
-        date.setTimeType(SqlDate::kDateTime);
-    }
-    return date;
-}
 // #############################################################################
 // #  PostgresStreamingResultSet Implementation (Streaming mode)
 // #############################################################################
@@ -620,27 +603,7 @@ PostgresStreamingResultSet::PostgresStreamingResultSet(std::shared_ptr<Postgres>
 
 PostgresStreamingResultSet::~PostgresStreamingResultSet() {
     if (mPg && mPg->native() && PQstatus(mPg->native()) == CONNECTION_OK) {
-        PGconn *conn = mPg->native();
-        PQconsumeInput(conn);
-        while (true) {
-            while (PQisBusy(conn)) {
-                int sock = PQsocket(conn);
-                if (sock < 0)
-                    break;
-                struct pollfd pfd;
-                pfd.fd      = sock;
-                pfd.events  = POLLIN;
-                pfd.revents = 0;
-                int ret     = poll(&pfd, 1, 1000); // 1 second timeout
-                if (ret <= 0)
-                    break;
-                PQconsumeInput(conn);
-            }
-            PGresult *res = PQgetResult(conn);
-            if (res == nullptr)
-                break;
-            PQclear(res);
-        }
+        drainPendingResultsBlocking(mPg->native());
     }
 }
 
@@ -866,45 +829,24 @@ void PostgresStatement::deallocStatementName(const std::string &name, std::share
     // DEALLOCATE statement on server if connection is still alive
     if (mPg && mPg->native() && PQstatus(mPg->native()) == CONNECTION_OK) {
         PGconn *conn = mPg->native();
-        // First, drain any pending results from the connection
-        // This is necessary because PQexec doesn't work when there are pending async results
-        PQconsumeInput(conn);
-        while (true) {
-            while (PQisBusy(conn)) {
-                int sock = PQsocket(conn);
-                if (sock < 0)
-                    break;
-
-                struct pollfd pfd;
-                pfd.fd      = sock;
-                pfd.events  = POLLIN;
-                pfd.revents = 0;
-
-                int ret = poll(&pfd, 1, 1000); // 1 second timeout
-                if (ret <= 0)
-                    break;
-
-                PQconsumeInput(conn);
+        withBlockingConnection(conn, [&]() {
+            // Drain pending async results first, then execute DEALLOCATE.
+            while (auto *pending = PQgetResult(conn)) {
+                PQclear(pending);
             }
 
-            PGresult *res = PQgetResult(conn);
-            if (res == nullptr)
-                break;
-            PQclear(res);
-        }
-
-        // Now we can safely execute the DEALLOCATE command
-        std::string dealloc_sql = "DEALLOCATE " + name;
-        PGresult   *res         = PQexec(conn, dealloc_sql.c_str());
-        if (res) {
-            if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-                ILIAS_ERROR("ilias-pgsql", "DEALLOCATE failed: {}", PQresultErrorMessage(res));
+            std::string dealloc_sql = "DEALLOCATE " + name;
+            PGresult   *res         = PQexec(conn, dealloc_sql.c_str());
+            if (res) {
+                if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+                    ILIAS_ERROR("ilias-pgsql", "DEALLOCATE failed: {}", PQresultErrorMessage(res));
+                }
+                PQclear(res);
             }
-            PQclear(res);
-        }
-        else {
-            ILIAS_ERROR("ilias-pgsql", "DEALLOCATE failed: {}", PQerrorMessage(conn));
-        }
+            else {
+                ILIAS_ERROR("ilias-pgsql", "DEALLOCATE failed: {}", PQerrorMessage(conn));
+            }
+        });
     }
 }
 
