@@ -95,7 +95,7 @@ static auto test_indexed_binding_property() -> IoTask<void> {
 
         // Bind values by index (1-based)
         auto bindRet = stmt.bind(test_name, test_age, test_active);
-        EXPECT_TRUE(bindRet.has_value()) << "Binding by index should succeed";
+        CO_ASSERT_VAL(bindRet);
 
         // Execute query and verify results
         auto queryRet = co_await stmt.query();
@@ -155,7 +155,7 @@ static auto test_named_binding_property() -> IoTask<void> {
 
         // Bind values positionally (named params are converted to $1, $2 in order)
         auto bindRet = stmt.bind(test_name, test_age);
-        EXPECT_TRUE(bindRet.has_value()) << "Binding should succeed";
+        CO_ASSERT_VAL(bindRet);
 
         // Execute query and verify results
         auto queryRet = co_await stmt.query();
@@ -200,7 +200,7 @@ static auto test_query_streaming_property() -> IoTask<void> {
         CO_ASSERT_VAL(ret);
         auto db = std::move(ret.value());
 
-        int expected_rows = limit_dist(g_rng);
+        int64_t expected_rows = limit_dist(g_rng);
 
         // Prepare SELECT statement with LIMIT parameter
         auto stmtRet = co_await db.prepare("SELECT id, value, description FROM test_streaming ORDER BY id LIMIT ?");
@@ -434,7 +434,7 @@ static auto test_statement_reset_property() -> IoTask<void> {
         // Reset and rebind
         stmt.reset();
         auto bindRet = stmt.bind(test_value);
-        EXPECT_TRUE(bindRet.has_value()) << "Rebinding after reset should succeed";
+        CO_ASSERT_VAL(bindRet);
 
         // Execute query
         auto queryRet = co_await stmt.query();
@@ -503,6 +503,7 @@ int main(int argc, char **argv) {
     ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ILIAS_LOG_ADD_WHITELIST("pgsql-test");
     ILIAS_LOG_ADD_WHITELIST("ilias-pgsql");
+    ILIAS_LOG_ADD_WHITELIST("ilias-sql");
 
     ilias::PlatformContext ioContext;
     ioContext.install();

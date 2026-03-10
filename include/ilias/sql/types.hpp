@@ -78,6 +78,7 @@ struct ILIAS_SQL_API SqlDate {
     auto        fromLocalString(std::string_view str) -> void;
     auto        toUTCString() const -> std::string;
     auto        toLocalString() const -> std::string;
+    auto        to_time_point() const -> std::chrono::system_clock::time_point;
     auto        toTimestamp() const -> uint64_t;
     void        clear();
     static auto now() -> SqlDate;
@@ -140,6 +141,11 @@ using SqlBinderResult = IoResult<std::unique_ptr<void, void (*)(void *)>>;
 inline auto make_null_sql_binder_result() {
     return std::unique_ptr<void, void (*)(void *)> {nullptr, [](void *) {}};
 }
+template <typename T>
+inline auto make_sql_binder_result_for_store(T &&t) {
+    return std::unique_ptr<void, void (*)(void *)> {new T(std::forward<T>(t)),
+                                                    [](void *ptr) { delete static_cast<T *>(ptr); }};
+}
 using SqlBindFunc = std::function<SqlBinderResult(const SqlCellView &, const std::any &)>;
 class ILIAS_SQL_API SqlValueConverterContext {
 public:
@@ -201,6 +207,7 @@ public:
     SqlCellView &operator=(const SqlCellView &) = default;
     SqlCellView &operator=(SqlCellView &&)      = default;
     ~SqlCellView()                              = default;
+    SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt) : mContext(ctxt) {}
     SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, std::string_view data, uint32_t native_type, int index)
         : mContext(ctxt), mSqlValue(ValueString(data, native_type)), mIndex(index) {}
     SqlCellView(std::shared_ptr<SqlValueConverterContext> ctxt, NativeValue data, int index)
@@ -440,6 +447,10 @@ auto SqlCellView::as() const -> IoResult<T> {
     auto           type_index  = std::type_index(typeid(std::remove_cvref_t<T>));
     if constexpr (is_optional) {
         type_index = std::type_index(typeid(typename T::value_type));
+    }
+    if (!mContext) {
+        ILIAS_ERROR("ilias-sql", "SqlCellView::as() called without context");
+        return Unexpected(SqlError::Code::NoContext);
     }
     auto parser_func = mContext->findTypeParser(type_index);
     if (!parser_func) {

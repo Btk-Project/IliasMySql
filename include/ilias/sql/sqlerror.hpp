@@ -50,7 +50,8 @@ class SqlErrorCategory;
         InvalidDataFormat,                                                                                             \
         "Invalid data format, cell view must have a specific type, please refer to the documentation for details.")    \
     SQL_ERROR_ENTRY(UnsupportBindType,                                                                                 \
-                    "Unsupported bind type, Please check the binder to ensure your type is registered.")
+                    "Unsupported bind type, Please check the binder to ensure your type is registered.")               \
+    SQL_ERROR_ENTRY(NoContext, "No context available")
 
 class ILIAS_SQL_API SqlError {
 public:

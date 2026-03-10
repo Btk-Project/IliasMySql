@@ -1,11 +1,14 @@
 #include "ilias/postgres/postgres_impl.hpp"
 #include "ilias/postgres/postgres.hpp"
+#include "ilias/postgres/postgres_context.hpp"
+#include "ilias/postgres/postgres_parsers.hpp"
 #include <libpq/libpq-fs.h>
 
 #include <poll.h>
 #include <atomic>
 #include <string>
 #include <variant>
+#include <memory>
 
 ILIAS_POSTGRES_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
@@ -180,6 +183,8 @@ Postgres::Postgres() {
     if (mCtxt == nullptr) {
         ILIAS_ERROR("ilias-pgsql", "no io context in current thread");
     }
+    // 初始化PostgresValueConverterContext
+    mContext = std::make_shared<PostgresValueConverterContext>();
 }
 
 Postgres::~Postgres() {
@@ -308,6 +313,7 @@ auto Postgres::initializeTypeMap() -> IoTask<void> {
         Oid         oid     = std::stoul(PQgetvalue(result.get(), i, 0));
         std::string typname = PQgetvalue(result.get(), i, 1);
         mTypeMap[oid]       = typname;
+        // ILIAS_TRACE("ilias-pgsql", "Postgres type {} -> {}", oid, typname);
     }
 
     // Drain any remaining results from the connection asynchronously
@@ -324,6 +330,10 @@ auto Postgres::initializeTypeMap() -> IoTask<void> {
 
 auto Postgres::getTypeMap() -> std::unordered_map<Oid, std::string> & {
     return mTypeMap;
+}
+
+auto Postgres::valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> {
+    return mContext;
 }
 
 auto Postgres::info() -> std::string {
@@ -400,6 +410,13 @@ auto Postgres::connect(std::string_view conninfo) -> IoTask<void> {
         co_return Unexpected(init_ret.error());
     }
 
+    // 注册PostgreSQL类型解析器和绑定器
+    auto pg_context = std::static_pointer_cast<PostgresValueConverterContext>(mContext);
+    registerPostgresTypeParsers(*pg_context);
+
+    // 设置类型映射到PostgresValueConverterContext
+    pg_context->setTypeMap(mTypeMap);
+
     co_return {};
 }
 
@@ -462,6 +479,7 @@ auto Postgres::consumeInput() -> IoResult<void> {
 }
 
 auto Postgres::sendQuery(std::string_view sql) -> IoTask<void> {
+    ILIAS_TRACE("ilias-pgsql", "Executing SQL: {}", sql);
     if (!mConn) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
@@ -482,6 +500,7 @@ auto Postgres::sendQuery(std::string_view sql) -> IoTask<void> {
 auto Postgres::sendQueryParams(std::string_view command, int nParams, const Oid *paramTypes,
                                const char *const *paramValues, const int *paramLengths, const int *paramFormats,
                                int resultFormat) -> IoTask<void> {
+    ILIAS_TRACE("ilias-pgsql", "Executing SQL with {} params: {}", nParams, command);
     if (!mConn) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
@@ -503,6 +522,7 @@ auto Postgres::sendQueryParams(std::string_view command, int nParams, const Oid 
 
 auto Postgres::sendPrepare(std::string_view stmtName, std::string_view query, int nParams, const Oid *paramTypes)
     -> IoTask<void> {
+    ILIAS_TRACE("ilias-pgsql", "Preparing statement '{}' with {} params: {}", stmtName, nParams, query);
     if (!mConn) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
@@ -522,6 +542,7 @@ auto Postgres::sendPrepare(std::string_view stmtName, std::string_view query, in
 
 auto Postgres::sendQueryPrepared(std::string_view stmtName, int nParams, const char *const *paramValues,
                                  const int *paramLengths, const int *paramFormats, int resultFormat) -> IoTask<void> {
+    ILIAS_TRACE("ilias-pgsql", "Executing prepared statement '{}' with {} params", stmtName, nParams);
     if (!mConn) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
@@ -730,14 +751,14 @@ auto PostgresStreamingResultSet::columnName(size_t index) const -> std::string_v
     return mColumnNames[index];
 }
 
-auto PostgresStreamingResultSet::getValue(size_t index) -> IoResult<SqlValueView> {
+auto PostgresStreamingResultSet::getValue(size_t index) -> IoResult<SqlCellView> {
     if (!mCurrentRow || index >= static_cast<size_t>(mColumnCount)) {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
     return toValueView(static_cast<int>(index));
 }
 
-auto PostgresStreamingResultSet::getValue(std::string_view name) -> IoResult<SqlValueView> {
+auto PostgresStreamingResultSet::getValue(std::string_view name) -> IoResult<SqlCellView> {
     if (!mCurrentRow) {
         return Unexpected(SqlError::Code::NoMoreData);
     }
@@ -794,95 +815,46 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
     co_return {};
 }
 
-auto PostgresStreamingResultSet::toValueView(int colIndex) -> IoResult<SqlValueView> {
+auto PostgresStreamingResultSet::toValueView(int colIndex) -> IoResult<SqlCellView> {
     if (!mCurrentRow) {
         ILIAS_TRACE("ilias-pgsql", "No current row available.");
         return Unexpected(SqlError::Code::NoMoreData);
     }
     const int rowIndex = 0;
     if (PQgetisnull(mCurrentRow.get(), rowIndex, colIndex)) {
-        return SqlValueView(SqlNull());
+        return SqlCellView(mPg->valueConverterContext());
     }
-    const char            *value_str = PQgetvalue(mCurrentRow.get(), rowIndex, colIndex);
-    const Oid              type_oid  = PQftype(mCurrentRow.get(), colIndex);
-    auto                   it        = mPg->getTypeMap().find(type_oid);
-    const std::string_view type_name = (it != mPg->getTypeMap().end()) ? std::string_view(it->second) : "unknown";
-    ILIAS_TRACE("ilias-pgsql", "Converting column {} of type '{}' with value '{}'", colIndex, type_name, value_str);
-    // Category 1: Boolean type (Requirement 2.4)
-    if (type_name == "bool") {
-        // PostgreSQL boolean strings are 't' or 'f'
-        return SqlValueView(*value_str == 't' ? true : false);
-    }
-    // Category 2: Integer types (Requirement 2.2)
-    if (type_name == "int2") { // smallint
-        int32_t val  = 0;
-        auto [p, ec] = std::from_chars(value_str, value_str + strlen(value_str), val);
-        if (ec == std::errc()) {
-            return SqlValueView(val);
-        }
-        // Fallback to string if parsing fails
-        return SqlValueView(std::string_view(value_str));
-    }
-    if (type_name == "int4" || type_name == "oid") { // integer, oid
-        int32_t val  = 0;
-        auto [p, ec] = std::from_chars(value_str, value_str + strlen(value_str), val);
-        if (ec == std::errc()) {
-            return SqlValueView(val);
-        }
-        // Fallback to string if parsing fails
-        return SqlValueView(std::string_view(value_str));
-    }
-    if (type_name == "int8") { // bigint
-        int64_t val  = 0;
-        auto [p, ec] = std::from_chars(value_str, value_str + strlen(value_str), val);
-        if (ec == std::errc()) {
-            return SqlValueView(val);
-        }
-        // Fallback to string if parsing fails
-        return SqlValueView(std::string_view(value_str));
-    }
-    // Category 3: Floating point types (Requirement 2.3)
-    if (type_name == "float4") { // real
-        float val    = 0.0f;
-        auto [p, ec] = std::from_chars(value_str, value_str + strlen(value_str), val);
-        if (ec == std::errc()) {
-            return SqlValueView(val);
-        }
-        // Fallback to string if parsing fails
-        return SqlValueView(std::string_view(value_str));
-    }
-    if (type_name == "float8") { // double precision
-        double val   = 0.0;
-        auto [p, ec] = std::from_chars(value_str, value_str + strlen(value_str), val);
-        if (ec == std::errc()) {
-            return SqlValueView(val);
-        }
-        // Fallback to string if parsing fails
-        return SqlValueView(std::string_view(value_str));
-    }
-    // Category 4: Date and time types (Requirement 2.6)
-    if (type_name == "date" || type_name == "time" || type_name == "timetz" || type_name == "timestamp" ||
-        type_name == "timestamptz") {
-        return SqlValueView(parseSqlDate(value_str, type_name));
-    }
-    // Category 5: Binary data (Requirement 2.5)
-    if (type_name == "bytea") {
-        int len = PQgetlength(mCurrentRow.get(), rowIndex, colIndex);
-        // PostgreSQL returns bytea in hex format (\xDEADBEEF) or escape format
-        // We return the raw bytes as a span - the data is owned by PGresult
-        auto [data, size] = decodeByteaHex(value_str, len);
-        return SqlValueView(std::span<const std::byte>(data, size));
-    }
-    return SqlValueView(std::string_view(value_str));
+    // 获取原始数据
+    const char *value_str = PQgetvalue(mCurrentRow.get(), rowIndex, colIndex);
+    const int   value_len = PQgetlength(mCurrentRow.get(), rowIndex, colIndex);
+    const Oid   type_oid  = PQftype(mCurrentRow.get(), colIndex);
+    const int   format    = PQfformat(mCurrentRow.get(), colIndex); // 0=文本，1=二进制
+
+    // 创建PostgreSQL特定的元数据
+    auto meta_storage    = std::make_shared<PostgresCellMetadata>();
+    meta_storage->oid    = type_oid;
+    meta_storage->data   = value_str;
+    meta_storage->size   = value_len;
+    meta_storage->pgconn = mPg->native();
+    meta_storage->format = format;
+
+    // 存储元数据，确保在SqlCellView使用期间有效
+    bindStorage(meta_storage);
+
+    ILIAS_TRACE("ilias-pgsql", "Converting column {} of oid {} with format {}", colIndex, type_oid, format);
+
+    return SqlCellView(mPg->valueConverterContext(), meta_storage.get(), sizeof(PostgresCellMetadata),
+                       std::type_index(typeid(PostgresCellMetadata)), colIndex);
 }
 
 // #############################################################################
 // #  PostgresStatement Implementation
 // #############################################################################
 
-PostgresStatement::PostgresStatement(std::shared_ptr<Postgres> pg) : mPg(std::move(pg)) {
+PostgresStatement::PostgresStatement(std::shared_ptr<Postgres> pg)
+    : mPg(std::move(pg)), mParamValuesPtrs(nullptr, 0, 1, 0) {
     static std::atomic<uint64_t> counter = 0;
-
+    mParamValuesPtrs.set_column_names({"Data Pointer", "Data Length", "Data Format"});
     mStatementName = std::shared_ptr<std::string>(new std::string("_ilias_stmt_" + std::to_string(counter++)),
                                                   [pg](std::string *name) {
                                                       deallocStatementName(*name, pg);
@@ -940,11 +912,21 @@ PostgresStatement::~PostgresStatement() {
 }
 
 auto PostgresStatement::prepare(std::string_view sql) -> IoTask<void> {
-    mPreparedSql    = parser(sql);
-    auto paramCount = mBindValues.size();
+    ILIAS_TRACE("ilias-pgsql", "Preparing statement with SQL: {}", sql);
+    mPreparedSql = parser(sql);
+    mPrepared    = false; // 清除准备状态
+    co_return {};
+}
+
+auto PostgresStatement::ensurePrepared() -> IoTask<void> {
+    if (mPrepared) {
+        co_return {}; // 已经准备好了，直接返回
+    }
+    // 获取参数数量
+    auto paramCount = mParamValuesPtrs.column_size();
     // Asynchronously send the prepare command
-    auto send_ret =
-        co_await mPg->sendPrepare(*mStatementName, mPreparedSql, paramCount, nullptr); // Let server infer types
+    auto send_ret = co_await mPg->sendPrepare(*mStatementName, mPreparedSql, paramCount,
+                                              mParamValuesPtrs.get_column<3>().data()); // Let server infer types
     if (!send_ret) {
         ILIAS_ERROR("ilias-pgsql", "sendPrepare failed for '{}': {}", *mStatementName, mPg->lastErrorMessage());
         co_return Unexpected(send_ret.error());
@@ -969,35 +951,69 @@ auto PostgresStatement::prepare(std::string_view sql) -> IoTask<void> {
         }
         PQclear(extra_res_ptr.value());
     }
+    mPrepared = true;
     co_return {};
 }
 
 auto PostgresStatement::reset() -> void {
+    auto size = mParamValuesPtrs.column_size();
     clearBinds();
+    mParamValuesPtrs.resize(size);
 }
 
-auto PostgresStatement::bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> {
-    if (index == 0 || index > mBindValues.size()) {
+auto PostgresStatement::nativeHandle() const -> void * {
+    return mPg->native();
+}
+
+auto PostgresStatement::bind(std::type_index type_index, size_t index, const SqlCellView &value)
+    -> Result<void, std::error_code> {
+    if (index == 0 || index > mParamValuesPtrs.column_size()) {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
-    mBindValues[index - 1] = value;
-    return {};
+
+    // 使用PostgresValueConverterContext的绑定器
+    auto pg_context = std::static_pointer_cast<PostgresValueConverterContext>(mPg->valueConverterContext());
+    auto binder     = pg_context->findTypeBinder(type_index);
+    if (binder) {
+        // 创建新的SqlCellView，包含索引信息
+        SqlCellView cell_view(pg_context, value.raw_value(), value.raw_value_size(), value.raw_type(), index);
+
+        ILIAS_TRACE("ilias-pgsql", " bind type {} index {} size {}", type_index, index, value.raw_value_size());
+        // 调用绑定器，传递this指针作为data参数
+        auto store = binder(cell_view, std::any(this));
+        if (store) {
+            if (*store) {
+                mDataGuards.emplace_back(std::move(store.value()));
+            }
+        }
+        else {
+            return Unexpected(store.error());
+        }
+        return {};
+    }
+    ILIAS_WARN("ilias-pgsql", "type {} is not supported bind", type_index);
+    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
-auto PostgresStatement::bind(std::string_view name, SqlValuePointer value) -> Result<void, std::error_code> {
+auto PostgresStatement::bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
+    -> Result<void, std::error_code> {
     auto it = mNamedParamIndex.find(std::string(name));
     if (it == mNamedParamIndex.end()) {
         return Unexpected(SqlError::Code::InvalidIndex);
     }
-    return bind(it->second + 1, value);
+    return bind(type_index, it->second + 1, value);
 }
 
 auto PostgresStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
-    if (!convertBinds()) {
-        co_return Unexpected(SqlError::Code::InvalidParameter);
+    auto prepare = co_await ensurePrepared();
+    if (!prepare) {
+        co_return Unexpected(prepare.error());
     }
-    auto send_ret = co_await mPg->sendQueryPrepared(*mStatementName, mParamValuesPtrs.size(), mParamValuesPtrs.data(),
-                                                    mParamLengths.data(), nullptr, 0); // text format
+    ILIAS_TRACE("ilias-pgsql", "Executing query on prepared statement '{}': {}", *mStatementName, mPreparedSql);
+    auto send_ret = co_await mPg->sendQueryPrepared(
+        *mStatementName, mParamValuesPtrs.column_size(),
+        reinterpret_cast<const char *const *>(mParamValuesPtrs.get_column<0>().data()),
+        mParamValuesPtrs.get_column<1>().data(), mParamValuesPtrs.get_column<2>().data(), 1); // binary format
     if (!send_ret) {
         ILIAS_ERROR("ilias-pgsql", "Statement sendQueryPrepared failed: {}", mPg->lastErrorMessage());
         co_return Unexpected(send_ret.error());
@@ -1018,6 +1034,7 @@ auto PostgresStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
 }
 
 auto PostgresStatement::execute() -> IoTask<size_t> {
+    ILIAS_TRACE("ilias-pgsql", "Executing prepared statement '{}': {}", *mStatementName, mPreparedSql);
     auto result_set_wrapper = co_await query();
     if (!result_set_wrapper) {
         co_return Unexpected(result_set_wrapper.error());
@@ -1183,57 +1200,36 @@ auto PostgresStatement::parser(std::string_view sql) -> std::string {
         }
     }
 
-    mBindValues.resize(param_counter);
+    // 初始化参数缓冲区
+    mParamValuesPtrs.clear();
+    mParamValuesPtrs.resize(param_counter);
+
     return ret;
 }
 
 void PostgresStatement::clearBinds() {
-    for (auto &val : mBindValues) {
-        val = &g_sql_null;
-    }
+    mParamValuesPtrs.clear();
+    mDataGuards.clear();
 }
 
-bool PostgresStatement::convertBinds() {
-    mParamData.clear();
-    mParamValuesPtrs.clear();
-    mParamLengths.clear();
-
-    mParamData.reserve(mBindValues.size());
-    mParamValuesPtrs.reserve(mBindValues.size());
-    mParamLengths.reserve(mBindValues.size());
-
-    for (const auto &val : mBindValues) {
-        std::visit(
-            [this](auto arg) {
-                using T = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<T, SqlNull *>) {
-                    mParamValuesPtrs.push_back(nullptr);
-                    mParamLengths.push_back(0);
-                }
-                else if constexpr (std::is_same_v<T, std::span<const std::byte>>) {
-                    mParamData.emplace_back("");
-                    mParamValuesPtrs.push_back(reinterpret_cast<const char *>(arg.data()));
-                    mParamLengths.push_back(arg.size());
-                }
-                else if constexpr (std::is_same_v<T, std::string_view>) {
-                    mParamData.push_back(std::string(arg));
-                    mParamValuesPtrs.push_back(mParamData.back().c_str());
-                    mParamLengths.push_back(mParamData.back().length());
-                }
-                else if constexpr (std::is_same_v<T, ilias::sql::SqlDate *>) {
-                    mParamData.push_back(arg->toUTCString());
-                    mParamValuesPtrs.push_back(mParamData.back().c_str());
-                    mParamLengths.push_back(mParamData.back().length());
-                }
-                else {
-                    mParamData.push_back(std::to_string(*arg));
-                    mParamValuesPtrs.push_back(mParamData.back().c_str());
-                    mParamLengths.push_back(mParamData.back().length());
-                }
-            },
-            val);
+void PostgresStatement::setBindParam(size_t index, const void *data, size_t size, int format, Oid type_oid) {
+    // 确保mParamData足够大
+    if (index > mParamValuesPtrs.column_size()) {
+        mParamValuesPtrs.resize(index);
     }
-    return true;
+
+    // 存储指针和大小
+    mParamValuesPtrs[index - 1] = std::tuple {data, size, format, type_oid};
+}
+
+Oid PostgresStatement::getTypeOid(std::string_view name) const {
+    auto &type_map = mPg->getTypeMap();
+    for (auto &type : type_map) {
+        if (type.second == name) {
+            return type.first;
+        }
+    }
+    return 0; // 未知类型
 }
 
 // #############################################################################
@@ -1394,6 +1390,14 @@ auto PostgresConnection::ping() -> IoTask<bool> {
     }
 
     co_return (status == PGRES_TUPLES_OK);
+}
+
+auto PostgresConnection::valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> {
+    return mPg->valueConverterContext();
+}
+
+auto PostgresConnection::nativeHandle() const -> void * {
+    return mPg->native();
 }
 
 ILIAS_POSTGRES_NS_END

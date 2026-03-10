@@ -217,7 +217,7 @@ public:
 
             // 单条插入 - 验证所有字段的精确性
             auto insert_ret =
-                co_await users.insert(1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1, 10, 0, 0), true, 1000.50);
+                co_await users.emplace(1, "Alice", 25, "alice@test.com", SqlDate(2024, 1, 1, 10, 0, 0), true, 1000.50);
             CO_ASSERT_VAL(insert_ret);
             EXPECT_EQ(insert_ret.value(), 1);
 
@@ -643,12 +643,12 @@ public:
 
             // 插入第一条记录
             auto insert1_ret =
-                co_await users.insert(1, "User1", 25, "user1@test.com", SqlDate(2024, 1, 1), true, 100.0);
+                co_await users.emplace(1, "User1", 25, "user1@test.com", SqlDate(2024, 1, 1), true, 100.0);
             CO_ASSERT_VAL(insert1_ret);
 
             // 尝试插入相同主键的记录
             auto insert2_ret =
-                co_await users.insert(1, "User2", 30, "user2@test.com", SqlDate(2024, 1, 2), true, 200.0);
+                co_await users.emplace(1, "User2", 30, "user2@test.com", SqlDate(2024, 1, 2), true, 200.0);
             CO_EXPECT_NOT_RESULT(insert2_ret); // 应该失败
         }
 
@@ -657,7 +657,7 @@ public:
             PERF_TIMER("unique_key_conflict");
 
             // 尝试插入相同email的记录
-            auto insert_ret = co_await users.insert(2, "User3", 35, "user1@test.com", SqlDate(2024, 1, 3), true, 300.0);
+            auto insert_ret = co_await users.emplace(2, "User3", 35, "user1@test.com", SqlDate(2024, 1, 3), true, 300.0);
             CO_EXPECT_NOT_RESULT(insert_ret); // 应该失败，email重复
         }
 
@@ -794,7 +794,7 @@ public:
             PERF_TIMER("boundary_values");
 
             // 测试极大值
-            auto insert_large = co_await users.insert(1, "LargeBalance", 100, "large@test.com",
+            auto insert_large = co_await users.emplace(1, "LargeBalance", 100, "large@test.com",
                                                       SqlDate(2024, 12, 31, 23, 59, 59), true, 999999999.99);
             CO_ASSERT_VAL(insert_large);
 
@@ -814,7 +814,7 @@ public:
 
             // 测试零值
             auto insert_zero =
-                co_await users.insert(2, "ZeroBalance", 0, "zero@test.com", SqlDate(2024, 1, 1, 0, 0, 0), false, 0.0);
+                co_await users.emplace(2, "ZeroBalance", 0, "zero@test.com", SqlDate(2024, 1, 1, 0, 0, 0), false, 0.0);
             CO_ASSERT_VAL(insert_zero);
 
             auto verify_zero = co_await users.select().where(users.sql(&SimpleUser::id) == 2).query();
@@ -833,7 +833,7 @@ public:
             PERF_TIMER("special_characters");
 
             // 测试包含特殊字符的字符串
-            auto insert_special = co_await users.insert(3, "User'With\"Special<>Chars", 25, "special@test.com",
+            auto insert_special = co_await users.emplace(3, "User'With\"Special<>Chars", 25, "special@test.com",
                                                         SqlDate(2024, 6, 15), true, 100.0);
             CO_ASSERT_VAL(insert_special);
 
@@ -851,7 +851,7 @@ public:
             PERF_TIMER("unicode_characters");
 
             auto insert_unicode =
-                co_await users.insert(4, "用户名测试", 30, "unicode@test.com", SqlDate(2024, 6, 15), true, 200.0);
+                co_await users.emplace(4, "用户名测试", 30, "unicode@test.com", SqlDate(2024, 6, 15), true, 200.0);
             CO_ASSERT_VAL(insert_unicode);
 
             auto verify_unicode = co_await users.select().where(users.sql(&SimpleUser::id) == 4).query();
