@@ -35,7 +35,7 @@ static ConnectOptions getOptions() {
         const char *val = std::getenv(name);
         return val ? std::atoi(val) : default_val;
     };
-    options.host     = get_env("PG_HOST", "localhost");
+    options.host     = get_env("PG_HOST", "127.0.0.1");
     options.port     = get_env_int("PG_PORT", 5432);
     options.user     = get_env("PG_USER", "test");
     options.password = get_env("PG_PASS", "test");
