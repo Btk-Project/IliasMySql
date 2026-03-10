@@ -78,8 +78,9 @@ public:
      * @return 绑定器函数，如果未找到则返回nullptr
      */
     auto findOidBinder(Oid oid) const -> OidBinderFunc {
-        if (mOidBinders.count(oid) > 0) {
-            return mOidBinders.at(oid);
+        auto it = mOidBinders.find(oid);
+        if (it != mOidBinders.end()) {
+            return it->second;
         }
         return nullptr;
     }
@@ -88,7 +89,7 @@ public:
      * @brief 设置类型映射（OID到类型名称）
      * @param typeMap 类型映射表
      */
-    void setTypeMap(const std::unordered_map<Oid, std::string>& typeMap) {
+    void setTypeMap(const std::map<Oid, std::string>& typeMap) {
         mTypeMap = typeMap;
     }
 
@@ -96,7 +97,7 @@ public:
      * @brief 获取类型映射
      * @return 类型映射表
      */
-    auto getTypeMap() const -> const std::unordered_map<Oid, std::string>& {
+    auto getTypeMap() const -> const std::map<Oid, std::string>& {
         return mTypeMap;
     }
 
@@ -114,9 +115,9 @@ public:
     }
 
 private:
-    std::unordered_map<Oid, OidParserFunc> mOidParsers;
-    std::unordered_map<Oid, OidBinderFunc> mOidBinders;
-    std::unordered_map<Oid, std::string> mTypeMap;
+    std::map<Oid, OidParserFunc> mOidParsers;
+    std::map<Oid, OidBinderFunc> mOidBinders;
+    std::map<Oid, std::string> mTypeMap;
 };
 
 ILIAS_POSTGRES_NS_END

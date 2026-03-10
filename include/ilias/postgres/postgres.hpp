@@ -67,14 +67,14 @@ public:
 
     bool operator==(Postgres &other);
     auto initializeTypeMap() -> IoTask<void>;
-    auto getTypeMap() -> std::unordered_map<Oid, std::string> &;
+    auto getTypeMap() -> std::map<Oid, std::string> &;
     auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext>;
 
 private:
     IoContext *mCtxt = nullptr;
     PGconn    *mConn = nullptr;
     Poller     mPoller;
-    std::unordered_map<Oid, std::string> mTypeMap;
+    std::map<Oid, std::string> mTypeMap;
     std::shared_ptr<SqlValueConverterContext> mContext;
 };
 

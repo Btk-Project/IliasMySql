@@ -337,7 +337,7 @@ auto Postgres::initializeTypeMap() -> IoTask<void> {
     co_return {};
 }
 
-auto Postgres::getTypeMap() -> std::unordered_map<Oid, std::string> & {
+auto Postgres::getTypeMap() -> std::map<Oid, std::string> & {
     return mTypeMap;
 }
 
