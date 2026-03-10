@@ -272,7 +272,6 @@ SqlParserResult pq_parse_blob(const SqlCellView &cell) {
         SqlBlob blob;
         blob.resize(hex_len / 2);
         for (size_t i = 0; i < blob.size(); ++i) {
-            unsigned int byte_val;
             // 简单的十六进制字符转整数
             auto hex_char_to_int = [](char c) -> int {
                 if (c >= '0' && c <= '9')
