@@ -128,21 +128,21 @@ static auto test_invalid_parameter_index() -> IoTask<void> {
 
     // Try to bind to index 0 (invalid - indices start at 1)
     int32_t value    = 1;
-    auto    bindRet0 = stmt->bind(0, &value);
+    auto    bindRet0 = stmt->bind(0, value);
     EXPECT_FALSE(bindRet0.has_value()) << "Binding to index 0 should fail";
     if (!bindRet0.has_value()) {
         EXPECT_EQ(bindRet0.error(), SqlError::Code::InvalidIndex) << "Expected InvalidIndex error for index 0";
     }
 
     // Try to bind to index 2 (invalid - only 1 parameter)
-    auto bindRet2 = stmt->bind(2, &value);
+    auto bindRet2 = stmt->bind(2, value);
     EXPECT_FALSE(bindRet2.has_value()) << "Binding to index 2 should fail (only 1 parameter)";
     if (!bindRet2.has_value()) {
         EXPECT_EQ(bindRet2.error(), SqlError::Code::InvalidIndex) << "Expected InvalidIndex error for index 2";
     }
 
     // Binding to index 1 should succeed
-    auto bindRet1 = stmt->bind(1, &value);
+    auto bindRet1 = stmt->bind(1, value);
     EXPECT_TRUE(bindRet1.has_value()) << "Binding to index 1 should succeed";
 
     ILIAS_INFO("pgsql-test", "Invalid parameter index test passed");
@@ -171,7 +171,7 @@ static auto test_invalid_named_parameter() -> IoTask<void> {
 
     // Try to bind to a non-existent named parameter
     int32_t value   = 1;
-    auto    bindRet = stmt->bind("nonexistent", &value);
+    auto    bindRet = stmt->bind("nonexistent", value);
     EXPECT_FALSE(bindRet.has_value()) << "Binding to non-existent named parameter should fail";
     if (!bindRet.has_value()) {
         EXPECT_EQ(bindRet.error(), SqlError::Code::InvalidIndex)
@@ -179,7 +179,7 @@ static auto test_invalid_named_parameter() -> IoTask<void> {
     }
 
     // Binding to the correct named parameter should succeed
-    auto bindRetCorrect = stmt->bind("id", &value);
+    auto bindRetCorrect = stmt->bind("id", value);
     EXPECT_TRUE(bindRetCorrect.has_value()) << "Binding to 'id' should succeed";
 
     ILIAS_INFO("pgsql-test", "Invalid named parameter test passed");

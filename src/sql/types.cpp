@@ -130,15 +130,31 @@ auto SqlDate::setTime(std::chrono::system_clock::time_point tp) -> void {
     auto us_since_epoch  = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch());
     auto sec_since_epoch = std::chrono::duration_cast<std::chrono::seconds>(us_since_epoch);
 
-    time_t   tt     = sec_since_epoch.count();
-    std::tm *utc_tm = gmtime(&tt); // 使用 gmtime 获取 UTC 时间
+    time_t  tt = sec_since_epoch.count();
+    std::tm utc_tm {}; // 在栈上创建实例，而不是使用静态全局变量
 
-    year        = utc_tm->tm_year + 1900;
-    month       = utc_tm->tm_mon + 1;
-    day         = utc_tm->tm_mday;
-    hour        = utc_tm->tm_hour;
-    minute      = utc_tm->tm_min;
-    second      = utc_tm->tm_sec;
+#ifdef _WIN32
+    // Windows 使用 gmtime_s
+    if (gmtime_s(&utc_tm, &tt) != 0) {
+        // 处理错误, 例如将 type 设置为 kErrorTime
+        type = kErrorTime;
+        return;
+    }
+#else
+    // POSIX (Linux, macOS) 使用 gmtime_r
+    if (gmtime_r(&tt, &utc_tm) == nullptr) {
+        // 处理错误
+        type = kErrorTime;
+        return;
+    }
+#endif
+
+    year        = utc_tm.tm_year + 1900;
+    month       = utc_tm.tm_mon + 1;
+    day         = utc_tm.tm_mday;
+    hour        = utc_tm.tm_hour;
+    minute      = utc_tm.tm_min;
+    second      = utc_tm.tm_sec;
     microsecond = us_since_epoch.count() % 1000000;
     type        = kDateTime;
 }
@@ -146,6 +162,15 @@ auto SqlDate::setTime(std::chrono::system_clock::time_point tp) -> void {
 auto SqlDate::setTime(std::chrono::milliseconds timestamp) -> void {
     auto tp = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>(timestamp);
     setTime(tp);
+}
+
+auto SqlDate::to_time_point() const -> std::chrono::system_clock::time_point {
+    if (type == kErrorTime) {
+        return std::chrono::system_clock::time_point {}; // 返回纪元零点
+    }
+    // toTimestamp 返回的是自 Unix 纪元以来的微秒数，可以直接构造 time_point
+    uint64_t micros = this->toTimestamp();
+    return std::chrono::system_clock::time_point(std::chrono::microseconds(micros));
 }
 
 auto SqlDate::setTime(int year_, int month_, int day_, int hour_, int minute_, int second_, int microsecond_,

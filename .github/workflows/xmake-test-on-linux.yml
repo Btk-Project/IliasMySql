@@ -9,8 +9,8 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    
-    # Service container to run MySQL for integration tests
+
+    # Service containers for integration tests
     services:
       mysql:
         image: mysql:8.0
@@ -26,6 +26,20 @@ jobs:
           --health-timeout=5s
           --health-retries=3
 
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U test -d testdb"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -40,25 +54,36 @@ jobs:
       run: xmake repo -u
 
     - name: Install System Dependencies
-      # Sometimes required if XMake doesn't pull the system libmysqlclient automatically
       run: |
         sudo apt-get update
-        sudo apt-get install -y libmysqlclient-dev
+        sudo apt-get install -y libmysqlclient-dev libpq-dev postgresql-client
+
+    - name: Initialize PostgreSQL test schema
+      env:
+        PGPASSWORD: test
+      run: |
+        until pg_isready -h 127.0.0.1 -p 5432 -U test -d testdb; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+        psql -h 127.0.0.1 -p 5432 -U test -d testdb -v ON_ERROR_STOP=1 -f tests/postgres/init.sql
 
     - name: Configure XMake
-      # We configure for Release (or Debug) and ensure we check for dependencies
-      run: xmake f -m asan -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=n -y
+      run: xmake f -m asan -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=y -y
 
     - name: Build
       run: xmake -y
 
     - name: Run Tests
-      # Assumes the test target in xmake.lua is named 'tests' or similar.
-      # We pass environment variables for the test code to connect to the service.
       env:
         DB_HOST: 127.0.0.1
         DB_USER: root
         DB_PASS: root
         DB_NAME: test_db
         DB_PORT: 3306
+        PG_HOST: 127.0.0.1
+        PG_USER: test
+        PG_PASS: test
+        PG_NAME: testdb
+        PG_PORT: 5432
       run: xmake test -v

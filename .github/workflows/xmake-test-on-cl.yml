@@ -22,21 +22,34 @@ jobs:
         auto-start: true
         root-password: 'root'
 
-    # - name: Setup PostgreSQL
-    #   shell: powershell
-    #   run: |
-    #     # 查找安装路径并添加到 PATH
-    #     $pgPath = Get-ChildItem "C:\Program Files\PostgreSQL" | Select-Object -First 1
-    #     $pgBin = "$($pgPath.FullName)\bin"
-    #     echo "$pgBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        
-    #     # 启动服务 (Windows 服务名通常是 postgresql-x64-<version>)
-    #     $serviceName = Get-Service | Where-Object { $_.Name -like "postgresql*" } | Select-Object -ExpandProperty Name
-    #     Write-Host "Starting service: $serviceName"
-    #     net start $serviceName
+    - name: Setup PostgreSQL
+      shell: powershell
+      run: |
+        choco install postgresql15 --params '/Password:postgres' -y --no-progress
 
-    #     # 等待启动
-    #     Start-Sleep -Seconds 5
+        # 查找安装路径并添加到 PATH
+        $pgPath = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        if (-not $pgPath) { throw "PostgreSQL installation not found" }
+        $pgBin = "$($pgPath.FullName)\bin"
+        $pgIsReady = "$pgBin\pg_isready.exe"
+        echo "$pgBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        # 启动服务 (Windows 服务名通常是 postgresql-x64-<version>)
+        $service = Get-Service | Where-Object { $_.Name -like "postgresql*" } | Select-Object -First 1
+        if (-not $service) { throw "PostgreSQL service not found" }
+        if ($service.Status -ne "Running") { Start-Service $service.Name }
+
+        # 等待 PostgreSQL 服务就绪
+        $env:PGPASSWORD = "postgres"
+        $max=30
+        $i=0
+        while ($i -lt $max) {
+          & "$pgIsReady" -h 127.0.0.1 -p 5432 -U postgres
+          if ($LASTEXITCODE -eq 0) { break }
+          Start-Sleep -Seconds 2
+          $i++
+        }
+        if ($i -ge $max) { throw "PostgreSQL did not become ready in time" }
 
     # 2. 创建测试数据库
     - name: Create Database
@@ -57,11 +70,14 @@ jobs:
         & mysql -h localhost -u root -proot -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root'; CREATE USER IF NOT EXISTS 'ci'@'%' IDENTIFIED WITH mysql_native_password BY 'ci'; GRANT ALL PRIVILEGES ON *.* TO 'ci'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES; CREATE DATABASE IF NOT EXISTS test_db;"
 
         # --- PostgreSQL 初始化 ---
-        # 默认 postgres 用户在 Windows CI 上通常没有密码或者使用系统认证
-        # 创建 ci 用户和测试数据库
-        # $env:PGPASSWORD = "" # 尝试空密码登录
-        # & psql -h localhost -U postgres -c "CREATE USER ci WITH PASSWORD 'ci' SUPERUSER;"
-        # & psql -h localhost -U postgres -c "CREATE DATABASE test_db;"
+        $env:PGPASSWORD = "postgres"
+        & psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS testdb;"
+        & psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS test;"
+        & psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE test LOGIN PASSWORD 'test';"
+        & psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE testdb OWNER test;"
+
+        $env:PGPASSWORD = "test"
+        & psql -h 127.0.0.1 -p 5432 -U test -d testdb -v ON_ERROR_STOP=1 -f tests/postgres/init.sql
 
     # 3. 安装 XMake
     - name: Setup XMake
@@ -73,7 +89,7 @@ jobs:
     # 4. 配置构建 (使用 MSVC 编译器)
     # 这里的 -y 自动确认包安装 (如果有 add_requires 的话)
     - name: Configure XMake
-      run: xmake f -p windows -a x64 -m debug -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=n -y
+      run: xmake f -p windows -a x64 -m debug -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=y -y
 
     # 5. 构建项目
     - name: Build
@@ -90,8 +106,8 @@ jobs:
         DB_PORT: 3306
         # PostgreSQL 配置
         PG_HOST: 127.0.0.1
-        PG_USER: ci
-        PG_PASS: ci
-        PG_NAME: test_db
+        PG_USER: test
+        PG_PASS: test
+        PG_NAME: testdb
         PG_PORT: 5432
       run: xmake test -v

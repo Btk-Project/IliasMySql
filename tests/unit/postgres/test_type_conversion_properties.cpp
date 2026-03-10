@@ -312,7 +312,7 @@ static auto test_null_handling_property() -> IoTask<void> {
             // The range should handle NULL gracefully
             // For NULL values, the string should remain unchanged or be empty
             // depending on the implementation
-            EXPECT_TRUE(rc.has_value() || rc.error() == SqlError::Code::NoMoreData);
+            EXPECT_TRUE(rc.has_value() || rc.error() == SqlError::Code::NullValue);
         }
     }
     
