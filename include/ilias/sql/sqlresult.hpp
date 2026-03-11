@@ -1,3 +1,11 @@
+/**
+ * @file sqlresult.hpp
+ * @brief Result set wrapper with type-safe access
+ *
+ * This file provides the SqlResult template class for handling database
+ * query results with type-safe access and generator-based iteration.
+ */
+
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
@@ -8,9 +16,19 @@
 #include "ilias/sql/detail/coverter.hpp"
 
 ILIAS_SQL_NS_BEGIN
+
+/**
+ * @brief Forward declaration of SqlResult template
+ */
 template <typename T>
 class SqlResult;
 
+/**
+ * @brief Specialization for void result sets (no type mapping)
+ *
+ * This specialization is used when no type mapping is required,
+ * allowing direct access to the underlying IResultSet.
+ */
 template <>
 class SqlResult<void> {
 public:
@@ -66,6 +84,14 @@ protected:
     std::unique_ptr<IResultSet>        mImp;
 };
 
+/**
+ * @brief Typed result set wrapper with automatic type mapping
+ *
+ * This specialization provides type-safe access to query results,
+ * automatically mapping database rows to C++ types using reflection.
+ *
+ * @tparam T The type to map each row to
+ */
 template <typename T>
 class SqlResult : public SqlResult<void> {
 public:

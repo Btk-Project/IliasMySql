@@ -9,6 +9,7 @@
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
 [![Build System](https://img.shields.io/badge/build-xmake-green)](https://xmake.io)
 [![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey)](https://github.com/Btk-Project/IliasMySql)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Btk-Project/IliasMySql)
 
 **IliasSql** 是一个基于 C++20 协程的现代异步 SQL 客户端库，作为 `Ilias` 框架的数据访问层。它采用统一的抽象接口设计，支持多种数据库后端（SQLite、MySQL/MariaDB、PostgreSQL），提供类型安全的参数绑定、零拷贝的结果集处理，以及基于反射的对象关系映射。
 
@@ -178,21 +179,47 @@ sequenceDiagram
 #### IConnection - 连接抽象
 ```cpp
 class IConnection {
+virtual auto sqlname() -> std::string                              = 0;
+    virtual auto sqlinfo() -> std::string                              = 0;
+    virtual auto connect() -> IoTask<void>                             = 0;
+    virtual auto disconnect() -> IoTask<void>                          = 0;
+    virtual auto selectDatabase(std::string_view name) -> IoTask<void> = 0;
+
+    // 预编译 SQL
     virtual auto prepare(std::string_view sql) -> IoTask<std::unique_ptr<IStatement>> = 0;
-    virtual auto execute(std::string_view sql) -> IoTask<size_t> = 0;
+
+    // 直接执行 SQL
+    virtual auto execute(std::string_view sql) -> IoTask<size_t>                    = 0;
     virtual auto query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> = 0;
+
+    // 事务控制
     virtual auto beginTransaction() -> IoTask<bool> = 0;
-    // ...
+    virtual auto commit() -> IoTask<bool>           = 0;
+    virtual auto rollback() -> IoTask<bool>         = 0;
+    virtual auto syncRollback() -> bool             = 0;
+
+    // 获取最后一次插入的 ID
+    virtual auto lastInsertId() const -> int64_t = 0;
+
+    // 类型转换上下文
+    virtual auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> = 0;
+
+    // 连通性检测
+    virtual auto ping() -> IoTask<bool>         = 0;
+    virtual auto nativeHandle() const -> void * = 0;
 };
 ```
 
 #### IStatement - 预编译语句抽象
 ```cpp
 class IStatement {
-    virtual auto bind(size_t index, SqlValuePointer value) -> Result<void, std::error_code> = 0;
     virtual auto query() -> IoTask<std::unique_ptr<IResultSet>> = 0;
     virtual auto execute() -> IoTask<size_t> = 0;
-    virtual auto reset() -> void = 0;
+    virtual auto reset() -> void                = 0;
+    virtual auto nativeHandle() const -> void * = 0;
+        virtual auto bind(std::type_index type_index, size_t index, const SqlCellView &value) -> IoResult<void> = 0;
+    virtual auto bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
+        -> IoResult<void> = 0;
 };
 ```
 
@@ -200,83 +227,36 @@ class IStatement {
 ```cpp
 class IResultSet {
     virtual auto next() -> IoTask<bool> = 0;
-    virtual auto getValue(size_t index) -> IoResult<SqlValue> = 0;
-    virtual auto getValue(std::string_view name) -> IoResult<SqlValue> = 0;
+    virtual auto rowCount() const -> size_t = 0;
+    virtual auto columnCount() const -> size_t                      = 0;
+    virtual auto columnName(size_t index) const -> std::string_view = 0;
+    virtual auto getValue(size_t index) -> IoResult<SqlCellView> = 0;
+    virtual auto getValue(std::string_view name) -> IoResult<SqlCellView> = 0;
+    virtual auto nativeHandle() const -> void *                           = 0;
 };
 ```
 
 ### 类型系统设计
 
-#### 统一值类型
+#### 通过注册类型解析和存储函数，实现高度可扩展的类型系统
 ```cpp
-// 拥有权类型 - 用于存储
-using SqlValue = std::variant<SqlNull, bool, char, int32_t, int64_t, 
-                             float, double, std::string, SqlBlob, SqlDate>;
+using SqlParserResult = IoResult<std::any>;
+using SqlParserFunc   = std::function<SqlParserResult(const SqlCellView &)>;
+using SqlBinderResult = IoResult<std::unique_ptr<void, void (*)(void *)>>;
 
-// 视图类型 - 用于零拷贝传递
-using SqlValueView = std::variant<SqlNull, bool, char, int32_t, int64_t,
-                                 float, double, std::string_view, SqlBlobView, SqlDate>;
+void registerTypeParsers(SqlValueConverterContext &context) {
+    // 注册NULL类型解析器
+    context.registerType<SqlNull>(&pq_parse_null);
 
-// 指针类型 - 用于参数绑定
-using SqlValuePointer = std::variant<SqlNull*, bool*, char*, int32_t*, int64_t*,
-                                    float*, double*, std::string_view, SqlBlobView, SqlDate*>;
-```
+    // 注册NULL类型绑定器
+    context.registerType<SqlNull>(&pq_bind_null);
 
-```mermaid
-graph LR
-    subgraph "C++ 类型"
-        CPP_BOOL[bool]
-        CPP_INT[int32_t]
-        CPP_BIGINT[int64_t]
-        CPP_FLOAT[float]
-        CPP_DOUBLE[double]
-        CPP_STRING[std::string]
-        CPP_BLOB[std::vector&lt;byte&gt;]
-        CPP_DATE[SqlDate]
-        CPP_NULL[SqlNull]
-    end
-    
-    subgraph "SqlValue 变体"
-        SQL_BOOL[bool]
-        SQL_INT[int32_t]
-        SQL_BIGINT[int64_t]
-        SQL_FLOAT[float]
-        SQL_DOUBLE[double]
-        SQL_STRING[std::string]
-        SQL_BLOB[SqlBlob]
-        SQL_DATE[SqlDate]
-        SQL_NULL[SqlNull]
-    end
-    
-    subgraph "数据库类型"
-        DB_BOOL[BOOLEAN]
-        DB_INT[INTEGER]
-        DB_BIGINT[BIGINT]
-        DB_FLOAT[FLOAT]
-        DB_DOUBLE[DOUBLE]
-        DB_TEXT[TEXT/VARCHAR]
-        DB_BLOB[BLOB/BINARY]
-        DB_DATE[DATE/DATETIME]
-        DB_NULL[NULL]
-    end
-    
-    CPP_BOOL --> SQL_BOOL --> DB_BOOL
-    CPP_INT --> SQL_INT --> DB_INT
-    CPP_BIGINT --> SQL_BIGINT --> DB_BIGINT
-    CPP_FLOAT --> SQL_FLOAT --> DB_FLOAT
-    CPP_DOUBLE --> SQL_DOUBLE --> DB_DOUBLE
-    CPP_STRING --> SQL_STRING --> DB_TEXT
-    CPP_BLOB --> SQL_BLOB --> DB_BLOB
-    CPP_DATE --> SQL_DATE --> DB_DATE
-    CPP_NULL --> SQL_NULL --> DB_NULL
-    
-    classDef cppType fill:#e3f2fd
-    classDef sqlType fill:#f3e5f5
-    classDef dbType fill:#e8f5e8
-    
-    class CPP_BOOL,CPP_INT,CPP_BIGINT,CPP_FLOAT,CPP_DOUBLE,CPP_STRING,CPP_BLOB,CPP_DATE,CPP_NULL cppType
-    class SQL_BOOL,SQL_INT,SQL_BIGINT,SQL_FLOAT,SQL_DOUBLE,SQL_STRING,SQL_BLOB,SQL_DATE,SQL_NULL sqlType
-    class DB_BOOL,DB_INT,DB_BIGINT,DB_FLOAT,DB_DOUBLE,DB_TEXT,DB_BLOB,DB_DATE,DB_NULL dbType
+    // 注册布尔类型解析器
+    context.registerType<bool>(&pq_parse_bool);
+
+    // 注册布尔类型绑定器
+    context.registerType<bool>(&pq_bind_bool);
+}
 ```
 
 #### 反射驱动的映射
@@ -357,12 +337,34 @@ NEKO_END_NAMESPACE
 
 ### 文档资源
 
-完整的 SqlTags 文档位于 [`docs/`](docs/) 目录：
+#### 生成 API 文档
 
-- **[SqlTags 完整指南](docs/sql-tags-guide.md)** - 详细的功能介绍和使用方法
-- **[迁移指南](docs/migration-guide.md)** - 从现有代码迁移到增强 SqlTags 的指导
-- **[API 参考](docs/api-reference.md)** - 完整的 API 文档
-- **[示例代码](docs/examples/)** - 实际使用场景和最佳实践
+项目使用 Doxygen 生成 API 文档。要生成文档，请确保已安装 Doxygen：
+
+```bash
+# 安装 Doxygen (Ubuntu/Debian)
+sudo apt-get install doxygen graphviz
+
+# 安装 Doxygen (macOS)
+brew install doxygen graphviz
+
+# 安装 Doxygen (Windows)
+# 从 https://www.doxygen.nl/download.html 下载安装
+```
+
+生成文档：
+
+```bash
+# 在项目根目录执行
+doxygen Doxyfile
+
+# 文档将生成到 docs/html 目录
+# 使用浏览器打开 docs/html/index.html 查看
+```
+
+#### 相关文档
+
+- **[PostgreSQL 重构总结](docs/postgres_refactor_summary.md)** - PostgreSQL 驱动的重构说明
 
 ### 自动模式生成
 
@@ -717,29 +719,9 @@ public:
 ### 类型系统
 
 #### 统一值类型体系
-```cpp
-// 核心值类型 - 涵盖所有 SQL 数据类型
-using SqlValue = std::variant<
-    SqlNull,        // NULL 值
-    bool,           // BOOLEAN
-    char,           // TINYINT
-    int32_t,        // INT
-    int64_t,        // BIGINT
-    float,          // FLOAT
-    double,         // DOUBLE
-    std::string,    // TEXT/VARCHAR
-    SqlBlob,        // BINARY/BLOB
-    SqlDate         // DATE/DATETIME/TIMESTAMP
->;
+所有类型统一通过 `SqlCellView` 传递，抹除类型差异，并通过动态注册转化函数来实现类型的高度兼容性。
 
-// 视图类型 - 零拷贝传递
-using SqlValueView = std::variant</* 对应的视图类型 */>;
-
-// 指针类型 - 参数绑定
-using SqlValuePointer = std::variant</* 对应的指针类型 */>;
-```
-
-#### 时间类型支持
+#### 通用时间类型支持
 ```cpp
 struct SqlDate {
     enum TimeType { kDate, kDateTime, kTime };
@@ -749,12 +731,13 @@ struct SqlDate {
     SqlDate(std::chrono::system_clock::time_point tp);
     SqlDate(std::string_view iso_string);
     
-    // 格式化输出
-    auto toString() const -> std::string;
-    auto toTimestamp() const -> uint64_t;
-    
-    TimeType type = kDateTime;
-    uint32_t year, month, day, hour, minute, second, microsecond;
+    auto        fromUTCString(std::string_view str) -> void;
+    auto        fromLocalString(std::string_view str) -> void;
+    auto        toUTCString() const -> std::string;
+    auto        toLocalString() const -> std::string;
+    auto        to_time_point() const -> std::chrono::system_clock::time_point;
+    auto        toTimestamp() const -> uint64_t;
+    /// ...    
 };
 ```
 
@@ -1053,7 +1036,7 @@ IoTask<Result<User, AppError>> get_user_safe(int64_t id) {
     auto users = std::move(result.value());
     ilias_for_await(auto& user, users.range()) {
         // 如果id不是唯一或关键键可能还需要处理有多个结果的情况
-        return user;    
+        co_return user;    
     }
     co_return AppError::UserNotFound;  // 业务层错误    
 }

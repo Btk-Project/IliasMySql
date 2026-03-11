@@ -15,7 +15,7 @@ ILIAS_POSTGRES_NS_BEGIN
 // #############################################################################
 // #  PostgresStreamingResultSet (Streaming mode - single row buffer)
 // #############################################################################
-class PostgresStreamingResultSet final : public IResultSet {
+class ILIAS_SQL_API PostgresStreamingResultSet final : public IResultSet {
 public:
     PostgresStreamingResultSet(std::shared_ptr<Postgres> pg);
     ~PostgresStreamingResultSet();
@@ -62,7 +62,7 @@ private:
 // #############################################################################
 // #  PostgresStatement
 // #############################################################################
-class PostgresStatement final : public IStatement {
+class ILIAS_SQL_API PostgresStatement final : public IStatement {
 public:
     PostgresStatement(std::shared_ptr<Postgres> pg);
     ~PostgresStatement();
@@ -110,7 +110,7 @@ private:
 // #############################################################################
 // #  PostgresConnection
 // #############################################################################
-class PostgresConnection final : public IConnection {
+class ILIAS_SQL_API PostgresConnection final : public IConnection {
 public:
     PostgresConnection(std::shared_ptr<Postgres> pg, ConnectOptions options);
     ~PostgresConnection() = default;

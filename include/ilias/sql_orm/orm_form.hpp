@@ -1,3 +1,11 @@
+/**
+ * @file orm_form.hpp
+ * @brief ORM Form class for database table operations
+ *
+ * This file provides the Form template class for object-relational mapping,
+ * allowing C++ structs to be mapped to database tables with type-safe operations.
+ */
+
 #pragma once
 
 #include <nekoproto/serialization/reflection.hpp>
@@ -11,14 +19,32 @@
 #include "ilias/sql_orm/detail/orm_table_ops.hpp"
 
 ILIAS_SQL_NS_BEGIN
+
+/**
+ * @brief Forward declaration of Form template
+ */
 template <typename T, typename Tag, typename DatabaseT = void>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class Form;
+
+/**
+ * @brief Forward declaration of TableAlias template
+ */
 template <typename T, typename Tag, typename DatabaseT>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class TableAlias;
 
-template <typename T, typename BackendTag> // 默认可以是 SQLite
+/**
+ * @brief ORM Form class for database table operations
+ *
+ * Provides type-safe database operations for C++ structs,
+ * including table creation, querying, inserting, updating, and deleting.
+ *
+ * @tparam T The struct type to map to the database table
+ * @tparam BackendTag The database backend tag (e.g., SqliteTag, MysqlTag)
+ * @tparam DatabaseT The database type (void for static operations)
+ */
+template <typename T, typename BackendTag>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 class Form<T, BackendTag, void> final {
 public:

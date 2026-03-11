@@ -1,3 +1,11 @@
+/**
+ * @file sqlstatement.hpp
+ * @brief Prepared statement wrapper with type-safe parameter binding
+ *
+ * This file provides the SqlStatement template class for handling
+ * prepared SQL statements with type-safe parameter binding using reflection.
+ */
+
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
@@ -9,9 +17,18 @@
 
 ILIAS_SQL_NS_BEGIN
 
+/**
+ * @brief Forward declaration of SqlStatement template
+ */
 template <typename T>
 class SqlStatement;
 
+/**
+ * @brief Specialization for void statements (no type mapping)
+ *
+ * This specialization is used when no type mapping is required,
+ * allowing direct access to the underlying IStatement.
+ */
 template <>
 class SqlStatement<void> {
 public:
@@ -57,6 +74,14 @@ private:
     friend class SqlStatement;
 };
 
+/**
+ * @brief Typed statement wrapper with automatic type mapping
+ *
+ * This specialization provides type-safe statement execution,
+ * automatically binding parameters and mapping results to C++ types.
+ *
+ * @tparam T The type to bind parameters from and map results to
+ */
 template <typename T>
 class SqlStatement : public SqlStatement<void> {
 public:
