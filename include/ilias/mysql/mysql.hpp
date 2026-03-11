@@ -1,13 +1,16 @@
 /**
  * @file mysql.hpp
  * @author llhsdmd (llhsdmd@gmail.com)
- * @brief mysql I/O
- * @version 0.1
+ * @brief MySQL/MariaDB async client implementation
+ * @version 1.0.0
  * @date 2024-12-31
  *
  * @copyright Copyright (c) 2024
  *
+ * This file provides the async MySQL/MariaDB client implementation
+ * using the native MariaDB Connector/C library with coroutine support.
  */
+
 #pragma once
 
 #include <ilias/io/context.hpp>
@@ -27,6 +30,12 @@
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
 
+/**
+ * @brief Base class for MySQL result sets
+ *
+ * Provides common functionality for handling MySQL query results,
+ * including value conversion and field access.
+ */
 class ILIAS_SQL_API MySqlResultBase {
 public:
     MySqlResultBase(std::shared_ptr<SqlValueConverterContext> context) : mContext(context) {}
@@ -52,15 +61,29 @@ private:
     std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
+/**
+ * @brief Async MySQL/MariaDB client
+ *
+ * Provides async database operations using C++20 coroutines.
+ * This class wraps the native MariaDB Connector/C library and
+ * provides coroutine-friendly methods for all database operations.
+ */
 class ILIAS_SQL_API MySql final {
 public:
     using SqlError = sql::SqlError;
+    
+    /**
+     * @brief Shutdown type enumeration
+     */
     enum ShutdownType {
         SHUTDOWN_DEFAULT = ::mysql_enum_shutdown_level::SHUTDOWN_DEFAULT,
         KILL_QUERY       = ::mysql_enum_shutdown_level::KILL_QUERY,
         KILL_CONNECTION  = ::mysql_enum_shutdown_level::KILL_CONNECTION
     };
 
+    /**
+     * @brief Server option enumeration
+     */
     enum ServerOption {
         MULTI_STATEMENTS_ON  = ::enum_mysql_set_option::MYSQL_OPTION_MULTI_STATEMENTS_ON,
         MULTI_STATEMENTS_OFF = ::enum_mysql_set_option::MYSQL_OPTION_MULTI_STATEMENTS_OFF,

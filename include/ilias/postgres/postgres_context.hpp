@@ -3,7 +3,6 @@
 #include "ilias/postgres/global.hpp"
 #include "ilias/sql/types.hpp"
 #include <libpq-fe.h>
-#include <unordered_map>
 #include <functional>
 
 ILIAS_POSTGRES_NS_BEGIN
@@ -34,7 +33,7 @@ struct PostgresCellMetadata {
  * - 基于OID的类型解析器注册
  * - 基于OID的类型绑定器注册
  */
-class PostgresValueConverterContext : public SqlValueConverterContext {
+class ILIAS_SQL_API PostgresValueConverterContext : public SqlValueConverterContext {
 public:
     using OidParserFunc = std::function<SqlParserResult(const SqlCellView&, const PostgresCellMetadata&)>;
     using OidBinderFunc = std::function<SqlBinderResult(const SqlCellView&, const std::any&, const PostgresCellMetadata&)>;

@@ -1,13 +1,16 @@
 /**
  * @file postgres.hpp
  * @author llhsdmd (llhsdmd@gmail.com) & Gemini
- * @brief postgresql I/O
- * @version 0.1
+ * @brief PostgreSQL async client implementation
+ * @version 1.0.0
  * @date 2025-12-18
  *
  * @copyright Copyright (c) 2024
  *
+ * This file provides async PostgreSQL client implementation
+ * using the native libpq library with coroutine support.
  */
+
 #pragma once
 
 #include "ilias/postgres/global.hpp"
@@ -27,6 +30,14 @@
 ILIAS_POSTGRES_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
 
+/**
+ * @brief Async PostgreSQL client
+ *
+ * Provides async database operations using C++20 coroutines.
+ * This class wraps the native libpq library and provides
+ * coroutine-friendly methods for all database operations,
+ * including streaming result support.
+ */
 class ILIAS_SQL_API Postgres final {
 public:
     using SqlError = sql::SqlError;

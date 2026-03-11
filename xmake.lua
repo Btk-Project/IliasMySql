@@ -3,7 +3,7 @@ add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage")
 set_languages("c++20")
 add_includedirs("./include")
 set_encodings("utf-8")
-set_version("0.0.1", {build = "%Y%m%d%H%M"})
+set_version("1.0.0", {build = "%Y%m%d%H%M"})
 set_warnings("allextra")
 add_repositories("btk-repo https://github.com/Btk-Project/xmake-repo.git")
 

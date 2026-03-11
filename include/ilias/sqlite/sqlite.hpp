@@ -1,15 +1,17 @@
-#pragma once
-
 /**
  * @file sqlite.hpp
  * @author llhsdmd (llhsdmd@gmail.com)
- * @brief sqlite I/O
- * @version 0.1
+ * @brief SQLite async client implementation
+ * @version 1.0.0
  * @date 2025-11-26
  *
  * @copyright Copyright (c) 2024
  *
+ * This file provides the async SQLite client implementation
+ * using the native sqlite3 library with coroutine support.
  */
+
+#pragma once
 
 #include "global.hpp"
 
@@ -27,6 +29,12 @@
 ILIAS_SQLITE_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
 
+/**
+ * @brief SQLite prepared statement implementation
+ *
+ * Provides async prepared statement operations for SQLite,
+ * including parameter binding and query execution.
+ */
 class ILIAS_SQL_API SqliteStatement final : public IStatement {
 public:
     SqliteStatement(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<SqlValueConverterContext> context);
@@ -57,6 +65,11 @@ private:
     std::shared_ptr<SqlValueConverterContext>            mContext;
 };
 
+/**
+ * @brief SQLite result set implementation for prepared statements
+ *
+ * Provides async iteration over query results from prepared statements.
+ */
 class ILIAS_SQL_API SqliteStmtResultSet final : public IResultSet {
 public:
     SqliteStmtResultSet(std::shared_ptr<sqlite3> sqlite, std::shared_ptr<sqlite3_stmt> stmt,
@@ -87,6 +100,12 @@ private:
     std::shared_ptr<SqlValueConverterContext> mContext;
 };
 
+/**
+ * @brief Async SQLite connection implementation
+ *
+ * Provides async database operations for SQLite using C++20 coroutines.
+ * Supports both file-based and in-memory databases.
+ */
 class ILIAS_SQL_API Sqlite final : public IConnection {
 public:
     Sqlite(const ConnectOptions &options);
