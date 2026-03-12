@@ -65,6 +65,8 @@ private:
 class ILIAS_SQL_API PostgresStatement final : public IStatement {
 public:
     PostgresStatement(std::shared_ptr<Postgres> pg);
+    PostgresStatement(const PostgresStatement &)            = delete;
+    PostgresStatement &operator=(const PostgresStatement &) = delete;
     ~PostgresStatement();
 
     auto bind(std::type_index type_index, size_t index, const SqlCellView &value)
