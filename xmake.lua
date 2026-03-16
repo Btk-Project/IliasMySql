@@ -1,6 +1,6 @@
 add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage")
 
-set_languages("c++20")
+set_languages("c++23")
 add_includedirs("./include")
 set_encodings("utf-8")
 set_version("1.0.0", {build = "%Y%m%d%H%M"})
@@ -11,10 +11,10 @@ add_configfiles("include/ilias/sql/global/config.h.in")
 set_configdir("include/ilias/sql/global")
 set_configvar("API_VERSION", 1)
 
-add_requires("ilias", {version = "0.3.4", configs = {log = true, cpp20 = true}})
+add_requires("ilias", {version = "0.4.0", configs = {log = true}})
 add_requires("neko-proto-tools", {version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
 
-add_requireconfs("**.ilias", {version = "0.3.4", override = true, configs = {log = true, cpp20 = true}})
+add_requireconfs("**.ilias", {version = "0.4.0", override = true, configs = {log = true}})
 add_requireconfs("**.neko-proto-tools", {override = true, version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
 
 includes("lua/hidetargets.lua")

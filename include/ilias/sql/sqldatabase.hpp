@@ -27,7 +27,7 @@ class SqlTransaction;
  * @brief Database connection wrapper with coroutine support
  *
  * SqlDatabase provides a high-level interface for database connections,
- * supporting async operations through C++20 coroutines. It manages
+ * supporting async operations through c++23 coroutines. It manages
  * the underlying IConnection and provides transaction support.
  *
  * @note This class is move-only and cannot be copied.

@@ -33,7 +33,7 @@ ILIAS_SQL_USE_NAMESPACE
 /**
  * @brief Async PostgreSQL client
  *
- * Provides async database operations using C++20 coroutines.
+ * Provides async database operations using c++23 coroutines.
  * This class wraps the native libpq library and provides
  * coroutine-friendly methods for all database operations,
  * including streaming result support.

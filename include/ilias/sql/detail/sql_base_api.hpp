@@ -35,7 +35,7 @@ public:
         if constexpr (sizeof...(Args) > 0) {
             ret.value().bind(std::forward<Args>(args)...);
         }
-        co_return std::move(ret.value());
+        co_return SqlStatement<std::tuple<Args...>>(std::move(ret.value()));
     }
 
     template <typename U>
@@ -162,7 +162,7 @@ public:
         if (!ret) {
             co_return Unexpected(ret.error());
         }
-        co_return SqlStatement<std::tuple<std::decay_t<Args>...>>(std::move(ret.value()));
+        co_return SqlStatement<std::tuple<Args...>>(std::move(ret.value()));
     }
 
     template <typename T = void>
@@ -198,7 +198,7 @@ public:
         }
         return (*conn_ret)->sqlname();
     }
-    
+
     auto sqlinfo() -> std::string {
         Derived *self     = static_cast<Derived *>(this);
         auto     conn_ret = self->connection();

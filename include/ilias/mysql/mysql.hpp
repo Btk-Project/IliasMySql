@@ -64,7 +64,7 @@ private:
 /**
  * @brief Async MySQL/MariaDB client
  *
- * Provides async database operations using C++20 coroutines.
+ * Provides async database operations using c++23 coroutines.
  * This class wraps the native MariaDB Connector/C library and
  * provides coroutine-friendly methods for all database operations.
  */

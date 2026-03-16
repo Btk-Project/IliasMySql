@@ -796,7 +796,7 @@ auto MysqlConnection::beginTransaction() -> IoTask<bool> {
     if (!ret) {
         co_return Unexpected(ret.error());
     }
-    co_return ret;
+    co_return ret.value();
 }
 
 auto MysqlConnection::commit() -> IoTask<bool> {

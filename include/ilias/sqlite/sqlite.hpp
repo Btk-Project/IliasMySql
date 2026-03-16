@@ -103,7 +103,7 @@ private:
 /**
  * @brief Async SQLite connection implementation
  *
- * Provides async database operations for SQLite using C++20 coroutines.
+ * Provides async database operations for SQLite using c++23 coroutines.
  * Supports both file-based and in-memory databases.
  */
 class ILIAS_SQL_API Sqlite final : public IConnection {

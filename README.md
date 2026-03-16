@@ -11,7 +11,7 @@
 [![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey)](https://github.com/Btk-Project/IliasMySql)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Btk-Project/IliasMySql)
 
-**IliasSql** 是一个基于 C++20 协程的现代异步 SQL 客户端库，作为 `Ilias` 框架的数据访问层。它采用统一的抽象接口设计，支持多种数据库后端（SQLite、MySQL/MariaDB、PostgreSQL），提供类型安全的参数绑定、零拷贝的结果集处理，以及基于反射的对象关系映射。
+**IliasSql** 是一个基于 c++23 协程的现代异步 SQL 客户端库，作为 `Ilias` 框架的数据访问层。它采用统一的抽象接口设计，支持多种数据库后端（SQLite、MySQL/MariaDB、PostgreSQL），提供类型安全的参数绑定、零拷贝的结果集处理，以及基于反射的对象关系映射。
 
 ## 设计理念
 
@@ -19,7 +19,7 @@
 IliasSql 采用分层架构设计，通过抽象接口 (`IConnection`、`IStatement`、`IResultSet`) 屏蔽不同数据库的实现差异，为上层提供一致的编程体验。无论是 SQLite 的嵌入式场景，还是 MySQL 的网络数据库，都使用相同的 API。
 
 ### 协程优先，真正异步
-基于 C++20 协程和 `ilias::Task` 系统，所有 I/O 操作都是非阻塞的。与传统的回调或 Future 模式不同，协程让异步代码看起来像同步代码，避免了回调地狱，同时保持了高性能。
+基于 c++23 协程和 `ilias::Task` 系统，所有 I/O 操作都是非阻塞的。与传统的回调或 Future 模式不同，协程让异步代码看起来像同步代码，避免了回调地狱，同时保持了高性能。
 
 ### 类型安全，编译期检查
 通过模板元编程和反射机制，在编译期验证 SQL 占位符与参数的匹配性。`prepare_with` 系列接口能够检查结构体字段数量与 SQL 参数数量的一致性，避免运行时绑定错误。
@@ -33,7 +33,7 @@ IliasSql 采用分层架构设计，通过抽象接口 (`IConnection`、`IStatem
 ## 核心特性
 
 ### 🚀 异步协程架构
-- **真正的非阻塞 I/O**: 基于 `ilias::Task` 和 C++20 `co_await`，所有数据库操作都不会阻塞线程
+- **真正的非阻塞 I/O**: 基于 `ilias::Task` 和 c++23 `co_await`，所有数据库操作都不会阻塞线程
 - **协程友好**: 使用 `ilias_for_await` 进行流式结果集遍历，代码简洁直观
 - **高并发支持**: 单线程处理大量并发数据库连接，资源利用率高
 
@@ -59,7 +59,7 @@ IliasSql 采用分层架构设计，通过抽象接口 (`IConnection`、`IStatem
 - **RAII 事务管理**: 自动回滚，手动提交，异常安全
 - **丰富的错误信息**: 基于 `std::error_code` 的错误处理体系
 - **调试支持**: 内置日志追踪，便于问题定位
-- **现代 C++ 风格**: 充分利用 C++20 特性，代码表达力强
+- **现代 C++ 风格**: 充分利用 c++23 特性，代码表达力强
 
 ## 架构设计
 
@@ -386,7 +386,7 @@ co_await db.execute(createTableSQL);
 ## 快速开始
 
 ### 环境依赖
-- **C++20 编译器**: GCC 10+, Clang 12+, MSVC 2022+
+- **c++23 编译器**: GCC 10+, Clang 12+, MSVC 2022+
 - **核心依赖**:
   - [Ilias](https://github.com/BusyStudent/Ilias) 框架 (协程和 IO 系统)
   - [NekoProtoTools](https://github.com/liuli-neko/NekoProtoTools) (反射支持)
@@ -1044,7 +1044,7 @@ IoTask<Result<User, AppError>> get_user_safe(int64_t id) {
 ## 路线图
 
 ### 已完成特性 ✅
-- [x] **核心异步框架**: 基于 C++20 协程的完整异步 I/O 体系
+- [x] **核心异步框架**: 基于 c++23 协程的完整异步 I/O 体系
 - [x] **多数据库支持**: SQLite3、MySQL/MariaDB 驱动实现
 - [x] **类型安全绑定**: 编译期参数检查和结构体反射映射
 - [x] **流式结果集**: 基于生成器的内存高效数据处理
@@ -1077,7 +1077,7 @@ IoTask<Result<User, AppError>> get_user_safe(int64_t id) {
 4. **测试用例**: 增加测试覆盖率，特别是边界情况
 
 **开发环境要求**:
-- C++20 兼容编译器 (GCC 10+, Clang 12+, MSVC 2022+)
+- c++23 兼容编译器 (GCC 10+, Clang 12+, MSVC 2022+)
 - Xmake 构建系统
 - 对应数据库的开发库 (libsqlite3-dev, libmariadb-dev, libpq-dev)
 

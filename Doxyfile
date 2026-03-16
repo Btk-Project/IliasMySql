@@ -8,7 +8,7 @@
 DOXYFILE_ENCODING      = UTF-8
 PROJECT_NAME           = "IliasSql"
 PROJECT_NUMBER         = "1.0.0"
-PROJECT_BRIEF          = "A modern async SQL client library based on C++20 coroutines"
+PROJECT_BRIEF          = "A modern async SQL client library based on c++23 coroutines"
 PROJECT_LOGO           =
 OUTPUT_DIRECTORY       = docs
 CREATE_SUBDIRS         = NO
