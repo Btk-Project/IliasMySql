@@ -673,6 +673,7 @@ auto PostgresStreamingResultSet::next() -> IoTask<bool> {
         co_return true;
     }
     else if (status == PGRES_TUPLES_OK) {
+        PQclear(result);
         co_await drainRemainingResults();
         co_return false;
     }
@@ -684,10 +685,12 @@ auto PostgresStreamingResultSet::next() -> IoTask<bool> {
                 ILIAS_TRACE("ilias-pgsql", "Failed to parse rows affected: {}", std::make_error_code(ret.ec).message());
             }
         }
+        PQclear(result);
         co_await drainRemainingResults();
         co_return false;
     }
     else {
+        PQclear(result);
         co_await drainRemainingResults();
         auto code = registerPostgresError(result);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
@@ -752,6 +755,7 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
     if (status == PGRES_FATAL_ERROR) {
         auto code     = registerPostgresError(result);
         mEndOfResults = true;
+        PQclear(result); // 清理结果
         co_return Unexpected(code);
     }
 

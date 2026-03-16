@@ -96,10 +96,10 @@ if is_plat("windows") then
     add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
 
--- if is_mode("debug") and is_plat("linux") then
---     set_policy("build.sanitizer.address", true)
---     set_policy("build.sanitizer.undefined", true)
--- end
+if is_mode("debug") and is_plat("linux") then
+    set_policy("build.sanitizer.address", true)
+    set_policy("build.sanitizer.undefined", true)
+end
 
 target("ilias_sql")
     add_options("enable_mysql", "enable_sqlite", "enable_orm_interface", "dynamic_plugin", "enable_postgres")
