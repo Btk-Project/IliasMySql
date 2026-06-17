@@ -31,13 +31,22 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         goto continue
     end
 
+    local group = path.filename(path.directory(file))
+    if group == nil or group == "" or group == "." then
+        group = "base"
+    end
+
     -- Otherwise, create a target for this file, in most case, it should enough
     target(name .. "_" .. sql_backend)
         set_kind("binary")
         set_default(false)
         add_deps("ilias_sql")
         add_files(file)
-        add_tests("cpp20", {run_timeout = 30000, languages="c++23"})
+        set_group(group)
+        local cpp_versions = {stdcxx()}
+        for i = 1, #cpp_versions do
+            add_tests(cpp_versions[i]:gsub("%+", "p", 2), {group = group, run_timeout = 30000, languages=cpp_versions[i]})
+        end
         add_packages("gtest", "cpptrace")
         add_includedirs("$(projectdir)/include")
     target_end()

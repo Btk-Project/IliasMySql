@@ -1,24 +1,30 @@
 add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage")
 
-set_languages("c++23")
-add_includedirs("./include")
-set_encodings("utf-8")
 set_version("1.0.0", {build = "%Y%m%d%H%M"})
-set_warnings("allextra")
 add_repositories("btk-repo https://github.com/Btk-Project/xmake-repo.git")
+set_warnings("allextra")
+set_encodings("utf-8")
+set_policy("package.cmake_generator.ninja", true)
+includes("lua/hidetargets.lua")
+
+option("stdc",   {showmenu = true, default = 23, values = {23}})
+option("stdcxx", {showmenu = true, default = 23, values = {26, 23, 20}})
+function stdc()   return "c"   .. tostring(get_config("stdc"))   end
+function stdcxx() return "c++" .. tostring(get_config("stdcxx")) end
+set_languages(stdc(), stdcxx())
 
 add_configfiles("include/ilias/sql/global/config.h.in")
 set_configdir("include/ilias/sql/global")
 set_configvar("API_VERSION", 1)
 
-add_requires("ilias", {version = "0.4.0", configs = {log = true}})
-add_requires("neko-proto-tools", {version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
+option("3rd_custom",   {showmenu = true, type = "boolean", default = false})
 
-add_requireconfs("**.ilias", {version = "0.4.0", override = true, configs = {log = true}})
-add_requireconfs("**.neko-proto-tools", {override = true, version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
+add_requires("ilias", "neko-proto-tools")
 
-includes("lua/hidetargets.lua")
-set_warnings("allextra")
+if not has_config("3rd_custom") then
+    add_requireconfs("**ilias", {version = "0.4.2", override = true, configs = {log = true, shared = is_config("3rd_kind", "shared"), stdcxx = get_config("stdcxx")}})
+    add_requireconfs("**neko-proto-tools", {override = true, version = "dev", configs = {shared = is_config("3rd_kind", "shared"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
+end
 
 option("enable_test")
     set_default(false)
@@ -103,6 +109,7 @@ end
 
 target("ilias_sql")
     add_options("enable_mysql", "enable_sqlite", "enable_orm_interface", "dynamic_plugin", "enable_postgres")
+    add_includedirs("./include")
     if has_config("dynamic_plugin") then
         set_kind("shared")
         add_headerfiles("include/(ilias/sql/interfaces.hpp)")

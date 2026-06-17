@@ -260,7 +260,7 @@ public:
 
             // 验证批量插入的数据完整性
             auto verify_batch =
-                co_await users.select().where(users.sql(&SimpleUser::id) > 1).orderBy("id", false).query();
+                co_await users.select().where(users.sql(&SimpleUser::id) > 1).orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_batch);
             auto batch_result = std::move(verify_batch.value());
 
@@ -310,7 +310,7 @@ public:
             PERF_TIMER("read_operations");
 
             // 全表查询 - 验证数据完整性
-            auto query_ret = co_await users.select().orderBy("id", false).query();
+            auto query_ret = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(query_ret);
             auto result = std::move(query_ret.value());
 
@@ -419,7 +419,7 @@ public:
             EXPECT_EQ(delete_ret.value(), 1); // Charlie
 
             // 验证删除后的数据完整性
-            auto after_delete = co_await users.select().orderBy("id", false).query();
+            auto after_delete = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(after_delete);
             auto after_result = std::move(after_delete.value());
 
@@ -489,7 +489,7 @@ public:
             PERF_TIMER("pagination_query");
 
             auto page_ret = co_await users.select()
-                                .orderBy("id", false) // ASC
+                                .orderBy(users.sql(&SimpleUser::id), false) // ASC
                                 .limit(5)
                                 .offset(5)
                                 .query();
@@ -512,7 +512,7 @@ public:
 
             auto sort_ret = co_await users.select()
                                 .where(users.sql(&SimpleUser::is_active) == true)
-                                .orderBy("balance", true) // DESC
+                                .orderBy(users.sql(&SimpleUser::balance), true) // DESC
                                 .limit(3)
                                 .query();
             CO_ASSERT_VAL(sort_ret);

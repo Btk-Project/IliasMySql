@@ -162,19 +162,13 @@ auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
 template <typename U>
 auto SqlStatement<void>::query() -> IoTask<SqlResult<U>> {
     ILIAS_TRACE("ilias-sql", "Executing query");
-    auto ret = co_await mStmt->query();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    co_return SqlResult<U>(std::move(ret.value()));
+    ILIAS_CO_TRY(auto ret, co_await mStmt->query());
+    co_return SqlResult<U>(std::move(ret));
 }
 
 inline auto SqlStatement<void>::execute() -> IoTask<size_t> {
-    auto ret = co_await mStmt->execute();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    co_return ret.value();
+    ILIAS_CO_TRY(auto ret, co_await mStmt->execute());
+    co_return ret;
 }
 
 inline auto SqlStatement<void>::reset() -> void {

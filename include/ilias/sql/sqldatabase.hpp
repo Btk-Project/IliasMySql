@@ -169,10 +169,12 @@ public:
      * @param other The transaction to move from
      */
     SqlTransaction(SqlTransaction &&other)
-        : mDatabase(other.mDatabase), mConnection(other.mConnection), mState(other.mState) {
+        : mDatabase(other.mDatabase), mConnection(other.mConnection), mState(other.mState),
+          mOwnsTransaction(other.mOwnsTransaction) {
         ILIAS_TRACE("ilias-sql", "SqlTransaction<{}> move constructor", (void *)this);
-        other.mState      = State::kUnused;
-        other.mConnection = nullptr;
+        other.mState           = State::kUnused;
+        other.mConnection      = nullptr;
+        other.mOwnsTransaction = false;
     }
     
     /**
@@ -231,6 +233,7 @@ private:
     SqlDatabase &mDatabase;
     IConnection *mConnection = nullptr;
     State        mState      = State::kUnused;
+    bool         mOwnsTransaction = false;
 };
 
 ILIAS_SQL_NS_END

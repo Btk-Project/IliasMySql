@@ -135,20 +135,21 @@ struct SqlAssignment {
 class ILIAS_SQL_API SqlVariable {
 public:
     explicit SqlVariable(std::string_view name);
+    SqlVariable(std::string sql, std::string bindName);
 
     template <typename T>
         requires(SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)) || std::is_null_pointer_v<T>
     SqlCondition compare(const std::string &op, T &&value) const {
         if (is_sql_null(value)) {
             if (op == "=")
-                return SqlCondition(mName + " IS NULL", {});
+                return SqlCondition(mSql + " IS NULL", {});
             if (op == "!=")
-                return SqlCondition(mName + " IS NOT NULL", {});
+                return SqlCondition(mSql + " IS NOT NULL", {});
         }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using StorageT = StorageType_t<T>;
         binders.push_back(std::make_shared<ValueBinder<StorageT>>(std::forward<T>(value)));
-        return SqlCondition(mName + " " + op + " ?", std::move(binders));
+        return SqlCondition(mSql + " " + op + " ?", std::move(binders));
     }
 
     template <typename T>
@@ -158,13 +159,13 @@ public:
         static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(value)));
-        return SqlCondition(mName + " " + op + " ?", std::move(binders));
+        return SqlCondition(mSql + " " + op + " ?", std::move(binders));
     }
 
     template <typename T>
         requires HasSqlMethod<T>
     SqlCondition compare(const std::string &op, T &&value) const {
-        return SqlCondition(mName + " " + op + " " + value.sql(), {});
+        return SqlCondition(mSql + " " + op + " " + value.sql(), {});
     }
 
     template <typename T>
@@ -192,7 +193,7 @@ public:
         return compare("!=", std::forward<T>(v));
     }
 
-    std::string sql() const { return mName; }
+    std::string sql() const { return mSql; }
 
     template <typename T>
     SqlCondition like(T &&v) const {
@@ -204,7 +205,7 @@ public:
     SqlAssignment operator=(T &&value) const {
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<T>>>(std::forward<T>(value)));
-        return SqlAssignment {.sql = mName + " = :" + mName, .binders = std::move(binders)};
+        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders)};
     }
 
     template <typename T>
@@ -214,17 +215,18 @@ public:
         using ResultT = std::invoke_result_t<T>;
         static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(u)));
-        return SqlAssignment {.sql = mName + " = :" + mName, .binders = std::move(binders)};
+        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders)};
     }
 
     template <typename T>
         requires HasSqlMethod<T>
     SqlAssignment operator=(const T &value) const {
-        return SqlAssignment {.sql = mName + " = " + value.sql(), .binders = {}};
+        return SqlAssignment {.sql = mSql + " = " + value.sql(), .binders = {}};
     }
 
 protected:
-    std::string mName;
+    std::string mSql;
+    std::string mBindName;
 };
 
 template <typename T>
@@ -232,6 +234,7 @@ class TypedColumn : public SqlVariable {
 public:
     using Type = T;
     explicit TypedColumn(std::string name) : SqlVariable(std::move(name)) {}
+    TypedColumn(std::string sql, std::string bindName) : SqlVariable(std::move(sql), std::move(bindName)) {}
 
     template <typename U>
     static constexpr bool IsValidOperand =
@@ -269,7 +272,7 @@ public:
         return SqlVariable::compare("!=", std::forward<U>(v));
     }
 
-    std::string sql() const { return mName; }
+    std::string sql() const { return mSql; }
 
     template <typename U>
         requires(IsCompatible<T, U> && SqlBindable<U>) || std::is_same_v<std::decay_t<U>, std::string> ||

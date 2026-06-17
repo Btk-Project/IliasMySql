@@ -11,6 +11,8 @@
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
 #include "ilias/sql_orm/dialect.hpp"
+#include <set>
+#include <stdexcept>
 #include <type_traits>
 
 #include "ilias/sql_orm/detail/orm_types.hpp"
@@ -57,12 +59,16 @@ public:
         requires(!std::is_const_v<DatabaseT>)
     static auto create_or_replace(DatabaseT &db, const std::string &tableName)
         -> IoTask<Form<T, BackendTag, DatabaseT>> {
-        // 1. 先 Drop
-        std::string drop_sql = "DROP TABLE IF EXISTS " + tableName; // 注意为表名添加引号/反引号
-        auto        drop_ret = co_await db.execute(drop_sql);
-        if (!drop_ret) {
-            co_return Unexpected(drop_ret.error());
+        auto identifier_validation = _validate_identifier_metadata(tableName);
+        if (!identifier_validation.is_ok()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
+                        detail::join_strs(identifier_validation.errors, "; "));
+            co_return Unexpected(SqlError::Code::InvalidParameter);
         }
+
+        // 1. 先 Drop
+        std::string drop_sql = "DROP TABLE IF EXISTS " + BackendDialect::quote_identifier(tableName);
+        ILIAS_CO_TRYV(co_await db.execute(drop_sql));
         // 2. 再 Create
         co_return co_await _create_table_impl(db, tableName, false);
     }
@@ -83,6 +89,13 @@ public:
     template <typename DatabaseT>
         requires(!std::is_const_v<DatabaseT>)
     static auto attach(DatabaseT &db, const std::string &tableName) -> IoTask<Form<T, BackendTag, DatabaseT>> {
+        auto identifier_validation = _validate_identifier_metadata(tableName);
+        if (!identifier_validation.is_ok()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
+                        detail::join_strs(identifier_validation.errors, "; "));
+            co_return Unexpected(SqlError::Code::InvalidParameter);
+        }
+
         // 1. 从Dialect获取查询元数据的SQL
         // 注意：SQLite的PRAGMA不支持绑定参数，所以特殊处理
         std::string schema_query_sql;
@@ -94,35 +107,21 @@ public:
         }
 
         // 2. 执行查询
-        auto prepare_ret = co_await db.prepare(schema_query_sql);
-        if (!prepare_ret) {
-            ILIAS_ERROR("ilias-sql", "Attach failed for table '{}': prepare failed.", tableName);
-            co_return Unexpected(prepare_ret.error());
-        }
+        ILIAS_CO_TRY(auto prepare_ret, co_await db.prepare(schema_query_sql));
         if constexpr (!std::is_same_v<BackendTag, SqliteTag>) {
-            prepare_ret->bind(tableName);
+            prepare_ret.bind(tableName);
         }
-        auto result = co_await prepare_ret->query();
-
-        if (!result) {
-            // 查询失败，可能是表不存在
-            ILIAS_ERROR("ilias-sql", "Attach failed for table '{}': query for schema failed.", tableName);
-            co_return Unexpected(result.error());
-        }
+        ILIAS_CO_TRY(auto result, co_await prepare_ret.query());
 
         // 3. 解析结果
-        auto actual_schema = co_await BackendDialect::parse_schema_result(std::move(result.value()));
-        if (!actual_schema) {
-            ILIAS_ERROR("ilias-sql", "Attach failed for table '{}': parse schema result failed.", tableName);
-            co_return Unexpected(actual_schema.error());
-        }
-        if ((*actual_schema).empty()) {
+        ILIAS_CO_TRY(auto actual_schema, co_await BackendDialect::parse_schema_result(std::move(result)));
+        if (actual_schema.empty()) {
             ILIAS_ERROR("ilias-sql", "Attach failed: Table '{}' does not exist or has no columns.", tableName);
             co_return Unexpected(SqlError::Code::TableNotFound);
         }
 
         // 4. 校验Schema
-        auto validation = _validate_schema(*actual_schema);
+        auto validation = _validate_schema(actual_schema);
         if (!validation.is_ok()) {
             std::string error_msg =
                 "Schema validation failed for table '" + tableName + "': " + detail::join_strs(validation.errors, "; ");
@@ -138,11 +137,15 @@ public:
     template <typename DatabaseT>
     static auto transaction(DatabaseT &db, const std::string &tableName)
         -> IoTask<std::pair<std::unique_ptr<SqlTransaction>, Form<T, BackendTag, SqlTransaction>>> {
-        auto ret = co_await db.transaction();
-        if (!ret) {
-            co_return Unexpected(ret.error());
+        auto identifier_validation = _validate_identifier_metadata(tableName);
+        if (!identifier_validation.is_ok()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
+                        detail::join_strs(identifier_validation.errors, "; "));
+            co_return Unexpected(SqlError::Code::InvalidParameter);
         }
-        auto tx   = std::make_unique<SqlTransaction>(std::move(ret.value()));
+
+        ILIAS_CO_TRY(auto ret, co_await db.transaction());
+        auto tx   = std::make_unique<SqlTransaction>(std::move(ret));
         auto form = Form<T, BackendTag, SqlTransaction>(*tx, tableName);
         co_return std::make_pair(std::move(tx), std::move(form));
     }
@@ -156,6 +159,13 @@ private:
         if (!BackendDialect::check(db.sqlname())) {
             ILIAS_ERROR("ilias-sql", "Dialect {} is not supported", db.sqlname());
             co_return Unexpected(SqlError::DialectNotSupported);
+        }
+
+        auto identifier_validation = _validate_identifier_metadata(tableName);
+        if (!identifier_validation.is_ok()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
+                        detail::join_strs(identifier_validation.errors, "; "));
+            co_return Unexpected(SqlError::InvalidParameter);
         }
 
         // Validate SqlTags configuration before creating table
@@ -180,11 +190,10 @@ private:
         // Generate additional index statements if needed
         auto indexStatements = BackendDialect::generate_index_statements(tableName, colWithTags);
 
-        std::string sql = std::string("CREATE TABLE ") + (if_not_exists ? "IF NOT EXISTS " : "") + tableName + " (" +
-                          detail::join_strs(colDefs, ", ") + ")";
-        auto ret = co_await db.execute(sql);
-        if (!ret)
-            co_return Unexpected(ret.error());
+        std::string sql = std::string("CREATE TABLE ") + (if_not_exists ? "IF NOT EXISTS " : "") +
+                          BackendDialect::quote_identifier(tableName) + " (" + detail::join_strs(colDefs, ", ") +
+                          ")";
+        ILIAS_CO_TRYV(co_await db.execute(sql));
 
         // Execute index creation statements
         for (const auto &indexSql : indexStatements) {
@@ -247,6 +256,27 @@ private:
 
         return result;
     }
+
+    static auto _validate_identifier_metadata(std::string_view tableName) -> ValidationResult {
+        ValidationResult result;
+        if (!BackendDialect::validate_identifier(tableName)) {
+            result.add_error("Invalid table identifier '" + std::string(tableName) + "'.");
+        }
+
+        T                     obj;
+        std::set<std::string> column_names;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name,
+                                                     const SqlTags & /*tags*/) {
+            if (!BackendDialect::validate_identifier(name)) {
+                result.add_error("Invalid column identifier '" + std::string(name) + "'.");
+            }
+            if (!column_names.emplace(name).second) {
+                result.add_error("Duplicate column identifier '" + std::string(name) + "'.");
+            }
+        });
+
+        return result;
+    }
 };
 
 template <typename T, typename BackendTag, typename DatabaseT> // 默认可以是 SQLite
@@ -276,13 +306,14 @@ public:
     }
 
     static auto getColumnNames() noexcept -> const std::vector<std::string> & { return mTableHeaderNames; }
+    static auto getQuotedColumnNames() noexcept -> const std::vector<std::string> & { return mQuotedTableHeaderNames; }
     static auto getColumnTags() noexcept -> const std::vector<SqlTags> & { return mTableHeaderTags; }
     static auto getColumnIndex() noexcept -> const std::map<std::ptrdiff_t, int> & { return mTableHeaderIndex; }
     static auto getPrimaryKey() noexcept -> const std::string & { return mPrimaryKey; }
 
     auto getTableName() const -> const std::string & { return mTableName; }
-    auto tableRef() const -> const std::string & { return mTableName; }
-    auto getAlias() const -> const std::string & { return mTableName; }
+    auto tableRef() const -> const std::string & { return mQuotedTableName; }
+    auto getAlias() const -> const std::string & { return mQuotedTableName; }
     auto db() -> RawDatabaseType & { return mDb; }
     auto db() const -> RawDatabaseType & { return mDb; }
 
@@ -293,13 +324,16 @@ public:
     }
 
 private:
-    Form(RawDatabaseType &db, const std::string &tableName) : mDb(db), mTableName(tableName) {
+    Form(RawDatabaseType &db, const std::string &tableName)
+        : mDb(db), mTableName(tableName), mQuotedTableName(BackendDialect::quote_identifier(tableName)) {
         ILIAS_TRACE("ilias-sql", "Form<{}> with database<{}> name {}", (void *)this, (void *)&mDb, tableName);
     }
 
     RawDatabaseType                     &mDb;
     std::string                          mTableName;
+    std::string                          mQuotedTableName;
     static std::vector<std::string>      mTableHeaderNames;
+    static std::vector<std::string>      mQuotedTableHeaderNames;
     static std::vector<SqlTags>          mTableHeaderTags;
     static std::map<std::ptrdiff_t, int> mTableHeaderIndex;
     static std::string                   mPrimaryKey;
@@ -310,6 +344,17 @@ template <typename T, typename BackendTag, typename DatabaseT>
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = []() {
     auto names = NEKO_NAMESPACE::Reflect<T>::names();
     return std::vector<std::string>(names.begin(), names.end());
+}();
+
+template <typename T, typename BackendTag, typename DatabaseT>
+    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+std::vector<std::string> Form<T, BackendTag, DatabaseT>::mQuotedTableHeaderNames = []() {
+    std::vector<std::string> quoted;
+    quoted.reserve(mTableHeaderNames.size());
+    for (const auto &name : mTableHeaderNames) {
+        quoted.push_back(BackendDialect::quote_identifier(name));
+    }
+    return quoted;
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
@@ -359,28 +404,34 @@ public:
     using BackendDialect = Dialect<BackendTag>;
     using DatabaseType   = DatabaseT;
 
-    TableAlias(const std::string &alias, Form<T, BackendTag, DatabaseType> &form) : mAlias(alias), mForm(form) {}
+    TableAlias(const std::string &alias, Form<T, BackendTag, DatabaseType> &form)
+        : mAlias(alias), mQuotedAlias(BackendDialect::quote_identifier(alias)), mForm(form) {}
 
     template <typename M>
     auto col(M T::*memberPtr) const {
         std::string rawColName = mForm.getColumnName(memberPtr).value();
-        return detail::TypedColumn<std::decay_t<M>>(mAlias + "." + rawColName);
+        return detail::TypedColumn<std::decay_t<M>>(mQuotedAlias + "." + BackendDialect::quote_identifier(rawColName),
+                                                    rawColName);
     }
-    auto tableRef() const -> std::string { return mForm.getTableName() + " AS " + mAlias; }
-    auto getAlias() const -> const std::string & { return mAlias; }
+    auto tableRef() const -> std::string { return mForm.tableRef() + " AS " + mQuotedAlias; }
+    auto getAlias() const -> const std::string & { return mQuotedAlias; }
     auto getTableName() const -> const std::string & { return mForm.getTableName(); }
     auto db() -> DatabaseType & { return mForm.db(); }
     auto db() const -> const DatabaseType & { return mForm.db(); }
 
-    static decltype(auto) getColumnTags() noexcept { return Form<T, BackendDialect, DatabaseType>::getColumnTags(); }
-    static decltype(auto) getColumnNames() noexcept { return Form<T, BackendDialect, DatabaseType>::getColumnNames(); }
-    static decltype(auto) getColumnIndex() noexcept { return Form<T, BackendDialect, DatabaseType>::getColumnIndex(); }
-    static decltype(auto) getPrimaryKey() noexcept { return Form<T, BackendDialect, DatabaseType>::getPrimaryKey(); }
+    static decltype(auto) getColumnTags() noexcept { return Form<T, BackendTag, DatabaseType>::getColumnTags(); }
+    static decltype(auto) getColumnNames() noexcept { return Form<T, BackendTag, DatabaseType>::getColumnNames(); }
+    static decltype(auto) getQuotedColumnNames() noexcept {
+        return Form<T, BackendTag, DatabaseType>::getQuotedColumnNames();
+    }
+    static decltype(auto) getColumnIndex() noexcept { return Form<T, BackendTag, DatabaseType>::getColumnIndex(); }
+    static decltype(auto) getPrimaryKey() noexcept { return Form<T, BackendTag, DatabaseType>::getPrimaryKey(); }
 
     auto as(const std::string &alias) { return TableAlias(alias, mForm); }
 
 private:
     std::string                        mAlias;
+    std::string                        mQuotedAlias;
     Form<T, BackendTag, DatabaseType> &mForm;
 };
 

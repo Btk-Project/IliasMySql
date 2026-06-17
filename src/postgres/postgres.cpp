@@ -2,6 +2,7 @@
 #include "ilias/postgres/postgres.hpp"
 #include "ilias/postgres/postgres_context.hpp"
 #include "ilias/postgres/postgres_parsers.hpp"
+#include "ilias/sql/detail/placeholder_parser.hpp"
 #include <libpq/libpq-fs.h>
 
 #include <atomic>
@@ -938,7 +939,7 @@ auto PostgresStatement::bind(std::type_index type_index, size_t index, const Sql
         return {};
     }
     ILIAS_WARN("ilias-pgsql", "type {} is not supported bind", type_index);
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Unexpected(SqlError::Code::UnsupportBindType);
 }
 
 auto PostgresStatement::bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
@@ -1000,157 +1001,18 @@ auto PostgresStatement::execute() -> IoTask<size_t> {
 }
 
 auto PostgresStatement::parser(std::string_view sql) -> std::string {
+    auto parsed = sql::detail::rewrite_sql_placeholders(sql, sql::detail::SqlPlaceholderDialect::Postgres,
+                                                        sql::detail::SqlPlaceholderRewriteStyle::PostgresNumbered);
     mNamedParamIndex.clear();
-    std::string ret;
-    ret.reserve(sql.size());
-    int param_counter = 0;
-
-    enum class State {
-        Normal,
-        InString,       // Inside '...', "...", or `...`
-        InLineComment,  // Inside -- comment
-        InBlockComment, // Inside /* ... */
-        InDollarQuote   // Inside $$...$$ or $tag$...$tag$
-    };
-
-    State       state      = State::Normal;
-    char        quote_char = 0;
-    std::string dollar_tag; // For dollar-quoted strings
-
-    for (size_t i = 0; i < sql.size(); ++i) {
-        char c = sql[i];
-
-        switch (state) {
-            case State::Normal:
-                // Check for line comment start (--)
-                if (c == '-' && i + 1 < sql.size() && sql[i + 1] == '-') {
-                    ret += c;
-                    ret += sql[i + 1];
-                    i++;
-                    state = State::InLineComment;
-                    continue;
-                }
-                // Check for block comment start (/*)
-                if (c == '/' && i + 1 < sql.size() && sql[i + 1] == '*') {
-                    ret += c;
-                    ret += sql[i + 1];
-                    i++;
-                    state = State::InBlockComment;
-                    continue;
-                }
-                // Check for dollar-quoted string start ($$ or $tag$)
-                if (c == '$') {
-                    // Look for the closing $ to determine the tag
-                    size_t j = i + 1;
-                    while (j < sql.size() && (std::isalnum(sql[j]) || sql[j] == '_')) {
-                        j++;
-                    }
-                    if (j < sql.size() && sql[j] == '$') {
-                        // Found a dollar quote: $tag$ or $$
-                        dollar_tag = std::string(sql.substr(i, j - i + 1));
-                        ret += dollar_tag;
-                        i     = j;
-                        state = State::InDollarQuote;
-                        continue;
-                    }
-                    // Not a dollar quote, just a regular $ character
-                    ret += c;
-                    continue;
-                }
-                // Check for regular string start
-                if (c == '\'' || c == '"' || c == '`') {
-                    state      = State::InString;
-                    quote_char = c;
-                    ret += c;
-                    continue;
-                }
-                // Check for ? placeholder
-                if (c == '?') {
-                    ret += '$';
-                    ret += std::to_string(++param_counter);
-                    continue;
-                }
-                // Check for :name placeholder (but not :: type cast)
-                if (c == ':') {
-                    // Check for PostgreSQL type cast syntax (::)
-                    if (i + 1 < sql.size() && sql[i + 1] == ':') {
-                        // This is a type cast (::), pass through both colons
-                        ret += c;
-                        ret += sql[i + 1];
-                        i++;
-                        continue;
-                    }
-                    size_t j = i + 1;
-                    if (j < sql.size() && std::isalpha(sql[j])) {
-                        while (j < sql.size() && (std::isalnum(sql[j]) || sql[j] == '_')) {
-                            j++;
-                        }
-                        std::string name(sql.substr(i + 1, j - (i + 1)));
-                        mNamedParamIndex[name] = param_counter;
-                        ret += '$';
-                        ret += std::to_string(++param_counter);
-                        i = j - 1;
-                        continue;
-                    }
-                }
-                ret += c;
-                break;
-
-            case State::InString:
-                ret += c;
-                if (c == quote_char) {
-                    // Check for escaped quote (doubled quote character)
-                    if (i + 1 < sql.size() && sql[i + 1] == quote_char) {
-                        ret += sql[i + 1];
-                        i++;
-                    }
-                    else {
-                        state = State::Normal;
-                    }
-                }
-                break;
-
-            case State::InLineComment:
-                ret += c;
-                // Line comment ends at newline
-                if (c == '\n') {
-                    state = State::Normal;
-                }
-                break;
-
-            case State::InBlockComment:
-                ret += c;
-                // Block comment ends at */
-                if (c == '*' && i + 1 < sql.size() && sql[i + 1] == '/') {
-                    ret += sql[i + 1];
-                    i++;
-                    state = State::Normal;
-                }
-                break;
-
-            case State::InDollarQuote:
-                ret += c;
-                // Check if we're at the end of the dollar-quoted string
-                if (c == '$') {
-                    // Check if this matches our opening tag
-                    size_t tag_len = dollar_tag.size();
-                    if (i + 1 >= tag_len) {
-                        std::string_view potential_end = sql.substr(i - tag_len + 1, tag_len);
-                        if (potential_end == dollar_tag) {
-                            state = State::Normal;
-                            dollar_tag.clear();
-                        }
-                    }
-                }
-                break;
-        }
+    for (const auto &[name, index] : parsed.named_param_indices) {
+        mNamedParamIndex[name] = static_cast<int>(index);
     }
 
     // 初始化参数缓冲区
     mParamValuesPtrs.clear();
-    mParamValuesPtrs.resize(param_counter);
+    mParamValuesPtrs.resize(parsed.parameter_count);
 
-    return ret;
+    return parsed.sql;
 }
 
 void PostgresStatement::clearBinds() {

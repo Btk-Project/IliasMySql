@@ -65,7 +65,8 @@ auto MySqlResultBase::stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bu
         case MYSQL_TYPE_LONGLONG: // long long
             return SqlCellView {mContext, buffer, (int)bufferSize, std::type_index(typeid(int64_t)), -1};
         default:
-            return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), static_cast<uint32_t>(field->type), -1};
+            return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize),
+                                static_cast<uint32_t>(field->type), -1};
     }
 }
 
@@ -73,7 +74,7 @@ auto MySqlResultBase::toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSiz
     if (buffer == nullptr) {
         return SqlCellView {mContext, &g_sql_null, sizeof(g_sql_null), std::type_index(typeid(g_sql_null)), -1};
     }
-    return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize),  static_cast<uint32_t>(field->type), -1};
+    return SqlCellView {mContext, std::string_view((char *)buffer, bufferSize), static_cast<uint32_t>(field->type), -1};
 }
 
 SqlQueryResult::SqlQueryResult(SqlQueryResult &&other) : MySqlResultBase(other.mMysql->valueConverterContext()) {
@@ -117,12 +118,9 @@ auto SqlQueryResult::nativeResult() -> MYSQL_RES * {
 }
 
 auto SqlQueryResult::getResult() -> IoTask<void> {
-    auto ret = co_await (mMysql->storeResult() | unstoppable());
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRY(auto ret, co_await (mMysql->storeResult() | unstoppable()));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
-        ret.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
+        ret, [](MYSQL_RES *res) { mysql_free_result(res); });
     ILIAS_TRACE("ilias-mysql", "Get {} rows", countRows());
     co_return {};
 }
@@ -309,12 +307,9 @@ auto SqlStmtResult::nativeResult() -> MYSQL_RES * {
 }
 
 auto SqlStmtResult::getResult() -> IoTask<void> {
-    auto ret = co_await (storeResult() | unstoppable());
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRY(auto ret, co_await (storeResult() | unstoppable()));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
-        ret.value(), [](MYSQL_RES *res) { mysql_free_result(res); });
+        ret, [](MYSQL_RES *res) { mysql_free_result(res); });
     co_return {};
 }
 

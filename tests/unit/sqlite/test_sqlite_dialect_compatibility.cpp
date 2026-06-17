@@ -265,15 +265,17 @@ TEST_F(SQLiteDialectCompatibilityTest, IndexStatementGeneration) {
     auto indexStatements = Dialect<SqliteTag>::generate_index_statements("users", columns);
     
     // Should only generate index for the 'name' column
+    for (const auto& statement : indexStatements) {
+        ILIAS_INFO("sqlite-test", "Index statement: {}", statement);
+    }
     EXPECT_EQ(indexStatements.size(), 1);
     EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "CREATE INDEX"));
-    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "idx_users_name"));
-    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "ON users"));
-    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "(name)"));
+    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "\"idx_users_name\""));
+    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "ON \"users\""));
+    EXPECT_TRUE(containsIgnoreCase(indexStatements[0], "(\"name\")"));
     
     // SQLite doesn't use backticks or quotes for simple identifiers
     EXPECT_FALSE(containsIgnoreCase(indexStatements[0], "`"));
-    EXPECT_FALSE(containsIgnoreCase(indexStatements[0], "\""));
 }
 
 // Test SQLite syntax validation edge cases

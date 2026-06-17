@@ -123,13 +123,17 @@ bool SqlCondition::empty() const {
     return mSql.empty();
 }
 
-SqlVariable::SqlVariable(std::string_view name) : mName(name) {
+SqlVariable::SqlVariable(std::string_view name) : mSql(name), mBindName(name) {
+}
+
+SqlVariable::SqlVariable(std::string sql, std::string bindName) : mSql(std::move(sql)), mBindName(std::move(bindName)) {
 }
 
 // ================= SelectBuilder =================
 
-SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols)
-    : mDb(db), mTableName(std::move(tableName)) {
+SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols,
+                             IdentifierQuoter quoteIdentifier)
+    : mDb(db), mTableName(std::move(tableName)), mQuoteIdentifier(quoteIdentifier) {
     if (cols.empty())
         mSelectColumns = "*";
     else
@@ -141,8 +145,11 @@ SelectBuilder &SelectBuilder::where(const SqlCondition &cond) {
     return *this;
 }
 
-SelectBuilder &SelectBuilder::orderBy(const std::string &column, bool desc) {
-    mOrderBy = " ORDER BY " + column + (desc ? " DESC" : " ASC");
+SelectBuilder &SelectBuilder::orderBy(std::string_view column, bool desc) {
+    if (!mQuoteIdentifier) {
+        throw std::invalid_argument("SelectBuilder has no SQL identifier quoter");
+    }
+    mOrderBy = " ORDER BY " + mQuoteIdentifier(column) + (desc ? " DESC" : " ASC");
     return *this;
 }
 

@@ -3,7 +3,14 @@
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "ilias/sql_orm/detail/orm_condition.hpp"
+#include <algorithm>
+#include <cctype>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <nekoproto/serialization/reflection.hpp>
 
 ILIAS_SQL_NS_BEGIN
@@ -101,10 +108,19 @@ class ILIAS_SQL_API SelectBuilder {
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
 public:
-    SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols = {});
+    using IdentifierQuoter = std::string (*)(std::string_view);
+
+    SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols = {},
+                  IdentifierQuoter quoteIdentifier = nullptr);
 
     SelectBuilder &where(const SqlCondition &cond);
-    SelectBuilder &orderBy(const std::string &column, bool desc = false);
+    SelectBuilder &orderBy(std::string_view column, bool desc = false);
+    template <typename Column>
+        requires HasSqlMethod<Column>
+    SelectBuilder &orderBy(const Column &column, bool desc = false) {
+        mOrderBy = " ORDER BY " + column.sql() + (desc ? " DESC" : " ASC");
+        return *this;
+    }
     SelectBuilder &limit(int limit);
     SelectBuilder &offset(int offset);
 
@@ -125,6 +141,7 @@ protected:
     std::string  mOrderBy;
     std::string  mLimit;
     std::string  mOffset;
+    IdentifierQuoter mQuoteIdentifier = nullptr;
 };
 
 // ================== ProjectedSelectBuilder ==================
@@ -138,23 +155,32 @@ class ProjectedSelectBuilder : public SelectBuilder {
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
 public:
-    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols)
-        : SelectBuilder(db, std::move(tableName), cols) {}
+    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols,
+                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
+        : SelectBuilder(db, std::move(tableName), cols, quoteIdentifier) {}
 
     // 专门用于 select * 的构造函数
-    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName)
+    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName,
+                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
         requires(sizeof...(ResultTypes) == 1)
-        : SelectBuilder(db, std::move(tableName), {"*"}) {}
+        : SelectBuilder(db, std::move(tableName), {"*"}, quoteIdentifier) {}
 
     // 专门用于 join 的构造
-    ProjectedSelectBuilder(SqlDatabase &db, std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders)
-        : SelectBuilder(db, ""), mBaseSql(std::move(sql)), mBinders(std::move(binders)) {}
+    ProjectedSelectBuilder(SqlDatabase &db, std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders,
+                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
+        : SelectBuilder(db, "", {}, quoteIdentifier), mBaseSql(std::move(sql)), mBinders(std::move(binders)) {}
 
     ProjectedSelectBuilder &where(const SqlCondition &cond) {
         SelectBuilder::where(cond);
         return *this;
     }
-    ProjectedSelectBuilder &orderBy(const std::string &column, bool desc = false) {
+    ProjectedSelectBuilder &orderBy(std::string_view column, bool desc = false) {
+        SelectBuilder::orderBy(column, desc);
+        return *this;
+    }
+    template <typename Column>
+        requires HasSqlMethod<Column>
+    ProjectedSelectBuilder &orderBy(const Column &column, bool desc = false) {
         SelectBuilder::orderBy(column, desc);
         return *this;
     }
@@ -168,15 +194,10 @@ public:
     }
 
     IoTask<SqlResult<ResultType>> query() {
-        auto stmtRet = co_await prepare();
-        if (!stmtRet)
-            co_return Unexpected(stmtRet.error());
-        auto stmt = std::move(stmtRet.value());
+        ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
-        auto ret = co_await stmt->query();
-        if (!ret)
-            co_return Unexpected(ret.error());
-        SqlResult<ResultType> res = std::move(ret.value());
+        ILIAS_CO_TRY(auto ret, co_await stmt->query());
+        SqlResult<ResultType> res = std::move(ret);
         storage(res);
         co_return res;
     }
@@ -304,7 +325,9 @@ public:
         // **建议**: 在 cpp 实现中给 SqlCondition 加个 getter，或者 make friend
         // 临时方案：ProjectedSelectBuilder 在 query 时自行处理 binders，或者这里我们无法完美复现原代码的 "binders
         // extraction" 鉴于原代码逻辑：
-        return ProjectedSelectBuilder<ColTypes...>(mainForm.db(), sql, allBinders);
+        using MainForm = std::remove_reference_t<decltype(mainForm)>;
+        return ProjectedSelectBuilder<ColTypes...>(mainForm.db(), sql, allBinders,
+                                                   &MainForm::BackendDialect::quote_identifier_path);
     }
 
     template <typename NextTable, typename Tag = void>
@@ -323,15 +346,10 @@ public:
     }
 
     IoTask<SqlResult<ResultType>> query() const {
-        auto stmtRet = co_await prepare();
-        if (!stmtRet)
-            co_return Unexpected(stmtRet.error());
-        auto stmt = std::move(stmtRet.value());
+        ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
-        auto queryRet = co_await stmt->query();
-        if (!queryRet)
-            co_return Unexpected(queryRet.error());
-        SqlResult<ResultType> res = std::move(queryRet.value());
+        ILIAS_CO_TRY(auto queryRet, co_await stmt->query());
+        SqlResult<ResultType> res = std::move(queryRet);
         storage(res);
         co_return res;
     }
@@ -342,11 +360,30 @@ public:
 
 private:
     IoTask<SqlStatement<void>> prepare() const {
+        std::set<std::string> relationAliases;
+        bool                  duplicateRelation = false;
+        std::string           duplicateAlias;
+        std::apply(
+            [&](auto &...forms) {
+                (..., [&](auto &form) {
+                    std::string alias = form.getAlias();
+                    if (!relationAliases.emplace(alias).second) {
+                        duplicateRelation = true;
+                        duplicateAlias    = std::move(alias);
+                    }
+                }(forms));
+            },
+            mForms);
+        if (duplicateRelation) {
+            ILIAS_ERROR("ilias-sql", "Duplicate ORM relation alias in join: {}", duplicateAlias);
+            co_return Unexpected(SqlError::Code::InvalidParameter);
+        }
+
         std::vector<std::string> selectCols;
         std::apply(
             [&](auto &...forms) {
                 (..., [&](auto &form) {
-                    for (const auto &col : form.getColumnNames()) {
+                    for (const auto &col : form.getQuotedColumnNames()) {
                         selectCols.push_back(form.getAlias() + "." + col);
                     }
                 }(forms));
@@ -425,15 +462,10 @@ public:
     }
 
     IoTask<size_t> execute() {
-        auto stmtRet = co_await prepare();
-        if (!stmtRet)
-            co_return Unexpected(stmtRet.error());
-        auto stmt = std::move(stmtRet.value());
+        ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
-        auto execRet = co_await stmt->execute();
-        if (!execRet)
-            co_return Unexpected(execRet.error());
-        co_return execRet.value();
+        ILIAS_CO_TRY(auto execRet, co_await stmt->execute());
+        co_return execRet;
     }
 
     auto loop(int count) -> IoGenerator<size_t> { return executeLoopWrap(std::move(*this), count); }
@@ -481,15 +513,10 @@ public:
         if (mSetSqls.empty()) {
             co_return 0;
         }
-        auto stmtRet = co_await prepare();
-        if (!stmtRet)
-            co_return Unexpected(stmtRet.error());
-        auto stmt = std::move(stmtRet.value());
+        ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
-        auto execRet = co_await stmt->execute();
-        if (!execRet)
-            co_return Unexpected(execRet.error());
-        co_return execRet.value();
+        ILIAS_CO_TRY(auto execRet, co_await stmt->execute());
+        co_return execRet;
     }
 
     auto loop(int count) -> IoGenerator<size_t> { return executeLoopWrap(std::move(*this), count); }
@@ -555,10 +582,7 @@ public:
 
     // 基础查询
     IoTask<size_t> execute() {
-        auto stmtRet = co_await prepare();
-        if (!stmtRet)
-            co_return Unexpected(stmtRet.error());
-        auto stmt = std::move(stmtRet.value());
+        ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
         co_return co_await stmt->execute();
     }
@@ -577,15 +601,19 @@ private:
         }
     }
     void addAssignment(const SqlAssignment &assign) {
-        // assign 里面的sql存放 name = ? 或 name = :name, 提取name 构造NamedBinder
+        // assign 里面的 sql 形如 `"col" = :col`，绑定名来自右侧命名占位符。
         auto assign_pos = assign.sql.find('=');
         if (assign_pos == std::string::npos) {
             throw std::runtime_error("Invalid assignment: " + assign.sql);
         }
-        std::string name = assign.sql.substr(0, assign_pos);
-        name.erase(std::remove(name.begin(), name.end(), ' '), name.end());
         std::string value = assign.sql.substr(assign_pos + 1);
-        value.erase(std::remove(value.begin(), value.end(), ' '), value.end());
+        auto        is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+        value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), is_space));
+        value.erase(std::find_if_not(value.rbegin(), value.rend(), is_space).base(), value.end());
+        if (value.size() < 2 || value.front() != ':') {
+            throw std::runtime_error("Invalid assignment placeholder: " + assign.sql);
+        }
+        std::string name = value.substr(1);
         if (assign.binders.size() != 1) {
             throw std::runtime_error("Invalid assignment: value: " + value + " with: " + name);
         }

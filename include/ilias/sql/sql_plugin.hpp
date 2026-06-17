@@ -23,10 +23,13 @@ struct ConnectOptions_C {
     int          extra_count;
 };
 
-typedef struct IConnection *IConnectionPtr;
+typedef void *IConnectionPtr;
 
 // 工厂函数，用于创建IConnection实例
 ILIAS_SQL_PLUGIN IConnectionPtr ilias_sql_plugin_create_driver(const ConnectOptions_C *options);
+
+// 销毁由插件创建的IConnection实例
+ILIAS_SQL_PLUGIN void ilias_sql_plugin_destroy_driver(IConnectionPtr connection);
 
 // 获取插件名字的函数
 ILIAS_SQL_PLUGIN const char *ilias_sql_plugin_get_plugin_name();
@@ -38,23 +41,29 @@ ILIAS_SQL_PLUGIN int ilias_sql_plugin_get_plugin_api_version();
 #define ILIAS_SQL_REGISTER_PLUGIN(name)                                                                                \
     ILIAS_SQL_COMPLETE_NAMESPACE::IConnection *create_connection_##name(                                               \
         const ILIAS_SQL_COMPLETE_NAMESPACE::ConnectOptions &options);                                                  \
-    IConnectionPtr ilias_sql_plugin_create_driver(const ConnectOptions_C *options) {                                   \
+    ILIAS_SQL_PLUGIN IConnectionPtr ilias_sql_plugin_create_driver(const ConnectOptions_C *options) {                  \
+        if (!options) {                                                                                                \
+            return nullptr;                                                                                            \
+        }                                                                                                              \
         ILIAS_SQL_COMPLETE_NAMESPACE::ConnectOptions opts;                                                             \
-        opts.host     = options->host;                                                                                 \
+        opts.host     = options->host ? options->host : "";                                                            \
         opts.port     = options->port;                                                                                 \
-        opts.user     = options->user;                                                                                 \
-        opts.password = options->password;                                                                             \
-        opts.database = options->database;                                                                             \
-        opts.filename = options->filename;                                                                             \
-        for (int i = 0; i < options->extra_count; ++i) {                                                               \
+        opts.user     = options->user ? options->user : "";                                                            \
+        opts.password = options->password ? options->password : "";                                                    \
+        opts.database = options->database ? options->database : "";                                                    \
+        opts.filename = options->filename ? options->filename : "";                                                    \
+        for (int i = 0; options->extra_keys && options->extra_values && i < options->extra_count; ++i) {               \
             opts.extra.insert(std::make_pair(options->extra_keys[i], options->extra_values[i]));                       \
         }                                                                                                              \
         return reinterpret_cast<IConnectionPtr>(create_connection_##name(opts));                                       \
     }                                                                                                                  \
-    const char *ilias_sql_plugin_get_plugin_name() {                                                                   \
+    ILIAS_SQL_PLUGIN void ilias_sql_plugin_destroy_driver(IConnectionPtr connection) {                                  \
+        delete reinterpret_cast<ILIAS_SQL_COMPLETE_NAMESPACE::IConnection *>(connection);                               \
+    }                                                                                                                  \
+    ILIAS_SQL_PLUGIN const char *ilias_sql_plugin_get_plugin_name() {                                                   \
         return #name;                                                                                                  \
     }                                                                                                                  \
-    int ilias_sql_plugin_get_plugin_api_version() {                                                                    \
+    ILIAS_SQL_PLUGIN int ilias_sql_plugin_get_plugin_api_version() {                                                    \
         return ILIAS_SQL_API_VERSION;                                                                                  \
     }                                                                                                                  \
     ILIAS_SQL_COMPLETE_NAMESPACE::IConnection *create_connection_##name(                                               \

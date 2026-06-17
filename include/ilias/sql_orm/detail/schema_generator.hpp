@@ -90,16 +90,7 @@ public:
         std::ostringstream sql;
         sql << "CREATE TABLE ";
 
-        // Add table name with appropriate quoting for the dialect
-        if constexpr (std::is_same_v<BackendTag, MysqlTag>) {
-            sql << "`" << tableName << "`";
-        }
-        else if constexpr (std::is_same_v<BackendTag, PostgresTag>) {
-            sql << "\"" << tableName << "\"";
-        }
-        else {
-            sql << tableName; // SQLite doesn't require quoting
-        }
+        sql << Dialect<BackendTag>::quote_identifier(tableName);
 
         sql << " (\n";
 

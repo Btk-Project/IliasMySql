@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
+#include "ilias/sql/detail/placeholder_parser.hpp"
 
 #include <string_view>
 #include <array>
@@ -17,43 +18,7 @@ ILIAS_SQL_NS_BEGIN
  * @brief 编译期计算SQL中的参数数量（支持 :name 和 ?）
  */
 constexpr size_t count_sql_params(std::string_view sql) {
-    size_t count = 0;
-    for (size_t i = 0; i < sql.size(); ++i) {
-        // 处理 ? 占位符
-        if (sql[i] == '?') {
-            count++;
-            continue;
-        }
-        
-        // 处理 :name 占位符
-        if (sql[i] == ':') {
-            if (i + 1 >= sql.size()) {
-                break;
-            }
-            // 处理双冒号转义 :: (PostgreSQL type cast etc.)
-            if (sql[i + 1] == ':') {
-                i++;
-                continue;
-            }
-
-            char next = sql[i + 1];
-            // 检查是否为合法的标识符开始
-            if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '_') {
-                count++;
-                // 跳过标识符剩余部分
-                while (i + 1 < sql.size()) {
-                    char c = sql[i + 1];
-                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-                        i++;
-                    }
-                    else {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    return count;
+    return detail::count_sql_placeholders(sql);
 }
 
 /**
@@ -63,49 +28,7 @@ constexpr size_t count_sql_params(std::string_view sql) {
  */
 template <size_t N>
 consteval auto get_sql_param_names(std::string_view sql) -> std::array<std::string_view, N> {
-    std::array<std::string_view, N> names {};
-    size_t                          current_index = 0;
-    for (size_t i = 0; i < sql.size(); ++i) {
-        // 处理 ? 占位符
-        if (sql[i] == '?') {
-            if (current_index < N) {
-                // 将 "?" 作为一个特殊的名称存入
-                names[current_index++] = sql.substr(i, 1);
-            }
-            continue;
-        }
-
-        // 处理 :name 占位符
-        if (sql[i] == ':') {
-            if (i + 1 >= sql.size()) {
-                break;
-            }
-            if (sql[i + 1] == ':') {
-                i++;
-                continue;
-            }
-
-            char next = sql[i + 1];
-            if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '_') {
-                const size_t start = i + 1;
-                size_t       end   = start;
-                while (end < sql.size()) {
-                    char c = sql[end];
-                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-                        end++;
-                    }
-                    else {
-                        break;
-                    }
-                }
-                if (current_index < N) {
-                    names[current_index++] = sql.substr(start, end - start);
-                }
-                i = end - 1; // 更新外层循环的索引
-            }
-        }
-    }
-    return names;
+    return detail::get_sql_placeholder_names<N>(sql);
 }
 
 struct SQL_Placeholder_Count_Mismatch : public std::runtime_error {

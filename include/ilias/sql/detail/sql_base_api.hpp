@@ -4,6 +4,7 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 #include <string_view>
+#include <ilias/result.hpp>
 
 #include "ilias/sql/interfaces.hpp"
 #include "ilias/sql/driver_registry.hpp"
@@ -28,26 +29,20 @@ public:
     auto prepare_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
         -> IoTask<SqlStatement<std::tuple<Args...>>> {
         Derived *self = static_cast<Derived *>(this);
-        auto     ret  = co_await self->template prepare<Args...>(query.sql); // 调用派生类的prepare
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
+        ILIAS_CO_TRY(auto ret, co_await self->template prepare<Args...>(query.sql)); // 调用派生类的prepare
         if constexpr (sizeof...(Args) > 0) {
-            ret.value().bind(std::forward<Args>(args)...);
+            ILIAS_CO_TRYV(ret.bind(std::forward<Args>(args)...));
         }
-        co_return SqlStatement<std::tuple<Args...>>(std::move(ret.value()));
+        co_return SqlStatement<std::tuple<Args...>>(std::move(ret));
     }
 
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
     auto prepare_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlStatement<std::decay_t<U>>> {
         Derived *self = static_cast<Derived *>(this);
-        auto     ret  = co_await self->template prepare<U>(query.sql); // 调用派生类的prepare
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        ret.value().bind(std::forward<U>(arg));
-        co_return std::move(ret.value());
+        ILIAS_CO_TRY(auto ret, co_await self->template prepare<U>(query.sql)); // 调用派生类的prepare
+        ILIAS_CO_TRYV(ret.bind(std::forward<U>(arg)));
+        co_return ret;
     }
 
     template <typename... Args>
@@ -55,62 +50,35 @@ public:
     auto query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
         -> IoTask<SqlResult<void>> {
         ILIAS_TRACE("ilias-sql", "Executing query {} with args", query.sql);
-        auto ret = co_await this->prepare_with(query, std::forward<Args>(args)...); // 调用本Mixin的prepare_with
-        if (!ret) {
-            ILIAS_TRACE("ilias-sql", "Failed to prepare query {} with args", query.sql);
-            co_return Unexpected(ret.error());
-        }
-        auto ret1 = co_await ret.value().query();
-        if (!ret1) {
-            ILIAS_TRACE("ilias-sql", "Failed to execute query {} with args", query.sql);
-            co_return Unexpected(ret1.error());
-        }
-        co_return std::move(ret1.value());
+        ILIAS_CO_TRY(auto prepare_ret,
+                     co_await this->prepare_with(query, std::forward<Args>(args)...)); // 调用本Mixin的prepare_with
+        ILIAS_CO_TRY(auto query_ret, co_await prepare_ret.query());
+        co_return query_ret;
     }
 
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
     auto query_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlResult<void>> {
-        auto ret = co_await this->prepare_with(query, std::forward<U>(arg)); // 调用本Mixin的prepare_with
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        auto ret1 = co_await ret.value().query();
-        if (!ret1) {
-            co_return Unexpected(ret1.error());
-        }
-        co_return SqlResult<void>(std::move(ret1.value()));
+        ILIAS_CO_TRY(auto ret, co_await this->prepare_with(query, std::forward<U>(arg))); // 调用本Mixin的prepare_with
+        ILIAS_CO_TRY(auto ret1, co_await ret.query());
+        co_return SqlResult<void>(std::move(ret1));
     }
 
     template <typename... Args>
         requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && ...)
     auto execute_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args) -> IoTask<size_t> {
-        auto ret = co_await this->prepare_with(query, std::forward<Args>(args)...); // 调用本Mixin的prepare_with
-        if (!ret) {
-            ILIAS_TRACE("ilias-sql", "Failed to prepare query {}", query.sql);
-            co_return Unexpected(ret.error());
-        }
-        auto ret1 = co_await ret.value().execute();
-        if (!ret1) {
-            ILIAS_TRACE("ilias-sql", "Failed to execute query {}", query.sql);
-            co_return Unexpected(ret1.error());
-        }
-        co_return ret1.value();
+        ILIAS_CO_TRY(auto ret,
+                     co_await this->prepare_with(query, std::forward<Args>(args)...)); // 调用本Mixin的prepare_with
+        ILIAS_CO_TRY(auto ret1, co_await ret.execute());
+        co_return ret1;
     }
 
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
     auto execute_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<size_t> {
-        auto ret = co_await this->prepare_with(query, std::forward<U>(arg)); // 调用本Mixin的prepare_with
-        if (!ret) {
-            ILIAS_TRACE("ilias-sql", "Failed to prepare query {}", query.sql);
-            co_return Unexpected(ret.error());
-        }
-        auto ret1 = co_await ret.value().execute();
-        if (!ret1) {
-            ILIAS_TRACE("ilias-sql", "Failed to execute query {}", query.sql);
-        }
-        co_return ret1.value();
+        ILIAS_CO_TRY(auto ret, co_await this->prepare_with(query, std::forward<U>(arg))); // 调用本Mixin的prepare_with
+        ILIAS_CO_TRY(auto ret1, co_await ret.execute());
+        co_return ret1;
     }
 
     template <typename... Args>
@@ -119,32 +87,20 @@ public:
                  ((!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && !std::is_void_v<Args>) && ... &&
                   !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>))
     auto query(std::string_view query) -> IoTask<SqlResult<std::tuple<Args...>>> {
-        Derived *self     = static_cast<Derived *>(this);
-        auto     conn_ret = self->connection();
-        if (!conn_ret) {
-            co_return Unexpected(conn_ret.error());
-        }
-        auto ret = co_await (*conn_ret)->query(query);
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        co_return SqlResult<std::tuple<Args...>>(std::move(ret.value()));
+        Derived *self = static_cast<Derived *>(this);
+        ILIAS_CO_TRY(auto conn_ret, self->connection());
+        ILIAS_CO_TRY(auto ret, co_await conn_ret->query(query));
+        co_return SqlResult<std::tuple<Args...>>(std::move(ret));
     }
 
     template <typename T = void>
         requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>> ||
                  NEKO_NAMESPACE::detail::is_std_tuple_v<std::decay_t<T>> || std::is_void_v<T>)
     auto query(std::string_view query) -> IoTask<SqlResult<T>> {
-        Derived *self     = static_cast<Derived *>(this);
-        auto     conn_ret = self->connection();
-        if (!conn_ret) {
-            co_return Unexpected(conn_ret.error());
-        }
-        auto ret = co_await (*conn_ret)->query(query);
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        co_return SqlResult<T>(std::move(ret.value()));
+        Derived *self = static_cast<Derived *>(this);
+        ILIAS_CO_TRY(auto conn_ret, self->connection());
+        ILIAS_CO_TRY(auto ret, co_await conn_ret->query(query));
+        co_return SqlResult<T>(std::move(ret));
     }
 
     template <typename... Args>
@@ -153,41 +109,26 @@ public:
                  ((!NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<Args>> && !std::is_void_v<Args>) && ... &&
                   !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>))
     auto prepare(std::string_view query) -> IoTask<SqlStatement<std::tuple<Args...>>> {
-        Derived *self     = static_cast<Derived *>(this);
-        auto     conn_ret = self->connection();
-        if (!conn_ret) {
-            co_return Unexpected(conn_ret.error());
-        }
-        auto ret = co_await (*conn_ret)->prepare(query);
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        co_return SqlStatement<std::tuple<Args...>>(std::move(ret.value()));
+        Derived *self = static_cast<Derived *>(this);
+        ILIAS_CO_TRY(auto conn_ret, self->connection());
+        ILIAS_CO_TRY(auto ret, co_await conn_ret->prepare(query));
+        co_return SqlStatement<std::tuple<Args...>>(std::move(ret));
     }
 
     template <typename T = void>
         requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>> ||
                  NEKO_NAMESPACE::detail::is_std_tuple_v<std::decay_t<T>> || std::is_void_v<T>)
     auto prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
-        Derived *self     = static_cast<Derived *>(this);
-        auto     conn_ret = self->connection();
-        if (!conn_ret) {
-            co_return Unexpected(conn_ret.error());
-        }
-        auto ret = co_await (*conn_ret)->prepare(query);
-        if (!ret) {
-            co_return Unexpected(ret.error());
-        }
-        co_return SqlStatement<T>(std::move(ret.value()));
+        Derived *self = static_cast<Derived *>(this);
+        ILIAS_CO_TRY(auto conn_ret, self->connection());
+        ILIAS_CO_TRY(auto ret, co_await conn_ret->prepare(query));
+        co_return SqlStatement<T>(std::move(ret));
     }
 
     auto execute(std::string_view query) -> IoTask<size_t> {
-        Derived *self     = static_cast<Derived *>(this);
-        auto     conn_ret = self->connection();
-        if (!conn_ret) {
-            co_return Unexpected(conn_ret.error());
-        }
-        co_return co_await (*conn_ret)->execute(query);
+        Derived *self = static_cast<Derived *>(this);
+        ILIAS_CO_TRY(auto conn_ret, self->connection());
+        co_return co_await conn_ret->execute(query);
     }
 
     auto sqlname() -> std::string {

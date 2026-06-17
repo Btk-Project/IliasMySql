@@ -150,8 +150,8 @@ public:
         options.host     = get_env("DB_HOST", "127.0.0.1");
         options.port     = get_env_int("DB_PORT", 3306);
         options.user     = get_env("DB_USER", "root");
-        options.password = get_env("DB_PASS", "root");
-        options.database = get_env("DB_NAME", "test_db");
+        options.password = get_env("DB_PASS", "123456");
+        options.database = get_env("DB_NAME", "test");
         ILIAS_INFO("mysql-test", "Connecting to MySQL: host={}, port={}, user={}, password={}, database={}",
                    options.host, options.port, options.user, options.password, options.database);
 
@@ -247,7 +247,7 @@ public:
 
             // 验证批量插入的数据完整性
             auto verify_batch =
-                co_await users.select().where(users.sql(&SimpleUser::id) > 1).orderBy("id", false).query();
+                co_await users.select().where(users.sql(&SimpleUser::id) > 1).orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_batch);
             auto batch_result = std::move(verify_batch.value());
 
@@ -297,7 +297,7 @@ public:
             PERF_TIMER("read_operations");
 
             // 全表查询 - 验证数据完整性
-            auto query_ret = co_await users.select().orderBy("id", false).query();
+            auto query_ret = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(query_ret);
             auto result = std::move(query_ret.value());
 
@@ -408,7 +408,7 @@ public:
             EXPECT_EQ(delete_ret.value(), 1); // Charlie
 
             // 验证删除后的数据完整性
-            auto after_delete = co_await users.select().orderBy("id", false).query();
+            auto after_delete = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(after_delete);
             auto after_result = std::move(after_delete.value());
 
@@ -480,7 +480,7 @@ public:
             PERF_TIMER("pagination_query");
 
             auto page_ret = co_await users.select()
-                                .orderBy("id", false) // ASC
+                                .orderBy(users.sql(&SimpleUser::id), false) // ASC
                                 .limit(5)
                                 .offset(5)
                                 .query();
@@ -503,7 +503,7 @@ public:
 
             auto sort_ret = co_await users.select()
                                 .where(users.sql(&SimpleUser::is_active) == true)
-                                .orderBy("balance", true) // DESC
+                                .orderBy(users.sql(&SimpleUser::balance), true) // DESC
                                 .limit(3)
                                 .query();
             CO_ASSERT_VAL(sort_ret);
@@ -802,7 +802,7 @@ public:
             co_await users.print(30);
 
             // 验证边界值数据的完整性
-            auto verify_ret = co_await users.select().orderBy("id", false).query();
+            auto verify_ret = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_ret);
             auto verify_result = std::move(verify_ret.value());
 
@@ -999,7 +999,7 @@ public:
             EXPECT_EQ(batch_insert.value(), 100);
 
             // 验证批量插入的完整性
-            auto verify_batch = co_await users.select().orderBy("id", false).query();
+            auto verify_batch = co_await users.select().orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_batch);
             auto batch_result = std::move(verify_batch.value());
 
@@ -1038,7 +1038,7 @@ public:
                 co_await users.select()
                     .where((users.sql(&SimpleUser::is_active) == true) && (users.sql(&SimpleUser::age) >= 30) &&
                            (users.sql(&SimpleUser::age) <= 40) && (users.sql(&SimpleUser::balance) > 3000.0))
-                    .orderBy("balance", true) // 按余额降序
+                    .orderBy(users.sql(&SimpleUser::balance), true) // 按余额降序
                     .query();
             CO_ASSERT_VAL(complex_query);
             auto complex_result = std::move(complex_query.value());
@@ -1072,7 +1072,7 @@ public:
 
             // 验证更新的正确性
             auto verify_update =
-                co_await users.select().where(users.sql(&SimpleUser::is_active) == true).orderBy("id", false).query();
+                co_await users.select().where(users.sql(&SimpleUser::is_active) == true).orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_update);
             auto update_result = std::move(verify_update.value());
 
@@ -1085,7 +1085,7 @@ public:
 
             // 验证非活跃用户的余额没有变化
             auto verify_inactive =
-                co_await users.select().where(users.sql(&SimpleUser::is_active) == false).orderBy("id", false).query();
+                co_await users.select().where(users.sql(&SimpleUser::is_active) == false).orderBy(users.sql(&SimpleUser::id), false).query();
             CO_ASSERT_VAL(verify_inactive);
             auto inactive_result = std::move(verify_inactive.value());
 

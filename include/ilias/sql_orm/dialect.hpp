@@ -2,6 +2,8 @@
 
 #include <type_traits>
 #include <algorithm>
+#include <cctype>
+#include <stdexcept>
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"
@@ -19,6 +21,65 @@ struct PostgresTag {};
 
 template <typename BackendTag>
 struct Dialect;
+
+namespace detail {
+inline auto is_valid_sql_identifier(std::string_view identifier) -> bool {
+    auto is_start = [](unsigned char c) {
+        return std::isalpha(c) != 0 || c == '_';
+    };
+    auto is_body = [&](unsigned char c) {
+        return is_start(c) || std::isdigit(c) != 0;
+    };
+
+    if (identifier.empty() || !is_start(static_cast<unsigned char>(identifier.front()))) {
+        return false;
+    }
+    return std::ranges::all_of(identifier, [&](char c) { return is_body(static_cast<unsigned char>(c)); });
+}
+
+inline auto quote_sql_identifier(std::string_view identifier, char quote) -> std::string {
+    if (!is_valid_sql_identifier(identifier)) {
+        throw std::invalid_argument("Invalid SQL identifier: " + std::string(identifier));
+    }
+    return std::string(1, quote) + std::string(identifier) + std::string(1, quote);
+}
+
+inline auto trim_sql_identifier(std::string_view identifier) -> std::string_view {
+    while (!identifier.empty() && std::isspace(static_cast<unsigned char>(identifier.front())) != 0) {
+        identifier.remove_prefix(1);
+    }
+    while (!identifier.empty() && std::isspace(static_cast<unsigned char>(identifier.back())) != 0) {
+        identifier.remove_suffix(1);
+    }
+    return identifier;
+}
+
+inline auto quote_sql_identifier_path(std::string_view identifier, char quote) -> std::string {
+    identifier = trim_sql_identifier(identifier);
+    if (identifier.empty()) {
+        throw std::invalid_argument("Invalid SQL identifier: " + std::string(identifier));
+    }
+
+    std::string quoted;
+    std::size_t start = 0;
+    while (start <= identifier.size()) {
+        const auto dot  = identifier.find('.', start);
+        const auto part = trim_sql_identifier(identifier.substr(start, dot - start));
+        if (part.empty()) {
+            throw std::invalid_argument("Invalid SQL identifier path: " + std::string(identifier));
+        }
+        if (!quoted.empty()) {
+            quoted.push_back('.');
+        }
+        quoted += quote_sql_identifier(part, quote);
+        if (dot == std::string_view::npos) {
+            break;
+        }
+        start = dot + 1;
+    }
+    return quoted;
+}
+} // namespace detail
 
 struct ColumnSchema {
     std::string name;
@@ -38,6 +99,14 @@ struct ValidationResult {
 template <>
 struct Dialect<SqliteTag> {
     static bool check(std::string_view name) { return name == "sqlite"; }
+    static bool validate_identifier(std::string_view name) { return detail::is_valid_sql_identifier(name); }
+    static std::string quote_identifier(std::string_view name) { return detail::quote_sql_identifier(name, '"'); }
+    static std::string quote_identifier_path(std::string_view name) {
+        return detail::quote_sql_identifier_path(name, '"');
+    }
+    static std::string qualified_identifier(std::string_view table, std::string_view column) {
+        return quote_identifier(table) + "." + quote_identifier(column);
+    }
     // 1. 类型映射
     template <typename T>
     static constexpr std::string type_name([[maybe_unused]] const SqlTags &tags) {
@@ -66,7 +135,7 @@ struct Dialect<SqliteTag> {
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
         std::vector<std::string> parts;
-        parts.push_back(std::string(name));
+        parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
 
         // 约束
@@ -104,8 +173,8 @@ struct Dialect<SqliteTag> {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement =
-                    "CREATE INDEX " + index_name + " ON " + std::string(table_name) + " (" + column_name + ")";
+                std::string statement = "CREATE INDEX " + quote_identifier(index_name) + " ON " +
+                                        quote_identifier(table_name) + " (" + quote_identifier(column_name) + ")";
                 index_statements.push_back(statement);
             }
         }
@@ -118,7 +187,7 @@ struct Dialect<SqliteTag> {
      */
     static std::string get_schema_query(std::string_view table_name) {
         // SQLite使用 PRAGMA table_info
-        return "PRAGMA table_info(" + std::string(table_name) + ");";
+        return "PRAGMA table_info(" + quote_identifier(table_name) + ");";
     }
 
     using SchemaQueryResultType = std::tuple<int, std::string, std::string, int, std::optional<std::string>, int>;
@@ -129,8 +198,11 @@ struct Dialect<SqliteTag> {
     static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
         -> IoTask<std::map<std::string, ColumnSchema>> {
         std::map<std::string, ColumnSchema> schema_map;
-        ilias_for_await(auto &row, rs.range()) {
-            auto [cid, name, type, notnull, dflt_value, pk] = row;
+        ilias_for_await(auto row, rs.rangeResult()) {
+            if (!row) {
+                co_return Unexpected(row.error());
+            }
+            auto [cid, name, type, notnull, dflt_value, pk] = row.value();
             ColumnSchema col;
             col.name             = name;
             col.db_type          = type;
@@ -171,6 +243,14 @@ struct Dialect<MysqlTag> {
         std::string nameLower {name};
         std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
         return nameLower == "mysql" || nameLower == "mariadb";
+    }
+    static bool validate_identifier(std::string_view name) { return detail::is_valid_sql_identifier(name); }
+    static std::string quote_identifier(std::string_view name) { return detail::quote_sql_identifier(name, '`'); }
+    static std::string quote_identifier_path(std::string_view name) {
+        return detail::quote_sql_identifier_path(name, '`');
+    }
+    static std::string qualified_identifier(std::string_view table, std::string_view column) {
+        return quote_identifier(table) + "." + quote_identifier(column);
     }
     // 1. 类型映射
     template <typename T>
@@ -227,7 +307,7 @@ struct Dialect<MysqlTag> {
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
         std::vector<std::string> parts;
 
-        parts.push_back("`" + std::string(name) + "`");
+        parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
 
         if (tags.not_null) {
@@ -274,8 +354,8 @@ struct Dialect<MysqlTag> {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement =
-                    "CREATE INDEX `" + index_name + "` ON `" + std::string(table_name) + "` (`" + column_name + "`)";
+                std::string statement = "CREATE INDEX " + quote_identifier(index_name) + " ON " +
+                                        quote_identifier(table_name) + " (" + quote_identifier(column_name) + ")";
                 index_statements.push_back(statement);
             }
         }
@@ -300,8 +380,11 @@ struct Dialect<MysqlTag> {
     static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
         -> IoTask<std::map<std::string, ColumnSchema>> {
         std::map<std::string, ColumnSchema> schema_map;
-        ilias_for_await(auto &row, rs.range()) {
-            auto [name, type, is_nullable, key_type] = row;
+        ilias_for_await(auto row, rs.rangeResult()) {
+            if (!row) {
+                co_return Unexpected(row.error());
+            }
+            auto [name, type, is_nullable, key_type] = row.value();
             ColumnSchema col;
             col.name             = name;
             col.db_type          = type;
@@ -333,6 +416,14 @@ struct Dialect<PostgresTag> {
         std::string nameLower {name};
         std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
         return nameLower == "postgresql" || nameLower == "postgres" || nameLower == "pgsql";
+    }
+    static bool validate_identifier(std::string_view name) { return detail::is_valid_sql_identifier(name); }
+    static std::string quote_identifier(std::string_view name) { return detail::quote_sql_identifier(name, '"'); }
+    static std::string quote_identifier_path(std::string_view name) {
+        return detail::quote_sql_identifier_path(name, '"');
+    }
+    static std::string qualified_identifier(std::string_view table, std::string_view column) {
+        return quote_identifier(table) + "." + quote_identifier(column);
     }
 
     // 1. 类型映射
@@ -382,7 +473,7 @@ struct Dialect<PostgresTag> {
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
         std::vector<std::string> parts;
 
-        parts.push_back("\"" + std::string(name) + "\"");
+        parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
 
         if (tags.not_null) {
@@ -435,8 +526,8 @@ struct Dialect<PostgresTag> {
             if (tags.index && !tags.primary_key && !tags.unique) {
                 // 只为普通索引生成CREATE INDEX语句，主键和唯一键会自动创建索引
                 std::string index_name = "idx_" + std::string(table_name) + "_" + column_name;
-                std::string statement  = "CREATE INDEX \"" + index_name + "\" ON \"" + std::string(table_name) +
-                                        "\" (\"" + column_name + "\")";
+                std::string statement = "CREATE INDEX " + quote_identifier(index_name) + " ON " +
+                                        quote_identifier(table_name) + " (" + quote_identifier(column_name) + ")";
                 index_statements.push_back(statement);
             }
         }
@@ -479,8 +570,11 @@ struct Dialect<PostgresTag> {
     static auto parse_schema_result(SqlResult<SchemaQueryResultType> rs)
         -> IoTask<std::map<std::string, ColumnSchema>> {
         std::map<std::string, ColumnSchema> schema_map;
-        ilias_for_await(auto &row, rs.range()) {
-            auto [name, type, is_not_null, is_pk] = row;
+        ilias_for_await(auto row, rs.rangeResult()) {
+            if (!row) {
+                co_return Unexpected(row.error());
+            }
+            auto [name, type, is_not_null, is_pk] = row.value();
             ColumnSchema col;
             col.name             = name;
             col.db_type          = type;

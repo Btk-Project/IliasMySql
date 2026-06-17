@@ -5,6 +5,7 @@
 #include "ilias/mysql/mysqlopt.hpp"
 #include "ilias/sql/sql_plugin.hpp"
 #include "ilias/mysql/mysql_parsers.hpp"
+#include "ilias/sql/detail/placeholder_parser.hpp"
 
 ILIAS_MYSQL_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
@@ -47,34 +48,35 @@ auto MySql::pollStatus(int &status, uint32_t pollEvents) -> IoTask<void> {
     ILIAS_TRACE("ilias-mysql", "poll events: {}", events);
     IoResult<unsigned int> ret;
     if (timeOut == 0) {
-        auto ret = co_await mPoller.poll(pollEvents);
+        ret = co_await mPoller.poll(pollEvents);
         if (!ret) {
             ILIAS_ERROR("ilias-mysql", "poll failed, {}", ret.error().message());
             co_return Unexpected(ret.error());
         }
     }
     else {
-        auto ret = co_await (mPoller.poll(pollEvents) | setTimeout(std::chrono::milliseconds(timeOut)));
-        if (!ret) {
+        auto pollRet = co_await (mPoller.poll(pollEvents) | timeout(std::chrono::milliseconds(timeOut)));
+        if (!pollRet) {
             status = MYSQL_WAIT_TIMEOUT;
             co_return Unexpected(IoError::TimedOut);
         }
-        if (!(*ret)) {
-            if ((*ret).error() == IoError::TimedOut) {
+        if (!(*pollRet)) {
+            if ((*pollRet).error() == IoError::TimedOut) {
                 status = MYSQL_WAIT_TIMEOUT;
             }
             ILIAS_ERROR("ilias-mysql", "poll failed, no result in poll.");
-            co_return Unexpected((*ret).error());
+            co_return Unexpected((*pollRet).error());
         }
+        ret = std::move(*pollRet);
     }
     status = 0;
     if (ret.value_or(0) & POLLIN) {
         status |= MYSQL_WAIT_READ;
     }
-    if (ret.value_or(0) | POLLOUT) {
+    if (ret.value_or(0) & POLLOUT) {
         status |= MYSQL_WAIT_WRITE;
     }
-    if (ret.value_or(0) | POLLPRI) {
+    if (ret.value_or(0) & POLLPRI) {
         status |= MYSQL_WAIT_EXCEPT;
     }
     co_return {};
@@ -428,7 +430,8 @@ auto MysqlStatement::bind(std::type_index type_index, size_t index, const SqlCel
         }
         return {};
     }
-    return {};
+    ILIAS_ERROR("ilias-mysql", "Unsupported bind type: {}", type_index);
+    return Unexpected(SqlError::Code::UnsupportBindType);
 }
 
 auto MysqlStatement::bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
@@ -488,10 +491,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
 }
 
 auto MysqlStatement::execute() -> IoTask<size_t> {
-    auto result = co_await query();
-    if (!result) {
-        co_return Unexpected(result.error());
-    }
+    ILIAS_CO_TRYV(co_await query());
     auto rows = mysql_stmt_affected_rows(mMysqlStmt.get());
     co_return rows;
 }
@@ -576,109 +576,19 @@ auto MysqlStatement::dataBind(size_t index) -> MYSQL_BIND * {
 }
 
 auto MysqlStatement::parser(std::string_view sql) -> std::string {
+    auto parsed = sql::detail::rewrite_sql_placeholders(sql, sql::detail::SqlPlaceholderDialect::MySql,
+                                                        sql::detail::SqlPlaceholderRewriteStyle::QuestionMark);
     mIndexs.clear();
-
-    std::string ret;
-    ret.reserve(sql.size());
-    int param_counter = 0;
-
-    bool in_string  = false;
-    char quote_char = 0;
-    for (size_t i = 0; i < sql.size(); ++i) {
-        char c = sql[i];
-
-        // 1. 处理字符串字面量 (例如 'time: 12:00' 或 "name")
-        if (in_string) {
-            ret += c;
-            if (c == quote_char) {
-                // 处理转义字符，如 'It''s' 或 'It\'s' (取决于 SQL 模式，这里做简单处理)
-                if (i + 1 < sql.size() && sql[i + 1] == quote_char) {
-                    ret += sql[i + 1];
-                    i++;
-                }
-                else {
-                    in_string = false;
-                }
-            }
-            continue;
-        }
-
-        // 进入字符串模式
-        if (c == '\'' || c == '"' || c == '`') {
-            in_string  = true;
-            quote_char = c;
-            ret += c;
-            continue;
-        }
-
-        // 2. 处理位置参数 ?
-        if (c == '?') {
-            ret += '?';
-            param_counter++; // 占据一个索引位
-            continue;
-        }
-
-        // 3. 处理命名参数 :name
-        if (c == ':') {
-            // 处理双冒号 :: (通常用于类型转换，如 postgres，虽然这是 mysql 驱动，但在 sql 字符串中最好做兼容)
-            if (i + 1 < sql.size() && sql[i + 1] == ':') {
-                ret += "::";
-                i++;
-                continue;
-            }
-
-            // 检查冒号后面是否有合法的参数名字符
-            size_t j = i + 1;
-            if (j >= sql.size()) {
-                // SQL 以 : 结尾，非法但保留原样
-                ret += c;
-                continue;
-            }
-
-            // 如果冒号后面不是字母、下划线，则视为普通冒号 (例如 12:30)
-            // 你可以根据需求调整这里的判定，比如必须以字母开头
-            if (!std::isalnum(static_cast<unsigned char>(sql[j])) && sql[j] != '_') {
-                ret += c;
-                continue;
-            }
-
-            // 提取参数名
-            while (j < sql.size()) {
-                char next_c = sql[j];
-                // 允许的参数名字符: 字母, 数字, 下划线
-                if (std::isalnum(static_cast<unsigned char>(next_c)) || next_c == '_') {
-                    j++;
-                }
-                else {
-                    break;
-                }
-            }
-
-            std::string_view name_view = sql.substr(i + 1, j - (i + 1));
-            std::string      name(name_view);
-
-            // 记录映射关系：名字 -> 当前的全局索引
-            mIndexs[name] = param_counter;
-
-            // 替换为 ?
-            ret += '?';
-            param_counter++;
-
-            // 移动主循环索引
-            i = j - 1;
-            continue;
-        }
-
-        // 普通字符
-        ret += c;
+    for (const auto &[name, index] : parsed.named_param_indices) {
+        mIndexs[name] = static_cast<int>(index);
     }
 
     // 4. 根据总参数量重新分配 Binds 数组
-    // 这里的 param_counter 包含了所有的 ? 和 :name
-    mBinds.resize(param_counter);
+    // 这里的 parameter_count 包含了所有的 ? 和 :name
+    mBinds.resize(parsed.parameter_count);
 
     // 初始化 MYSQL_BIND 内存
-    if (param_counter > 0) {
+    if (parsed.parameter_count > 0) {
         std::memset(mBinds.data(), 0, sizeof(MYSQL_BIND) * mBinds.size());
         for (int i = 0; i < (int)mBinds.size(); ++i) {
             mBinds[i].buffer_type = MYSQL_TYPE_NULL;
@@ -689,7 +599,7 @@ auto MysqlStatement::parser(std::string_view sql) -> std::string {
         mDataGuards.clear();
     }
 
-    return ret;
+    return parsed.sql;
 }
 
 auto MysqlStatement::clearBinds() -> void {
@@ -728,50 +638,32 @@ auto MysqlConnection::connect() -> IoTask<void> {
             delete option;
         }
     }
-    auto ret =
-        co_await mMysql->connect(mOptions.host, mOptions.user, mOptions.password, mOptions.database, mOptions.port);
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    auto set_time_zone = co_await mMysql->query("SET time_zone = '+00:00'");
-    if (!set_time_zone) {
-        co_return Unexpected(set_time_zone.error());
-    }
+    ILIAS_CO_TRYV(
+        co_await mMysql->connect(mOptions.host, mOptions.user, mOptions.password, mOptions.database, mOptions.port));
+    ILIAS_CO_TRYV(co_await mMysql->query("SET time_zone = '+00:00'"));
     mIsConnected = true;
     co_return {};
 }
 
 auto MysqlConnection::disconnect() -> IoTask<void> {
     mIsConnected = false;
-    auto ret     = co_await mMysql->disconnect();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await mMysql->disconnect());
     co_return {};
 }
 
 auto MysqlConnection::selectDatabase(std::string_view name) -> IoTask<void> {
-    auto ret = co_await mMysql->selectDb(name);
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await mMysql->selectDb(name));
     co_return {};
 }
 
 auto MysqlConnection::prepare(std::string_view sql) -> IoTask<std::unique_ptr<IStatement>> {
     auto stmt = std::make_unique<MysqlStatement>(mMysql);
-    auto ret  = co_await stmt->prepare(sql);
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await stmt->prepare(sql));
     co_return std::move(stmt);
 }
 
 auto MysqlConnection::execute(std::string_view sql) -> IoTask<size_t> {
-    auto retult = co_await query(sql);
-    if (!retult) {
-        co_return Unexpected(retult.error());
-    }
+    ILIAS_CO_TRYV(co_await query(sql));
     auto ret = mysql_affected_rows(mMysql->native());
     co_return (size_t) ret;
 }
@@ -779,47 +671,26 @@ auto MysqlConnection::execute(std::string_view sql) -> IoTask<size_t> {
 auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> {
     ILIAS_ASSERT(mMysql != nullptr);
     // ILIAS_TRACE("ilias-mysql", "exec query {}", sql);
-    auto ret = co_await (mMysql->query(sql) | unstoppable());
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await (mMysql->query(sql) | unstoppable()));
     auto sqlResult = std::make_unique<SqlQueryResult>(mMysql);
     co_return std::make_unique<MysqlResultSet>(std::move(sqlResult));
 }
 
 auto MysqlConnection::beginTransaction() -> IoTask<bool> {
-    auto close_auto_commit = co_await mMysql->autoCommit(false);
-    if (!close_auto_commit) {
-        co_return Unexpected(close_auto_commit.error());
-    }
-    auto ret = co_await mMysql->query("START TRANSACTION");
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    co_return ret.value();
+    ILIAS_CO_TRYV(co_await mMysql->autoCommit(false));
+    ILIAS_CO_TRY(auto ret, co_await mMysql->query("START TRANSACTION"));
+    co_return ret;
 }
 
 auto MysqlConnection::commit() -> IoTask<bool> {
-    auto ret = co_await mMysql->commit();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    auto open_auto_commit = co_await mMysql->autoCommit(true);
-    if (!open_auto_commit) {
-        co_return Unexpected(open_auto_commit.error());
-    }
+    ILIAS_CO_TRY(auto ret, co_await mMysql->commit());
+    ILIAS_CO_TRYV(co_await mMysql->autoCommit(true));
     co_return ret;
 }
 
 auto MysqlConnection::rollback() -> IoTask<bool> {
-    auto ret = co_await mMysql->rollback();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
-    auto open_auto_commit = co_await mMysql->autoCommit(true);
-    if (!open_auto_commit) {
-        co_return Unexpected(open_auto_commit.error());
-    }
+    ILIAS_CO_TRY(auto ret, co_await mMysql->rollback());
+    ILIAS_CO_TRYV(co_await mMysql->autoCommit(true));
     co_return ret;
 }
 
@@ -834,10 +705,7 @@ auto MysqlConnection::lastInsertId() const -> int64_t {
 }
 
 auto MysqlConnection::ping() -> IoTask<bool> {
-    auto ret = co_await mMysql->ping();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await mMysql->ping());
     co_return true;
 }
 

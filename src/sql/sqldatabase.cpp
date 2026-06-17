@@ -41,38 +41,34 @@ auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
         co_return Unexpected(std::make_error_code(std::errc::device_or_resource_busy));
     }
     auto ret = SqlTransaction(*this);
-    auto rc  = co_await ret.begin();
-    if (!rc) {
-        co_return Unexpected(rc.error());
-    }
+    ILIAS_CO_TRYV(co_await ret.begin());
     co_return ret;
 }
 
 SqlTransaction::~SqlTransaction() {
     ILIAS_TRACE("ilias-sql", "SqlTransaction<{}> destroyed", (void *)this);
-    if (mState == State::kBeginned) {
+    if (mOwnsTransaction && mState == State::kBeginned) {
         auto ret = connection();
         if (ret) {
             (*ret)->syncRollback();
         }
     }
-    mDatabase.releaseTransaction();
+    if (mOwnsTransaction) {
+        mDatabase.releaseTransaction();
+    }
 }
 
 auto SqlTransaction::commit() -> IoTask<void> {
     if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
-    auto connect_ret = connection();
-    if (!connect_ret) {
-        co_return Unexpected(connect_ret.error());
-    }
-    auto ret = co_await (*connect_ret)->commit();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRY(auto connect_ret, connection());
+    ILIAS_CO_TRYV(co_await connect_ret->commit());
     mState = State::kCommitted;
-    mDatabase.releaseTransaction();
+    if (mOwnsTransaction) {
+        mDatabase.releaseTransaction();
+        mOwnsTransaction = false;
+    }
     co_return {};
 }
 
@@ -80,16 +76,13 @@ auto SqlTransaction::rollback() -> IoTask<void> {
     if (mState != State::kBeginned) {
         co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
-    auto connect_ret = connection();
-    if (!connect_ret) {
-        co_return Unexpected(connect_ret.error());
-    }
-    auto ret = co_await (*connect_ret)->rollback();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRY(auto connect_ret, connection());
+    ILIAS_CO_TRYV(co_await connect_ret->rollback());
     mState = State::kRolledBack;
-    mDatabase.releaseTransaction();
+    if (mOwnsTransaction) {
+        mDatabase.releaseTransaction();
+        mOwnsTransaction = false;
+    }
     co_return {};
 }
 
@@ -104,11 +97,9 @@ auto SqlTransaction::begin() -> IoTask<void> {
     if (!mConnection) {
         co_return Unexpected(SqlError::Code::NotConnected);
     }
-    auto ret = co_await mConnection->beginTransaction();
-    if (!ret) {
-        co_return Unexpected(ret.error());
-    }
+    ILIAS_CO_TRYV(co_await mConnection->beginTransaction());
     mDatabase.mInTransaction = true; // 锁定数据库
+    mOwnsTransaction         = true;
     mState                   = State::kBeginned;
     co_return {};
 }

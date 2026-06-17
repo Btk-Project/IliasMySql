@@ -121,6 +121,7 @@ public:
     using SqlResult<void>::operator*;
     using SqlResult<void>::load;
     using SqlResult<void>::range;
+    auto rangeResult() -> Generator<IoResult<T>>;
     auto range() -> Generator<T>;
 
     template <typename U>
@@ -129,35 +130,15 @@ public:
 
 template <typename U>
 auto SqlResult<void>::load(int index, U &arg) -> IoResult<void> {
-    auto ret = mImp->getValue(index);
-    if (!ret) {
-        ILIAS_TRACE("ilias-sql", "Failed to load column '{}': {}", index, ret.error().message());
-        return Unexpected(ret.error());
-    }
-    auto ret2 = ret->as<U>();
-    if (!ret2) {
-        ILIAS_TRACE("ilias-sql", "Failed to convert column '{}' with type {}: {}", index,
-                    NEKO_NAMESPACE::detail::class_nameof<U>, ret2.error().message());
-        return Unexpected(ret2.error());
-    }
-    arg = std::move(ret2.value());
+    ILIAS_TRY(auto ret, mImp->getValue(index));
+    ILIAS_TRY(arg, ret.as<U>());
     return {};
 }
 
 template <typename U>
 auto SqlResult<void>::load(std::string_view name, U &arg) -> IoResult<void> {
-    auto ret = mImp->getValue(name);
-    if (!ret) {
-        ILIAS_WARN("ilias-sql", "Failed to load column '{}': {}", name, ret.error().message());
-        return Unexpected(ret.error());
-    }
-    auto ret2 = ret->as<U>();
-    if (!ret2) {
-        ILIAS_WARN("ilias-sql", "Failed to load column '{}' with type {}: {}", name,
-                   NEKO_NAMESPACE::detail::class_nameof<U>, ret2.error().message());
-        return Unexpected(ret2.error());
-    }
-    arg = std::move(ret2.value());
+    ILIAS_TRY(auto ret, mImp->getValue(name));
+    ILIAS_TRY(arg, ret.as<U>());
     return {};
 }
 
@@ -167,6 +148,7 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
+            co_yield Unexpected(rc.error());
             break;
         }
         if (!*rc) {
@@ -187,6 +169,7 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
+            co_yield Unexpected(rc.error());
             break;
         }
         if (!*rc) {
@@ -223,29 +206,43 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
 }
 
 template <typename T>
-auto SqlResult<T>::range() -> Generator<T> {
+auto SqlResult<T>::rangeResult() -> Generator<IoResult<T>> {
     T value;
     if constexpr (NEKO_NAMESPACE::detail::is_std_tuple<T>()) {
         ilias_for_await(auto rc,
                         std::apply([this](auto &...args) { return (SqlResult<void>::range(args...)); }, value)) {
             if (rc) {
-                co_yield value;
+                co_yield std::move(value);
                 value = T {};
             }
             else {
-                ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
+                co_yield Unexpected(rc.error());
+                value = T {};
             }
         }
     }
     else {
         ilias_for_await(auto rc, SqlResult<void>::range(value)) {
             if (rc) {
-                co_yield value;
+                co_yield std::move(value);
                 value = T {};
             }
             else {
-                ILIAS_WARN("ilias-sql", "range faild {}", rc.error().message());
+                co_yield Unexpected(rc.error());
+                value = T {};
             }
+        }
+    }
+}
+
+template <typename T>
+auto SqlResult<T>::range() -> Generator<T> {
+    ilias_for_await(auto rc, rangeResult()) {
+        if (rc) {
+            co_yield std::move(rc.value());
+        }
+        else {
+            ILIAS_WARN("ilias-sql", "range failed {}", rc.error().message());
         }
     }
 }

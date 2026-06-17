@@ -13,4 +13,4 @@ a.out
 include/ilias/sql/global/config.h
 /.kiro
 bin/
-docs/
+docs/html/

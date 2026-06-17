@@ -9,6 +9,9 @@
 #include "ilias/sql_orm/detail/orm_condition.hpp"
 #include "ilias/sql_orm/detail/orm_builder.hpp"
 
+#include <initializer_list>
+#include <string_view>
+
 ILIAS_SQL_NS_BEGIN
 namespace detail {
 template <typename Derived, typename T, typename BackendTag>
@@ -113,6 +116,42 @@ public:
         return updatedAtFields;
     }
 
+    static auto quoteRuntimeColumn(std::string_view column) -> std::string {
+        return Dialect<BackendTag>::quote_identifier_path(column);
+    }
+
+    static auto quoteRuntimeColumns(std::string_view columns) -> std::vector<std::string> {
+        std::vector<std::string> quoted;
+        std::size_t              start = 0;
+        while (start <= columns.size()) {
+            const auto comma = columns.find(',', start);
+            quoted.push_back(quoteRuntimeColumn(columns.substr(start, comma - start)));
+            if (comma == std::string_view::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+        return quoted;
+    }
+
+    static auto quoteRuntimeColumns(std::initializer_list<std::string_view> columns) -> std::vector<std::string> {
+        std::vector<std::string> quoted;
+        quoted.reserve(columns.size());
+        for (auto column : columns) {
+            quoted.push_back(quoteRuntimeColumn(column));
+        }
+        return quoted;
+    }
+
+    static auto quoteRuntimeColumns(const std::vector<std::string> &columns) -> std::vector<std::string> {
+        std::vector<std::string> quoted;
+        quoted.reserve(columns.size());
+        for (const auto &column : columns) {
+            quoted.push_back(quoteRuntimeColumn(column));
+        }
+        return quoted;
+    }
+
     // =========================================================
     // 1. 写入操作 (Insert, Update, Remove)
     // =========================================================
@@ -125,6 +164,7 @@ public:
             co_return 0;
         const auto              &first_item = *std::ranges::begin(items);
         std::vector<std::string> columnsToInsert;
+        std::vector<std::string> quotedColumnsToInsert;
         NEKO_NAMESPACE::Reflect<T>::forEach(
             first_item, [&](const auto &field, std::string_view name, const auto &tags) {
                 // 如果字段是 created_at 并且它的值是空的，则跳过此列
@@ -132,7 +172,8 @@ public:
                     return;
                 }
                 // 否则，将此列加入到 INSERT 语句中
-                columnsToInsert.emplace_back(name); // 假设可以从tags获取列名
+                columnsToInsert.emplace_back(name);
+                quotedColumnsToInsert.emplace_back(Dialect<BackendTag>::quote_identifier(name));
             });
         std::string rowPlaceholder = "(";
         for ([[maybe_unused]] int i = 0; i < (int)columnsToInsert.size(); ++i) {
@@ -142,8 +183,9 @@ public:
         }
         rowPlaceholder += ")";
         std::vector<std::string> allRowsPlaceholder(std::size(items), rowPlaceholder);
-        std::string sql = "INSERT INTO " + derived().getTableName() + " (" + detail::join_strs(columnsToInsert, ", ") +
-                          ") VALUES " + detail::join_strs(allRowsPlaceholder, ", ");
+        std::string sql = "INSERT INTO " + derived().tableRef() + " (" +
+                          detail::join_strs(quotedColumnsToInsert, ", ") + ") VALUES " +
+                          detail::join_strs(allRowsPlaceholder, ", ");
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
             co_return Unexpected(ret.error());
@@ -186,32 +228,35 @@ public:
     }
     auto insert() {
         if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
-            return detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
+            return detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
         }
         else {
             auto insertBuilder =
-                detail::InsertBuilder<T>(derived().db(), derived().getTableName(), derived().getColumnNames());
+                detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
             T obj;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
                 if (tags.created_at) {
                     detail::TimestampUpdater {.created_at = true}(field, tags);
-                    insertBuilder.set(detail::SqlVariable(name) = std::move(field));
+                    insertBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(name),
+                                                          std::string(name)) = std::move(field));
                 }
             });
+            return insertBuilder;
         }
     }
     // Update Builder
     auto update() {
         if constexpr (Dialect<BackendTag>::support_timestamp_update()) {
-            return detail::UpdateBuilder(derived().db(), derived().getTableName());
+            return detail::UpdateBuilder(derived().db(), derived().tableRef());
         }
         else {
-            auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().getTableName());
+            auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().tableRef());
             T    obj;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
                 if (tags.updated_at) {
                     detail::TimestampUpdater {.updated_at = true}(field, tags);
-                    updateBuilder.set(detail::SqlVariable(name) = std::move(field));
+                    updateBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(name),
+                                                          std::string(name)) = std::move(field));
                     return;
                 }
             });
@@ -219,7 +264,7 @@ public:
         }
     }
     // Remove Builder
-    auto remove() { return detail::DeleteBuilder(derived().db(), derived().getTableName()); }
+    auto remove() { return detail::DeleteBuilder(derived().db(), derived().tableRef()); }
 
     // =========================================================
     // 2. 查询操作 (Select, Count)
@@ -229,37 +274,55 @@ public:
     template <typename... Us, template <typename U> typename... Ts>
         requires(detail::HasSqlMethod<Ts<Us>> && ...)
     auto select(Ts<Us>... args) const {
-        return detail::ProjectedSelectBuilder<Us...>(derived().db(), derived().tableRef(), {args.sql()...});
+        return detail::ProjectedSelectBuilder<Us...>(derived().db(), derived().tableRef(), {args.sql()...},
+                                                     &Dialect<BackendTag>::quote_identifier_path);
     }
 
     template <typename... Ts>
         requires(detail::HasSqlMethod<Ts> && ...)
     auto select(Ts... args) const {
-        return detail::ProjectedSelectBuilder<>(derived().db(), derived().tableRef(), {args.sql()...});
+        return detail::ProjectedSelectBuilder<>(derived().db(), derived().tableRef(), {args.sql()...},
+                                                &Dialect<BackendTag>::quote_identifier_path);
+    }
+
+    auto select(std::string_view columns) const {
+        return detail::SelectBuilder(derived().db(), derived().tableRef(), quoteRuntimeColumns(columns),
+                                     &Dialect<BackendTag>::quote_identifier_path);
+    }
+
+    auto select(std::initializer_list<std::string_view> columns) const {
+        return detail::SelectBuilder(derived().db(), derived().tableRef(), quoteRuntimeColumns(columns),
+                                     &Dialect<BackendTag>::quote_identifier_path);
+    }
+
+    auto select(const std::vector<std::string> &columns) const {
+        return detail::SelectBuilder(derived().db(), derived().tableRef(), quoteRuntimeColumns(columns),
+                                     &Dialect<BackendTag>::quote_identifier_path);
     }
 
     auto select() const {
-        auto builder = detail::ProjectedSelectBuilder<T>(derived().db(), derived().tableRef());
-        return builder;
-    }
-
-    auto select(const std::string &columns) const {
-        auto builder = detail::SelectBuilder(derived().db(), derived().tableRef(), {columns});
+        auto builder =
+            detail::ProjectedSelectBuilder<T>(derived().db(), derived().tableRef(),
+                                              &Dialect<BackendTag>::quote_identifier_path);
         return builder;
     }
 
     auto count() const {
-        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(), {"COUNT(*)"});
+        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(), {"COUNT(*)"},
+                                                   &Dialect<BackendTag>::quote_identifier_path);
     }
 
-    auto count(const std::string &column) const {
-        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(), {"COUNT(" + column + ")"});
+    auto count(std::string_view column) const {
+        return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(),
+                                                   {"COUNT(" + quoteRuntimeColumn(column) + ")"},
+                                                   &Dialect<BackendTag>::quote_identifier_path);
     }
 
     template <typename U>
     auto count(detail::TypedColumn<U> column) const {
         return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(),
-                                                   {"COUNT(" + column.sql() + ")"});
+                                                   {"COUNT(" + column.sql() + ")"},
+                                                   &Dialect<BackendTag>::quote_identifier_path);
     }
 
     // =========================================================
@@ -303,7 +366,7 @@ public:
         auto index = getColumnIndex(memberPtr);
         if (index == -1)
             return Unexpected(std::make_error_code(std::errc::invalid_argument));
-        return derived().getColumnNames().at(index);
+        return derived().getColumnTags().at(index);
     }
 
     // =========================================================
@@ -312,12 +375,16 @@ public:
 
     template <typename M>
     auto col(M T::*memberPtr) const {
-        return detail::TypedColumn<std::decay_t<M>>(derived().getAlias() + "." + getColumnName(memberPtr).value());
+        auto name = getColumnName(memberPtr).value();
+        return detail::TypedColumn<std::decay_t<M>>(derived().getAlias() + "." +
+                                                        Dialect<BackendTag>::quote_identifier(name),
+                                                    name);
     }
 
     template <typename M>
     auto sql(M T::*memberPtr) const {
-        return detail::TypedColumn<std::decay_t<M>>(getColumnName(memberPtr).value());
+        auto name = getColumnName(memberPtr).value();
+        return detail::TypedColumn<std::decay_t<M>>(Dialect<BackendTag>::quote_identifier(name), name);
     }
 
     auto print(std::ostream &stream = std::cout) -> Task<void> {
@@ -332,7 +399,12 @@ public:
         }
         detail::ConsoleTable table(derived().tableRef(), derived().getColumnNames(), maxColumnWidth);
         SqlResult<T>         res = std::move(ret.value());
-        ilias_for_await([[maybe_unused]] auto obj, res.range()) {
+        ilias_for_await(auto row, res.rangeResult()) {
+            if (!row) {
+                ILIAS_ERROR("ilias-sql", "Print failed while loading row: {}", row.error().message());
+                break;
+            }
+            auto obj = std::move(row.value());
             std::vector<std::string> rowStrings;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field) {
                 using FieldType = std::decay_t<decltype(field)>;

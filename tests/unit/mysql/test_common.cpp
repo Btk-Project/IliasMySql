@@ -411,7 +411,7 @@ public:
 
         // 此时在同一个事务连接中，理论上是可以查到这条数据的（取决于隔离级别）
         // 但我们要验证的是回滚后的最终一致性
-        auto query_ret = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 8888");
+        auto query_ret = co_await tx.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 8888");
         CO_ASSERT_VAL(query_ret);
 
         int count = -1;
@@ -452,7 +452,7 @@ public:
             co_await tx.execute("INSERT INTO common_simple_users (id, name, score) VALUES (7777, 'RAII_Test', 0)");
             // 注意：这里故意不调用 tx.commit()，直接离开作用域
 
-            auto query_ret = co_await db.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 7777");
+            auto query_ret = co_await tx.query<int>("SELECT count(*) FROM common_simple_users WHERE id = 7777");
             CO_ASSERT_VAL(query_ret);
 
             int count = -1;
@@ -506,7 +506,8 @@ public:
         }
 
         {
-            auto ret = co_await users.count().where("id"_sql < 5 || "id"_sql >= 95).query();
+            auto ret =
+                co_await users.count().where(users.sql(&SimpleUser::id) < 5 || users.sql(&SimpleUser::id) >= 95).query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -533,7 +534,9 @@ public:
         }
 
         {
-            auto ret = co_await users.select("id").where("name"_sql == "User50").query();
+            auto ret = co_await users.select(users.sql(&SimpleUser::id))
+                           .where(users.sql(&SimpleUser::name) == "User50")
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -546,7 +549,7 @@ public:
 
         {
             auto ret = co_await users.select(users.sql(&SimpleUser::id), users.sql(&SimpleUser::score))
-                           .orderBy("score", true) // true for DESC
+                           .orderBy(users.sql(&SimpleUser::score), true) // true for DESC
                            .offset(1)
                            .limit(2)
                            .query();
@@ -580,7 +583,9 @@ public:
             EXPECT_EQ(update_ret.value(), 1); // 影响行数应为 1
 
             // 验证修改
-            auto ret = co_await users.select("score, name").where(users.sql(&SimpleUser::id) == 10).query();
+            auto ret = co_await users.select(users.sql(&SimpleUser::score), users.sql(&SimpleUser::name))
+                           .where(users.sql(&SimpleUser::id) == 10)
+                           .query();
             auto res = std::move(ret.value());
 
             int         score = 0;
