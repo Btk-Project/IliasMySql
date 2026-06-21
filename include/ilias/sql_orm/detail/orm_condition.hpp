@@ -5,7 +5,7 @@
 #include <memory>
 #include <string_view>
 #include "ilias/sql/sqlstatement.hpp"
-#include <nekoproto/serialization/types/struct_unwrap.hpp>
+#include <nekoproto/serialization/parsing/reflection.hpp>
 #include "ilias/sql_orm/detail/orm_types.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"
 

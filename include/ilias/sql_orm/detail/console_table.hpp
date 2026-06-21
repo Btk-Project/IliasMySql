@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include <nekoproto/serialization/to_string.hpp>
-#include <nekoproto/serialization/types/types.hpp>
+#include <nekoproto/serialization/parsing/parsers.hpp>
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/types.hpp"

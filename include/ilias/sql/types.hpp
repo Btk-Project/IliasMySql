@@ -428,12 +428,15 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::type_index) {
 };
 
 #if NEKO_CPP_PLUS < 23
-ILIAS_FORMATTER_T_RAW(,std::span<const char>) {
+namespace ilias {
+    using std::span;
+}
+ILIAS_FORMATTER(span<const char>) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
     template <typename Context> 
-    auto format(std::span<const char> value, Context &ctx) const {
+    auto format(span<const char> value, Context &ctx) const {
         return format_to(ctx.out(), "{}", std::string_view{value.data(), value.size()});
     }
 };

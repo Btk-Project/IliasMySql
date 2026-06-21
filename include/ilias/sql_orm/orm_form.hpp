@@ -362,7 +362,7 @@ template <typename T, typename BackendTag, typename DatabaseT>
 std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
     std::vector<SqlTags> tags_array;
     tags_array.resize(NEKO_NAMESPACE::Reflect<T>::value_count);
-    auto tags = NEKO_NAMESPACE::Reflect<T>::value_tags; // this is a tuple, may be has other tags in the field
+    auto tags = NEKO_NAMESPACE::Reflect<T>::field_tags; // this is a tuple, may be has other tags in the field
     [&tags, &tags_array]<std::size_t... I>(std::index_sequence<I...>) {
         ((tags_array[I] = std::get<I>(tags)), ...);
     }(std::make_index_sequence<NEKO_NAMESPACE::Reflect<T>::value_count>());
