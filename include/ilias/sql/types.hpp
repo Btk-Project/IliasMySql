@@ -192,7 +192,13 @@ private:
 
 /**
  * @brief 数据库单元格视图
- * 该数据视图在Result::next()和Result释放数据前有效
+ *
+ * SqlCellView 是非拥有视图。由 result set 返回时，内部 string/native/raw pointer
+ * 通常只保证在当前行有效：调用下一次 IResultSet::next()、reset/close statement、
+ * 或销毁 result set 后，视图内容可能失效。需要跨行或异步保存时，调用方应立即转换或复制为拥有对象。
+ *
+ * 用于 bind 时，SqlCellView 指向调用方或 SqlStatement wrapper 持有的参数存储；
+ * 低层 IStatement::bind() 不接管这块内存的所有权。
  */
 class SqlCellView {
 public:
@@ -455,12 +461,12 @@ auto SqlCellView::as() const -> IoResult<T> {
     }
     if (!mContext) {
         ILIAS_ERROR("ilias-sql", "SqlCellView::as() called without context");
-        return Unexpected(SqlError::Code::NoContext);
+        return Err(SqlError::Code::NoContext);
     }
     auto parser_func = mContext->findTypeParser(type_index);
     if (!parser_func) {
         ILIAS_ERROR("ilias-sql", "Unsupport convert from sql type: {}", type_index);
-        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+        return Err(SqlError::Code::UnsupportConvertFromSqlType);
     }
     if constexpr (is_nullable) {
         if (is_null()) {
@@ -474,7 +480,7 @@ auto SqlCellView::as() const -> IoResult<T> {
         }
     }
     if (!result_any) {
-        return Unexpected(result_any.error());
+        return Err(result_any.error());
     }
     if constexpr (is_optional) {
         using value_type = typename T::value_type;
@@ -488,6 +494,6 @@ auto SqlCellView::as() const -> IoResult<T> {
         }
     }
     ILIAS_ERROR("ilias-sql", "Parser for type {} returned a mismatched type.", std::type_index(typeid(T)));
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 ILIAS_SQL_NS_END

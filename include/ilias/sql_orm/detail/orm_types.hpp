@@ -1,7 +1,10 @@
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
+#include "ilias/sql/detail/reflection_metadata.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"
+
+#include <type_traits>
 
 ILIAS_SQL_NS_BEGIN
 
@@ -232,6 +235,23 @@ class TypedColumn;
 // 工具函数声明
 ILIAS_SQL_API std::string join_strs(const std::vector<std::string> &vec, const std::string &sep,
                                     const std::string &prefix = "", const std::string &suffix = "");
+
+template <typename Tags>
+constexpr auto extractSqlTags(const Tags &tags) -> SqlTags {
+    using CleanTags = std::remove_cvref_t<Tags>;
+    if constexpr (std::is_same_v<CleanTags, SqlTags>) {
+        return tags;
+    }
+    else if constexpr (std::is_convertible_v<const Tags &, SqlTags>) {
+        return static_cast<SqlTags>(tags);
+    }
+    else if constexpr (requires { CleanTags::base; }) {
+        return extractSqlTags(CleanTags::base);
+    }
+    else {
+        return {};
+    }
+}
 } // namespace detail
 
 ILIAS_SQL_NS_END

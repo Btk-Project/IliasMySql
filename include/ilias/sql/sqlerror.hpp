@@ -9,6 +9,7 @@
  *
  */
 #pragma once
+#include <string>
 #include <system_error>
 #include <stdint.h>
 
@@ -16,6 +17,13 @@
 
 ILIAS_SQL_NS_BEGIN
 class SqlErrorCategory;
+
+struct NativeSqlError {
+    std::string backend;
+    int         code = 0;
+    std::string sqlstate;
+    std::string message;
+};
 
 #define SQL_ERROR_TABLE                                                                                                \
     SQL_ERROR_ENTRY(OK, "OK")                                                                                          \
@@ -86,18 +94,9 @@ public:
     auto        message(int value) const -> std::string override;
     auto        name() const noexcept -> const char        *override;
     static auto instance() -> SqlErrorCategory &;
-
-    auto registerMessage(int code, const std::string &message) -> void { mMessageTable[code] = message; }
-
-private:
-    std::unordered_map<int, std::string> mMessageTable;
 };
 
 inline auto SqlErrorCategory::message(int value) const -> std::string {
-    auto it = mMessageTable.find(value);
-    if (it != mMessageTable.end()) {
-        return it->second;
-    }
     switch (value) {
 #define SQL_ERROR_ENTRY(code, message)                                                                                 \
     case SqlError::code:                                                                                               \

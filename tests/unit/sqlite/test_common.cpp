@@ -51,6 +51,10 @@ struct SimpleUser {
     int                id    = 0;
     std::string        name  = "";
     std::optional<int> score = 0;
+
+    // 为自定义结构体添加元数据（侵入式）
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id), make_tags<SqlTags {.not_null = true}>(name),
+                    make_tags<SqlTags {}>(score))
 };
 
 struct SimpleOrder {
@@ -62,14 +66,7 @@ struct SimpleOrder {
 
 NEKO_BEGIN_NAMESPACE
 // clang-format off
-template <>
-struct Meta<SimpleUser, void> {
-    constexpr static auto value = Object(
-        "id",   make_tags<SqlTags::createPrimaryKeyTags(false)>(&SimpleUser::id),
-        "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
-        "score",make_tags<SqlTags {}>(&SimpleUser::score));
-};
-
+// 为外部结构体添加元数据（非侵入式）
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
@@ -303,6 +300,72 @@ public:
         co_return {};
     }
 
+    // --- 场景 4.2: result capabilities 明确区分 streaming / exact row count / affected rows ---
+    static auto test_result_capabilities() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("test", ">>> Running test_result_capabilities");
+
+        auto insert_a_ret = co_await db.execute("INSERT INTO users VALUES (1, 'A', 10)");
+        CO_ASSERT_VAL(insert_a_ret);
+        auto insert_b_ret = co_await db.execute("INSERT INTO users VALUES (2, 'B', 20)");
+        CO_ASSERT_VAL(insert_b_ret);
+
+        auto result_ret = co_await db.query("SELECT id FROM users ORDER BY id");
+        CO_ASSERT_VAL(result_ret);
+        auto result = std::move(result_ret.value());
+
+        auto caps = result.capabilities();
+        EXPECT_TRUE(caps.streaming);
+        EXPECT_FALSE(caps.exactRowCount);
+        EXPECT_FALSE(caps.rowsAffected);
+        EXPECT_EQ(result.rowsFetched(), 0U);
+        EXPECT_FALSE(result.exactRowCount().has_value());
+        EXPECT_FALSE(result.rowsAffected().has_value());
+
+        int         id   = 0;
+        std::size_t seen = 0;
+        ilias_for_await(auto rc, result.range(id)) {
+            CO_ASSERT_VAL(rc);
+            ++seen;
+            EXPECT_EQ(result.rowsFetched(), seen);
+            EXPECT_EQ(id, static_cast<int>(seen));
+        }
+        EXPECT_EQ(seen, 2U);
+        EXPECT_EQ(result.rowsFetched(), 2U);
+        EXPECT_FALSE(result.exactRowCount().has_value());
+
+        auto affected_ret = co_await db.execute("UPDATE users SET score = score + 1");
+        CO_ASSERT_VAL(affected_ret);
+        EXPECT_EQ(affected_ret.value(), 2U);
+
+        ILIAS_INFO("test", ">>> test_result_capabilities PASSED");
+        co_return {};
+    }
+
+    // --- 场景 4.3: native error 与通用 SqlError::Code 分离 ---
+    static auto test_native_error_snapshot() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("test", ">>> Running test_native_error_snapshot");
+
+        auto ret = co_await db.execute("SELECT * FROM missing_native_error_table");
+        CO_EXPECT_NOT_RESULT(ret);
+        EXPECT_EQ(ret.error(), SqlError::Code::InvalidSqlStatement);
+        EXPECT_EQ(ret.error().message().find("no such table"), std::string::npos);
+
+        auto native = db.lastNativeError();
+        EXPECT_TRUE(native.has_value());
+        if (!native.has_value()) {
+            co_return {};
+        }
+        EXPECT_EQ(native->backend, "sqlite");
+        EXPECT_EQ(native->code & 0xff, SQLITE_ERROR);
+        EXPECT_NE(native->message.find("no such table"), std::string::npos);
+        EXPECT_NE(native->message.find("missing_native_error_table"), std::string::npos);
+
+        ILIAS_INFO("test", ">>> test_native_error_snapshot PASSED");
+        co_return {};
+    }
+
     // --- 场景 5: NULL 值处理与结构体部分映射 ---
     // 目的: 测试数据库中的 NULL 映射到 C++ 结构体的行为 (通常依赖库的具体实现，这里假设 int 保持原值或抛错，或者使用
     // std::optional) 假设 SimpleUser 的 score 是 int，如果库支持将 NULL 读为 0，或者跳过赋值，这里测试其确定性。
@@ -493,8 +556,9 @@ public:
         }
 
         {
-            auto ret =
-                co_await users.count().where(users.sql(&SimpleUser::id) < 5 || users.sql(&SimpleUser::id) >= 95).query();
+            auto ret = co_await users.count()
+                           .where(users.sql(&SimpleUser::id) < 5 || users.sql(&SimpleUser::id) >= 95)
+                           .query();
             CO_ASSERT_VAL(ret);
             auto res = std::move(ret.value());
 
@@ -668,9 +732,9 @@ public:
             // 注意：select() 中的参数决定了 execute() 返回的 tuple 类型
             // 返回类型推导为: std::vector<std::tuple<std::string, std::string, int>>
             auto ret = co_await u.join(o)
-                           .on(u.col(&SimpleUser::id) == o.col(&SimpleOrder::user_id)) // ON u.id = o.user_id
-                           .select(u.col(&SimpleUser::name), o.col(&SimpleOrder::product), o.col(&SimpleOrder::amount))
-                           .where(o.col(&SimpleOrder::amount) > 100) // WHERE o.amount > 100
+                           .on(u.col<&SimpleUser::id>() == o.col<&SimpleOrder::user_id>()) // ON u.id = o.user_id
+                           .select(u.col<&SimpleUser::name>(), o.col<&SimpleOrder::product>(), o.col<&SimpleOrder::amount>())
+                           .where(o.col<&SimpleOrder::amount>() > 100) // WHERE o.amount > 100
                            .query();
 
             CO_ASSERT_VAL(ret);
@@ -953,6 +1017,14 @@ TEST(SQL, RANGE_RESULT_CONVERSION_ERROR) {
     SqlTestSuite::test_range_result_conversion_error().wait();
 }
 
+TEST(SQL, RESULT_CAPABILITIES) {
+    SqlTestSuite::test_result_capabilities().wait();
+}
+
+TEST(SQL, NATIVE_ERROR_SNAPSHOT) {
+    SqlTestSuite::test_native_error_snapshot().wait();
+}
+
 TEST(SQL, BATCH_INSERT_AND_SCAN) {
     SqlTestSuite::test_batch_insert_and_scan().wait();
 }
@@ -1000,6 +1072,8 @@ TEST(SQL, FORM_INTERFACE_WITH_TRANSACTION) {
 ILIAS_NAMESPACE::Task<int> run_all_tests() {
     // 运行原有测试
     co_await SqlTestSuite::test_basic_crud();
+    co_await SqlTestSuite::test_result_capabilities();
+    co_await SqlTestSuite::test_native_error_snapshot();
 
     // 运行新增的扩展测试
     co_await SqlTestSuite::test_batch_insert_and_scan();

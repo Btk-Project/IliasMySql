@@ -6,6 +6,19 @@
 
 ILIAS_SQLITE_NS_BEGIN
 
+static auto sqliteBinderErrorCode(int code) -> SqlError::Code {
+    switch (code & 0xff) {
+        case SQLITE_RANGE:
+            return SqlError::Code::InvalidIndex;
+        case SQLITE_MISUSE:
+            return SqlError::Code::InvalidParameter;
+        case SQLITE_TOOBIG:
+            return SqlError::Code::DataTruncated;
+        default:
+            return SqlError::Code::UnknownError;
+    }
+}
+
 SqlParserResult sqlite_parse_null(const SqlCellView &cell) {
     if (cell.is_null()) {
         return std::any(g_sql_null);
@@ -13,7 +26,7 @@ SqlParserResult sqlite_parse_null(const SqlCellView &cell) {
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -21,7 +34,7 @@ SqlParserResult sqlite_parse_null(const SqlCellView &cell) {
             return std::any(g_sql_null);
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -32,12 +45,12 @@ SqlParserResult sqlite_parse_null(const SqlCellView &cell) {
  */
 SqlParserResult sqlite_parse_string(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -52,10 +65,10 @@ SqlParserResult sqlite_parse_string(const SqlCellView &cell) {
                 return std::any(
                     SqlText(reinterpret_cast<const char *>(sqlite3_value_blob(value)), sqlite3_value_bytes(value)));
             case SQLITE_NULL:
-                return Unexpected(SqlError::Code::NullValue);
+                return Err(SqlError::Code::NullValue);
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -66,12 +79,12 @@ SqlParserResult sqlite_parse_string(const SqlCellView &cell) {
  */
 SqlParserResult sqlite_parse_string_view(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -82,10 +95,10 @@ SqlParserResult sqlite_parse_string_view(const SqlCellView &cell) {
                 return std::any(
                     SqlTextView(reinterpret_cast<const char *>(sqlite3_value_blob(value)), sqlite3_value_bytes(value)));
             case SQLITE_NULL:
-                return Unexpected(SqlError::Code::NullValue);
+                return Err(SqlError::Code::NullValue);
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -98,12 +111,12 @@ template <typename T>
     requires std::is_integral_v<T>
 SqlParserResult sqlite_parse_int(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -111,7 +124,7 @@ SqlParserResult sqlite_parse_int(const SqlCellView &cell) {
             return std::any(static_cast<T>(sqlite3_value_int64(value)));
         }
         else if (type == SQLITE_NULL) {
-            return Unexpected(SqlError::Code::NullValue);
+            return Err(SqlError::Code::NullValue);
         }
         else if (type == SQLITE_FLOAT) {
             return std::any(static_cast<T>(sqlite3_value_double(value)));
@@ -126,7 +139,7 @@ SqlParserResult sqlite_parse_int(const SqlCellView &cell) {
             }
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -139,12 +152,12 @@ template <typename T>
     requires std::is_floating_point_v<T>
 SqlParserResult sqlite_parse_real(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -155,10 +168,10 @@ SqlParserResult sqlite_parse_real(const SqlCellView &cell) {
             return std::any(static_cast<T>(sqlite3_value_int64(value)));
         }
         else if (type == SQLITE_NULL) {
-            return Unexpected(SqlError::Code::NullValue);
+            return Err(SqlError::Code::NullValue);
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -169,12 +182,12 @@ SqlParserResult sqlite_parse_real(const SqlCellView &cell) {
  */
 SqlParserResult sqlite_parse_blob(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kNativeValue) {
         auto value_any = std::any_cast<sqlite3_value *>(&cell.sql_value());
         if (value_any == nullptr) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         auto value = *value_any;
         auto type  = sqlite3_value_type(value);
@@ -184,10 +197,10 @@ SqlParserResult sqlite_parse_blob(const SqlCellView &cell) {
             return std::any(std::span<const std::byte>(blob_ptr, blob_size));
         }
         else if (type == SQLITE_NULL) {
-            return Unexpected(SqlError::Code::NullValue);
+            return Err(SqlError::Code::NullValue);
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -200,7 +213,7 @@ SqlParserResult sqlite_parse_blob(const SqlCellView &cell) {
 SqlParserResult sqlite_parse_bool(const SqlCellView &cell) {
     auto ret = sqlite_parse_int<int>(cell);
     if (!ret) {
-        return Unexpected(ret.error());
+        return Err(ret.error());
     }
     return std::any(std::any_cast<int>(ret.value()) != 0);
 }
@@ -208,11 +221,11 @@ SqlParserResult sqlite_parse_bool(const SqlCellView &cell) {
 SqlParserResult sqlite_parse_date(const SqlCellView &cell) {
     auto value_str = sqlite_parse_string_view(cell);
     if (!value_str) {
-        return Unexpected(value_str.error());
+        return Err(value_str.error());
     }
     auto any_string = std::any_cast<std::string_view>(&(*value_str));
     if (any_string == nullptr) {
-        return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+        return Err(SqlError::Code::UnsupportConvertFromSqlType);
     }
     SqlDate date;
     date.fromUTCString(*any_string);
@@ -222,11 +235,11 @@ SqlParserResult sqlite_parse_date(const SqlCellView &cell) {
 SqlBinderResult sqlite_bind_null(const SqlCellView &cell, std::any data) {
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (int ret = sqlite3_bind_null(nativeSqliteStmt, cell.index()); ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }
@@ -237,17 +250,17 @@ SqlBinderResult sqlite_bind_string(const SqlCellView &cell, std::any data) {
     }
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const char *))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     if (int ret = sqlite3_bind_text(nativeSqliteStmt, cell.index(), reinterpret_cast<const char *>(cell.raw_value()),
                                     cell.raw_value_size(), SQLITE_STATIC);
         ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }
@@ -260,16 +273,16 @@ SqlBinderResult sqlite_bind_int(const SqlCellView &cell, std::any data) {
     }
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const T))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     if (int ret = sqlite3_bind_int64(nativeSqliteStmt, cell.index(), *reinterpret_cast<const T *>(cell.raw_value()));
         ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }
@@ -282,16 +295,16 @@ SqlBinderResult sqlite_bind_real(const SqlCellView &cell, std::any data) {
     }
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const T))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     if (int ret = sqlite3_bind_double(nativeSqliteStmt, cell.index(), *reinterpret_cast<const T *>(cell.raw_value()));
         ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }
@@ -302,17 +315,17 @@ SqlBinderResult sqlite_bind_blob(const SqlCellView &cell, std::any data) {
     }
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const std::byte *))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     if (int ret =
             sqlite3_bind_blob(nativeSqliteStmt, cell.index(), cell.raw_value(), cell.raw_value_size(), SQLITE_STATIC);
         ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }
@@ -323,12 +336,12 @@ SqlBinderResult sqlite_bind_date(const SqlCellView &cell, std::any data) {
     }
     auto sqliteStmt = std::any_cast<SqliteStatement *>(data);
     if (sqliteStmt == nullptr) {
-        return Unexpected(SqlError::Code::InvalidSqlStatement);
+        return Err(SqlError::Code::InvalidSqlStatement);
     }
     auto nativeSqliteStmt = static_cast<sqlite3_stmt *>(sqliteStmt->nativeHandle());
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const SqlDate))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     auto date = reinterpret_cast<const SqlDate *>(cell.raw_value());
     if (date == nullptr || date->type == SqlDate::kErrorTime) {
@@ -337,7 +350,7 @@ SqlBinderResult sqlite_bind_date(const SqlCellView &cell, std::any data) {
     auto dateStr = date->toUTCString();
     if (int ret = sqlite3_bind_text(nativeSqliteStmt, cell.index(), dateStr.c_str(), dateStr.size(), SQLITE_TRANSIENT);
         ret != SQLITE_OK) {
-        return Unexpected((SqlError::Code)ret);
+        return Err(sqliteBinderErrorCode(ret));
     }
     return make_null_sql_binder_result();
 }

@@ -185,7 +185,49 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
   - `exactRowCount()`
 - 或增加 `ResultCapabilities`，显式表达是否支持精确行数、是否 streaming、是否多结果集。
 
-### 9. ORM 标识符拼接缺少统一 quote/validate
+当前进度：
+
+- 公共 `IResultSet` 已移除有歧义的 `rowCount()`，改为 `capabilities()`、`rowsFetched()`、`exactRowCount()`、`rowsAffected()`。
+- `SqlResult<void>` 提供同名轻量转发 API，用户不需要绕到底层 result set。
+- SQLite / PostgreSQL streaming result 明确没有精确总行数，只暴露已读取行数。
+- MySQL store result 在底层结果可用后暴露 `exactRowCount()`，并用 `std::optional<size_t>` 区分“尚不可知”和“确实为 0”。
+- `execute()` 的 affected rows 仍作为命令执行结果返回，不再塞进 query result 的 row count 语义里。
+
+### 9. 原生错误文本与 `std::error_code` 职责混杂
+
+位置：
+
+- `include/ilias/sql/sqlerror.hpp`
+- SQLite / MySQL / PostgreSQL 各驱动错误转换路径
+
+问题：
+
+当前允许通过 `SqlErrorCategory::registerMessage(code, message)` 动态注册后端错误文本。这个方式可以把 driver 原始错误消息透出，但它和 `std::error_code` 的设计不完全匹配：
+
+- `std::error_code` 更适合表达稳定、可比较、跨调用点有效的错误类别。
+- 动态注册 message 会让同一个 numeric code 的含义依赖最近一次注册，尤其不同 backend 的 native code 可能冲突。
+- 上层如果只拿到 `std::error_code`，很难稳定区分 portable 错误、native errno、SQLSTATE 和原始 driver message。
+
+建议：
+
+- 普通错误返回稳定的通用 `SqlError::Code`，例如 `InvalidParameter`、`ConstraintViolation`、`UnsupportBindType`、`NotConnected`。
+- 增加独立的原生错误诊断对象，不再把 driver 原文塞进全局 error category：
+
+```cpp
+struct NativeSqlError {
+    std::string backend;  // "sqlite", "postgresql", "mysql"
+    int         code = 0; // SQLite/MySQL errno 等
+    std::string sqlstate;
+    std::string message; // driver 原始错误文本
+};
+```
+
+- `IConnection`、`IStatement`、`IResultSet` 或对应高层 wrapper 保存自己的 last native error，避免全局 category 被不同连接/线程覆盖。
+- 对外提供轻量查询接口，例如 `lastNativeError() -> std::optional<NativeSqlError>`。
+- `SqlError::Code` 负责控制流和跨后端判断，`NativeSqlError` 负责日志、调试和错误详情展示。
+- 后续可在 `SqlError` / enhanced error 里关联 native error 快照，但不要让 native error 改变通用错误码的比较语义。
+
+### 10. ORM 标识符拼接缺少统一 quote/validate
 
 位置：
 
@@ -207,7 +249,7 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 - ORM 内部生成 SQL 时统一走 quote helper。
 - `select("col")`、`orderBy("col")` 等字符串入口只表达运行时 identifier，由 ORM validate + quote；任意 SQL 片段仍走底层 `SqlDatabase::query/prepare`。
 
-### 10. Schema 生成存在重复和半成品接口
+### 11. Schema 生成职责曾重复
 
 位置：
 
@@ -216,13 +258,20 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 
 问题：
 
-`SchemaGenerator` 与 `Form::_create_table_impl()` 都在做 schema 生成，但 `SchemaGenerator::generateCreateTable<FormType>()` 当前更像占位实现，和实际 ORM Form 体系没有完全打通。
+此前 `SchemaGenerator` 与 `Form::_create_table_impl()` 都在做 schema 生成，`SchemaGenerator::generateCreateTable<FormType>()` 更像占位实现，和实际 ORM Form 体系没有完全打通。
 
-建议：
+当前进度：
 
-- 选择一个 schema 生成入口作为唯一实现。
-- 推荐让 `SchemaGenerator<Entity, BackendTag>` 基于反射生成 table/index SQL。
-- `Form::_create_table_impl()` 只负责调用 generator 和执行 SQL。
+- 已选择 `SchemaGenerator<BackendTag>::generateTableSchema<Entity>()` 作为 table/index schema 的统一生成入口。
+- `generateTableSchema()` 只做一次反射扫描，产出 `TableSchema`，包含 `createTableSql`、`columnDefinitions`、`columns` 和 `indexStatements`。
+- `Form::_create_table_impl()` 只负责调用 generator、执行 `CREATE TABLE` 和 index SQL。
+- `createTableSchema()`、`indexStatementsSchema()`、`completeSchema()` 与实际建表路径复用同一份 schema 结果，避免文档/调试 SQL 与真实执行 SQL 漂移。
+- schema 生成入口会复用 rename tag / `SqlTags` 抽取逻辑，并将确定性生成错误收敛为 `InvalidParameter`。
+
+剩余建议：
+
+- schema diff / validation 仍然主要以字符串形式组织错误，后续可补结构化结果。
+- 进一步补充 schema generator 的公开文档，说明 `TableSchema` 中各字段的用途和错误语义。
 
 ## 重构完善方案
 
@@ -257,6 +306,7 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 - 重新定义 row count / affected rows API。
 - 为 `nativeHandle()` 补文档或类型安全包装。
 - 统一 bind 失败、query 失败、conversion 失败的错误码。
+- 将通用 `SqlError::Code` 与后端 `NativeSqlError` 诊断信息拆开。
 - 明确 `SqlCellView` 生命周期，特别是 string/blob view 在 `next()` 后失效。
 
 建议测试：
@@ -350,6 +400,15 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 - `range()`：只返回成功值，文档明确会跳过或终止。
 - `nextObject<T>()`：单行读取更方便。
 
+### `SqlError`
+
+建议让 `std::error_code` 只承载稳定的通用错误码；后端原生错误使用独立快照：
+
+- `NativeSqlError { backend, code, sqlstate, message }`
+- `lastNativeError()` 由 connection / statement / result 或高层 wrapper 各自保存并返回。
+- 日志和调试 UI 使用 `NativeSqlError`，控制流和跨后端判断使用 `SqlError::Code`。
+- 逐步减少对 `SqlErrorCategory::registerMessage()` 的依赖，避免全局动态 message 覆盖。
+
 ### `DriverManager`
 
 建议增加：
@@ -371,6 +430,8 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 | P2 | 统一 placeholder parser | 降低编译期/运行时规则分裂 |
 | P2 | ORM identifier quote/validate | 提升安全性和方言兼容 |
 | P3 | 合并 schema generator | 降低 ORM 层维护成本 |
+| P3 | result capabilities 建模 | 消除 row count / affected rows / streaming 语义歧义 |
+| P4 | 拆分 NativeSqlError | 让通用错误码保持稳定，保留后端诊断细节 |
 
 ## 近期最小落地清单
 
@@ -477,6 +538,8 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 - `select("col")`、`select("a, b")`、`orderBy("col")`、`count("col")` 保留为运行时 identifier 输入，并由 ORM validate + quote；`select("count(*)")` 这类表达式不进入 ORM DSL。
 - 反射列名重复、非法表名/列名、非法别名、未加别名的 self-join 等确定性错误会在 ORM 层提前暴露，避免继续生成含歧义的 SQL。
 - `SqlVariable` 拆分 SQL 表达式和绑定名，修复列名被 quote 后 `InsertBuilder::set(col = value)` 无法按 `:name` 绑定的问题。
+- `sql<&T::field>()` / `col<&T::field>()` 增加严格成员指针模板入口：反射元数据没有可静态匹配的成员指针时编译期报错。
+- `sql(&T::field)` / `col(&T::field)` 找不到反射列时不再抛异常，而是返回带诊断的 invalid `SqlVariable`，由 builder 在 `query()` / `execute()` 前统一返回 `InvalidParameter`。
 
 验证记录：
 
@@ -492,6 +555,8 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 - `xmake build test_sql_placeholder_parsing_properties_postgres`
 - `xmake f -y -m debug --enable_test=y --dynamic_plugin=n --enable_postgres=n`
 - `xmake build ilias_sql`
+- `xmake build test_identifier_quoting_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_identifier_quoting_sqlite`
 - `xmake build test_identifier_quoting_sqlite`
 - `env LSAN_OPTIONS=detect_leaks=0 xmake run test_identifier_quoting_sqlite`
 - `xmake build test_orm_interface_sqlite`
@@ -511,6 +576,75 @@ typed range 遇到字段转换失败时只写日志，然后继续迭代。
 
 ### P3 Schema 与长期整理
 
-- [ ] 合并 `SchemaGenerator` 和 `Form::_create_table_impl()` 的 schema 生成职责。
-- [ ] 为 result capabilities 建模，明确 row count / affected rows / streaming 能力。
-- [ ] 为 `nativeHandle()`、`SqlCellView` 生命周期和 bind 生命周期补充 API 文档。
+- [x] 合并 `SchemaGenerator` 和 `Form::_create_table_impl()` 的 schema 生成职责。
+- [x] 为 result capabilities 建模，明确 row count / affected rows / streaming 能力。
+- [x] 为 `nativeHandle()`、`SqlCellView` 生命周期和 bind 生命周期补充 API 文档。
+
+设计结果：
+
+- `SchemaGenerator<BackendTag>::generateTableSchema<Entity>()` 成为 CREATE TABLE / CREATE INDEX schema 的统一生成入口。
+- `Form::_create_table_impl()`、`createTableSchema()`、`indexStatementsSchema()`、`completeSchema()` 均复用同一个 `TableSchema`，确保调试输出、测试断言和真实建表执行一致。
+- 反射字段名、rename tag 和 `SqlTags` 抽取集中在 schema generator 内，减少 ORM Form 与 schema helper 的重复反射逻辑。
+- schema 入口返回 `IoResult<TableSchema>`，确定性生成错误返回 `InvalidParameter`，不再让调用方同时处理 `IoResult` 和 schema 生成异常。
+- `IResultSet::rowCount()` 已移除，避免继续暴露“总行数/已读取行数/不支持”混杂语义。
+- 新增 `ResultCapabilities` 和 `rowsFetched()` / `exactRowCount()` / `rowsAffected()`；`exactRowCount()` 和 `rowsAffected()` 均用 `std::optional<size_t>` 表达能力边界。
+- MySQL result 的多结果集推进去掉 `goto`，改成 `storeCurrentResultIfNeeded()` / `advanceToNextResult()` 两个 async helper；析构只做同步资源释放，不承担需要 `co_await` 的推进逻辑。
+- `nativeHandle()`、`SqlCellView` 和高低层 bind 的生命周期约定已写入公共头文件：native handle 不转移所有权且可能被 reset/next/close 失效；`SqlCellView` 是当前行/当前绑定的非拥有视图；低层 `IStatement::bind()` 要求调用方保证引用存活，高层 `SqlStatement` wrapper 会保存参数副本并可通过 `clearKeepAlives()` 释放。
+
+验证记录：
+
+- `xmake l ./lua/list_tests.lua`
+- `xmake build test_identifier_quoting_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_identifier_quoting_sqlite`
+- `xmake build test_schema_generator_integration_properties_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_schema_generator_integration_properties_sqlite`
+- `xmake build test_orm_interface_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_orm_interface_sqlite`
+- `xmake build test_common_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_common_sqlite`
+- `xmake build test_common_mysql`
+- `xmake build test_orm_interface_mysql`
+- `xmake f -y -m debug --enable_test=y --dynamic_plugin=n --enable_postgres=y`
+- `xmake build test_orm_interface_postgres`
+- `xmake build test_sql_placeholder_parsing_properties_postgres`
+- `xmake f -y -m debug --enable_test=y --dynamic_plugin=n --enable_postgres=n`
+- `xmake build ilias_sql`
+- `xmake build test_common_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_common_sqlite -- --gtest_filter=SQL.RESULT_CAPABILITIES`
+- `xmake build test_common_mysql`
+- `xmake build test_orm_interface_mysql`
+
+说明：
+
+- PostgreSQL 目标只做编译验证，未运行需要外部 PostgreSQL 服务的测试进程。
+- 验证结束后已将 xmake 配置切回 `--enable_postgres=n`，当前 `xmake l ./lua/list_tests.lua` 回到 SQLite/MySQL 目标集合。
+- result capabilities 阶段按小步验证策略只做聚焦测试和必要编译；全量细致测试留到本轮重构收口后统一执行。
+
+### P4 错误模型重构
+
+- [x] 增加 `NativeSqlError { backend, code, sqlstate, message }`。
+- [x] 在 connection / statement / result 或对应高层 wrapper 上保存各自的 last native error。
+- [x] 增加 `lastNativeError() -> std::optional<NativeSqlError>` 查询入口。
+- [x] 移除普通错误路径对 `SqlErrorCategory::registerMessage()` 的行为依赖。
+- [x] 让 `SqlError::Code` 保持稳定可比较，native error 只作为诊断详情。
+
+设计结果：
+
+- 公共 `IConnection` / `IStatement` / `IResultSet` 增加默认 `lastNativeError()`，高层 `SqlDatabase` / `SqlTransaction` / `SqlStatement<void>` / `SqlResult<void>` 提供同名轻量转发。
+- SQLite 错误路径保存 `backend=sqlite`、原生返回码和 `sqlite3_errmsg()` 文本；普通错误码映射到 `InvalidSqlStatement`、`ConstraintViolation`、`InvalidIndex` 等稳定通用码。
+- MySQL 连接和 statement/result 路径保存 errno、SQLSTATE 和原始 message；普通错误码映射到 `TableNotFound`、`UniqueConstraintViolation`、`ForeignKeyViolation` 等稳定通用码。
+- PostgreSQL 连接、prepared statement 和 streaming result 路径保存 `PGresult` / `PGconn` 诊断快照，SQLSTATE 留在 `NativeSqlError::sqlstate`；同时修正了 streaming result 错误分支先 `PQclear()` 后读取错误信息的顺序问题。
+- SQLite binder parser 中残留的 SQLite native code cast 已收敛为通用错误码；native 文本只由执行对象保存，不再进入全局 error category。
+
+验证记录：
+
+- `xmake build test_common_sqlite`
+- `env LSAN_OPTIONS=detect_leaks=0 xmake run test_common_sqlite -- --gtest_filter=SQL.NATIVE_ERROR_SNAPSHOT`
+- `xmake build test_common_mysql`
+- `env LSAN_OPTIONS=detect_leaks=0 DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=root DB_PASS=123456 DB_NAME=test xmake run test_common_mysql -- --gtest_filter=MySQL.NATIVE_ERROR_SNAPSHOT`
+- `xmake build test_sql_placeholder_parsing_properties_postgres`
+
+说明：
+
+- MySQL focused 运行在沙箱内无法访问本机 TCP 服务时会快速失败；放行本机 `xmake run` 后，使用 `127.0.0.1:3306/root/123456/test` 的单用例验证通过。
+- 本轮仍未跑全量测试；按当前策略只做错误模型相关 focused 用例和必要编译验证。

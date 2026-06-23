@@ -200,7 +200,7 @@ struct Dialect<SqliteTag> {
         std::map<std::string, ColumnSchema> schema_map;
         ilias_for_await(auto row, rs.rangeResult()) {
             if (!row) {
-                co_return Unexpected(row.error());
+                co_return Err(row.error());
             }
             auto [cid, name, type, notnull, dflt_value, pk] = row.value();
             ColumnSchema col;
@@ -382,7 +382,7 @@ struct Dialect<MysqlTag> {
         std::map<std::string, ColumnSchema> schema_map;
         ilias_for_await(auto row, rs.rangeResult()) {
             if (!row) {
-                co_return Unexpected(row.error());
+                co_return Err(row.error());
             }
             auto [name, type, is_nullable, key_type] = row.value();
             ColumnSchema col;
@@ -572,7 +572,7 @@ struct Dialect<PostgresTag> {
         std::map<std::string, ColumnSchema> schema_map;
         ilias_for_await(auto row, rs.rangeResult()) {
             if (!row) {
-                co_return Unexpected(row.error());
+                co_return Err(row.error());
             }
             auto [name, type, is_not_null, is_pk] = row.value();
             ColumnSchema col;

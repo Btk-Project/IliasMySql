@@ -5,12 +5,12 @@ ILIAS_SQL_NS_BEGIN
 auto SqlDatabase::open(std::string_view name, ConnectOptions options) -> IoTask<SqlDatabase> {
     auto connect = DriverManager::instance().createConnection(name, options);
     if (!connect) {
-        co_return Unexpected(connect.error());
+        co_return Err(connect.error());
     }
     auto conn = std::move(connect.value());
     auto ret  = co_await conn->connect();
     if (!ret) {
-        co_return Unexpected(ret.error());
+        co_return Err(ret.error());
     }
     ILIAS_TRACE("ilias-sql", "open {} with version: {}", conn->sqlname(), conn->sqlinfo());
     co_return SqlDatabase(std::move(conn));
@@ -29,7 +29,7 @@ SqlDatabase::~SqlDatabase() {
 
 auto SqlDatabase::close() -> IoTask<void> {
     if (mInTransaction) {
-        co_return Unexpected(std::make_error_code(std::errc::device_or_resource_busy));
+        co_return Err(std::make_error_code(std::errc::device_or_resource_busy));
     }
     auto ret = co_await mConnection->disconnect();
     mConnection.reset();
@@ -38,7 +38,7 @@ auto SqlDatabase::close() -> IoTask<void> {
 
 auto SqlDatabase::transaction() -> IoTask<SqlTransaction> {
     if (mInTransaction) {
-        co_return Unexpected(std::make_error_code(std::errc::device_or_resource_busy));
+        co_return Err(std::make_error_code(std::errc::device_or_resource_busy));
     }
     auto ret = SqlTransaction(*this);
     ILIAS_CO_TRYV(co_await ret.begin());
@@ -60,7 +60,7 @@ SqlTransaction::~SqlTransaction() {
 
 auto SqlTransaction::commit() -> IoTask<void> {
     if (mState != State::kBeginned) {
-        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+        co_return Err(std::make_error_code(std::errc::operation_not_permitted));
     }
     ILIAS_CO_TRY(auto connect_ret, connection());
     ILIAS_CO_TRYV(co_await connect_ret->commit());
@@ -74,7 +74,7 @@ auto SqlTransaction::commit() -> IoTask<void> {
 
 auto SqlTransaction::rollback() -> IoTask<void> {
     if (mState != State::kBeginned) {
-        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+        co_return Err(std::make_error_code(std::errc::operation_not_permitted));
     }
     ILIAS_CO_TRY(auto connect_ret, connection());
     ILIAS_CO_TRYV(co_await connect_ret->rollback());
@@ -92,10 +92,10 @@ auto SqlTransaction::rebegin() -> IoTask<void> {
 
 auto SqlTransaction::begin() -> IoTask<void> {
     if (mState != State::kUnused && mState != State::kRolledBack && mState != State::kCommitted) {
-        co_return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+        co_return Err(std::make_error_code(std::errc::operation_not_permitted));
     }
     if (!mConnection) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     ILIAS_CO_TRYV(co_await mConnection->beginTransaction());
     mDatabase.mInTransaction = true; // 锁定数据库

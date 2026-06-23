@@ -11,8 +11,9 @@
 #include <nekoproto/serialization/reflection.hpp>
 #include <nekoproto/serialization/to_string.hpp>
 #include "ilias/sql_orm/dialect.hpp"
+#include <cstdint>
+#include <memory>
 #include <set>
-#include <stdexcept>
 #include <type_traits>
 
 #include "ilias/sql_orm/detail/orm_types.hpp"
@@ -63,7 +64,7 @@ public:
         if (!identifier_validation.is_ok()) {
             ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
                         detail::join_strs(identifier_validation.errors, "; "));
-            co_return Unexpected(SqlError::Code::InvalidParameter);
+            co_return Err(SqlError::Code::InvalidParameter);
         }
 
         // 1. 先 Drop
@@ -93,7 +94,7 @@ public:
         if (!identifier_validation.is_ok()) {
             ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
                         detail::join_strs(identifier_validation.errors, "; "));
-            co_return Unexpected(SqlError::Code::InvalidParameter);
+            co_return Err(SqlError::Code::InvalidParameter);
         }
 
         // 1. 从Dialect获取查询元数据的SQL
@@ -117,7 +118,7 @@ public:
         ILIAS_CO_TRY(auto actual_schema, co_await BackendDialect::parse_schema_result(std::move(result)));
         if (actual_schema.empty()) {
             ILIAS_ERROR("ilias-sql", "Attach failed: Table '{}' does not exist or has no columns.", tableName);
-            co_return Unexpected(SqlError::Code::TableNotFound);
+            co_return Err(SqlError::Code::TableNotFound);
         }
 
         // 4. 校验Schema
@@ -126,7 +127,7 @@ public:
             std::string error_msg =
                 "Schema validation failed for table '" + tableName + "': " + detail::join_strs(validation.errors, "; ");
             ILIAS_ERROR("ilias-sql", "{}", error_msg);
-            co_return Unexpected(SqlError::SchemaMismatch);
+            co_return Err(SqlError::SchemaMismatch);
         }
 
         // 5. 校验通过，创建并返回Form实例
@@ -141,7 +142,7 @@ public:
         if (!identifier_validation.is_ok()) {
             ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
                         detail::join_strs(identifier_validation.errors, "; "));
-            co_return Unexpected(SqlError::Code::InvalidParameter);
+            co_return Err(SqlError::Code::InvalidParameter);
         }
 
         ILIAS_CO_TRY(auto ret, co_await db.transaction());
@@ -158,14 +159,14 @@ private:
         -> IoTask<Form<T, BackendTag, DatabaseT>> {
         if (!BackendDialect::check(db.sqlname())) {
             ILIAS_ERROR("ilias-sql", "Dialect {} is not supported", db.sqlname());
-            co_return Unexpected(SqlError::DialectNotSupported);
+            co_return Err(SqlError::DialectNotSupported);
         }
 
         auto identifier_validation = _validate_identifier_metadata(tableName);
         if (!identifier_validation.is_ok()) {
             ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
                         detail::join_strs(identifier_validation.errors, "; "));
-            co_return Unexpected(SqlError::InvalidParameter);
+            co_return Err(SqlError::InvalidParameter);
         }
 
         // Validate SqlTags configuration before creating table
@@ -174,29 +175,15 @@ private:
         if (!validation_errors.empty()) {
             std::string error_msg = "SqlTags validation failed: " + detail::join_strs(validation_errors, "; ");
             ILIAS_ERROR("ilias-sql", "{}", error_msg);
-            co_return Unexpected(SqlError::InvalidParameter);
+            co_return Err(SqlError::InvalidParameter);
         }
 
-        T                                            obj;
-        std::vector<std::string>                     colDefs;
-        std::vector<std::pair<std::string, SqlTags>> colWithTags;
-
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
-            std::string colDef = BackendDialect::template generate_column_definition<decltype(field)>(name, tags);
-            colWithTags.emplace_back(name, tags);
-            colDefs.push_back(colDef);
-        });
-
-        // Generate additional index statements if needed
-        auto indexStatements = BackendDialect::generate_index_statements(tableName, colWithTags);
-
-        std::string sql = std::string("CREATE TABLE ") + (if_not_exists ? "IF NOT EXISTS " : "") +
-                          BackendDialect::quote_identifier(tableName) + " (" + detail::join_strs(colDefs, ", ") +
-                          ")";
-        ILIAS_CO_TRYV(co_await db.execute(sql));
+        ILIAS_CO_TRY(auto schema,
+                     detail::SchemaGenerator<BackendTag>::template generateTableSchema<T>(tableName, if_not_exists));
+        ILIAS_CO_TRYV(co_await db.execute(schema.createTableSql));
 
         // Execute index creation statements
-        for (const auto &indexSql : indexStatements) {
+        for (const auto &indexSql : schema.indexStatements) {
             auto indexRet = co_await db.execute(indexSql);
             if (!indexRet) {
                 ILIAS_WARN("ilias-sql", "Failed to create index: {}", indexSql);
@@ -216,8 +203,9 @@ private:
         std::set<std::string> struct_columns;
 
         // 1. 检查C++结构体中的每个字段是否与数据库匹配
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const SqlTags &tags) {
-            std::string name(name_sv);
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const auto &tags) {
+            std::string name(detail::reflectedFieldName(name_sv, tags));
+            const auto  sqlTags = detail::extractSqlTags(tags);
             struct_columns.insert(name);
 
             auto it = actual_schema.find(name);
@@ -228,13 +216,13 @@ private:
             const auto &col_info = it->second;
 
             // 校验类型
-            if (!BackendDialect::template are_types_compatible<decltype(field)>(col_info.db_type, tags)) {
+            if (!BackendDialect::template are_types_compatible<decltype(field)>(col_info.db_type, sqlTags)) {
                 result.add_error("Column '" + name + "': Type mismatch. DB has '" + col_info.db_type + "'.");
             }
 
             // 校验 NOT NULL
             // 简单假设：非optional类型需要NOT NULL
-            bool expected_not_null = tags.not_null;
+            bool expected_not_null = sqlTags.not_null;
             if (expected_not_null != col_info.tags.not_null) {
                 result.add_error("Column '" + name +
                                  "': NOT NULL constraint mismatch. Expected: " + std::to_string(expected_not_null) +
@@ -242,7 +230,7 @@ private:
             }
 
             // 校验主键
-            if (tags.primary_key != col_info.tags.primary_key) {
+            if (sqlTags.primary_key != col_info.tags.primary_key) {
                 result.add_error("Column '" + name + "': PRIMARY KEY constraint mismatch.");
             }
         });
@@ -265,13 +253,13 @@ private:
 
         T                     obj;
         std::set<std::string> column_names;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name,
-                                                     const SqlTags & /*tags*/) {
-            if (!BackendDialect::validate_identifier(name)) {
-                result.add_error("Invalid column identifier '" + std::string(name) + "'.");
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+            const auto columnName = detail::reflectedFieldName(name, tags);
+            if (!BackendDialect::validate_identifier(columnName)) {
+                result.add_error("Invalid column identifier '" + std::string(columnName) + "'.");
             }
-            if (!column_names.emplace(name).second) {
-                result.add_error("Duplicate column identifier '" + std::string(name) + "'.");
+            if (!column_names.emplace(columnName).second) {
+                result.add_error("Duplicate column identifier '" + std::string(columnName) + "'.");
             }
         });
 
@@ -342,8 +330,13 @@ private:
 template <typename T, typename BackendTag, typename DatabaseT>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = []() {
-    auto names = NEKO_NAMESPACE::Reflect<T>::names();
-    return std::vector<std::string>(names.begin(), names.end());
+    T                        obj;
+    std::vector<std::string> names;
+    names.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        names.emplace_back(detail::reflectedFieldName(name, tags));
+    });
+    return names;
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
@@ -361,11 +354,11 @@ template <typename T, typename BackendTag, typename DatabaseT>
     requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
 std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
     std::vector<SqlTags> tags_array;
-    tags_array.resize(NEKO_NAMESPACE::Reflect<T>::value_count);
-    auto tags = NEKO_NAMESPACE::Reflect<T>::field_tags; // this is a tuple, may be has other tags in the field
-    [&tags, &tags_array]<std::size_t... I>(std::index_sequence<I...>) {
-        ((tags_array[I] = std::get<I>(tags)), ...);
-    }(std::make_index_sequence<NEKO_NAMESPACE::Reflect<T>::value_count>());
+    tags_array.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
+    T obj;
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view /*name*/, const auto &tags) {
+        tags_array.emplace_back(detail::extractSqlTags(tags));
+    });
     return tags_array;
 }();
 
@@ -374,9 +367,15 @@ template <typename T, typename BackendTag, typename DatabaseT>
 std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex = []() {
     T                             obj;
     std::map<std::ptrdiff_t, int> indexMap;
+    int                           index    = 0;
+    const auto                    objBegin = reinterpret_cast<std::uintptr_t>(std::addressof(obj));
+    const auto                    objEnd   = objBegin + sizeof(T);
     NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field) {
-        auto field_ptr      = (char *)(&field) - (char *)(&obj);
-        indexMap[field_ptr] = static_cast<int>(indexMap.size());
+        const auto fieldAddr = reinterpret_cast<std::uintptr_t>(std::addressof(field));
+        if (fieldAddr >= objBegin && fieldAddr < objEnd) {
+            indexMap[static_cast<std::ptrdiff_t>(fieldAddr - objBegin)] = index;
+        }
+        ++index;
     });
     return indexMap;
 }();
@@ -386,9 +385,10 @@ template <typename T, typename BackendTag, typename DatabaseT>
 std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
     T           obj;
     std::string ret;
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
-        if (tags.primary_key) {
-            ret = std::string(name);
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        auto sqlTags = detail::extractSqlTags(tags);
+        if (sqlTags.primary_key) {
+            ret = std::string(detail::reflectedFieldName(name, tags));
         }
     });
     return ret;
@@ -409,9 +409,13 @@ public:
 
     template <typename M>
     auto col(M T::*memberPtr) const {
-        std::string rawColName = mForm.getColumnName(memberPtr).value();
-        return detail::TypedColumn<std::decay_t<M>>(mQuotedAlias + "." + BackendDialect::quote_identifier(rawColName),
-                                                    rawColName);
+        return detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag>::col(memberPtr);
+    }
+
+    template <auto MemberPtr>
+        requires std::is_member_object_pointer_v<decltype(MemberPtr)>
+    auto col() const {
+        return detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag>::template col<MemberPtr>();
     }
     auto tableRef() const -> std::string { return mForm.tableRef() + " AS " + mQuotedAlias; }
     auto getAlias() const -> const std::string & { return mQuotedAlias; }

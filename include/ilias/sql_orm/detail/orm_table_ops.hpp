@@ -10,7 +10,10 @@
 #include "ilias/sql_orm/detail/orm_builder.hpp"
 
 #include <initializer_list>
+#include <memory>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
@@ -31,32 +34,38 @@ public:
 
     auto columnDefinitionSchema(std::string name) const -> std::string {
         std::string result;
-        NEKO_NAMESPACE::Reflect<T>::forEach([&](const auto &field, std::string_view fname, const SqlTags &tags) {
-            if (name == fname) {
+        T           obj;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view fname, const auto &tags) {
+            const auto columnName = detail::reflectedFieldName(fname, tags);
+            if (name == columnName) {
                 result = detail::SchemaGenerator<BackendTag>::template generateColumnDefinition<
-                    std::decay_t<decltype(field)>>(fname, tags);
+                    std::decay_t<decltype(field)>>(columnName, detail::extractSqlTags(tags));
             }
         });
         return result;
     }
 
-    auto createTableSchema() const -> IoResult<std::string> {
+    auto createTableSchema(bool ifNotExists = false) const -> IoResult<std::string> {
         auto tablename = derived().getTableName();
-        return detail::SchemaGenerator<BackendTag>::template generateCreateTable<T>(tablename);
+        ILIAS_TRY(auto schema,
+                  detail::SchemaGenerator<BackendTag>::template generateTableSchema<T>(tablename, ifNotExists));
+        return schema.createTableSql;
     }
 
     auto indexStatementsSchema() const -> std::vector<std::string> {
-        auto                                         columns = derived().getColumnNames();
-        auto                                         tags    = derived().getColumnTags();
-        std::vector<std::pair<std::string, SqlTags>> columnTags;
-        for (auto i = 0; i < static_cast<int>(columns.size()); ++i) {
-            columnTags.emplace_back(columns[i], tags[i]);
+        auto schema = detail::SchemaGenerator<BackendTag>::template generateTableSchema<T>(derived().getTableName());
+        if (!schema) {
+            return {};
         }
-        return detail::SchemaGenerator<BackendTag>::generateIndexStatements(derived().getTableName(), columnTags);
+        return schema->indexStatements;
     }
 
     auto completeSchema() const -> std::vector<std::string> {
-        return detail::SchemaGenerator<BackendTag>::template generateCompleteSchema<T>(derived().getTableName());
+        auto schema = detail::SchemaGenerator<BackendTag>::template generateTableSchema<T>(derived().getTableName());
+        if (!schema) {
+            return {};
+        }
+        return schema->completeStatements();
     }
 
     /**
@@ -69,11 +78,12 @@ public:
         std::vector<std::string> errors;
 
         T obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const SqlTags &tags) {
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const auto &tags) {
             using rawType    = detail::strip_wrapper_t<decltype(field)>;
-            auto fieldErrors = tags.getValidationErrors<rawType>();
+            auto sqlTags     = detail::extractSqlTags(tags);
+            auto fieldErrors = sqlTags.template getValidationErrors<rawType>();
             for (const auto &error : fieldErrors) {
-                errors.push_back(std::string(name) + ": " + error);
+                errors.push_back(std::string(detail::reflectedFieldName(name, tags)) + ": " + error);
             }
         });
 
@@ -84,9 +94,10 @@ public:
         std::vector<std::string_view> timestampFields;
         T                             obj;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
-                                                if (tags.hasTimestampBehavior()) {
-                                                    timestampFields.emplace_back(name);
+                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+                                                auto sqlTags = detail::extractSqlTags(tags);
+                                                if (sqlTags.hasTimestampBehavior()) {
+                                                    timestampFields.emplace_back(detail::reflectedFieldName(name, tags));
                                                 }
                                             });
         return timestampFields;
@@ -96,9 +107,10 @@ public:
         std::vector<std::string_view> createdAtFields;
         T                             obj;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
-                                                if (tags.created_at) {
-                                                    createdAtFields.emplace_back(name);
+                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+                                                auto sqlTags = detail::extractSqlTags(tags);
+                                                if (sqlTags.created_at) {
+                                                    createdAtFields.emplace_back(detail::reflectedFieldName(name, tags));
                                                 }
                                             });
         return createdAtFields;
@@ -108,9 +120,10 @@ public:
         std::vector<std::string_view> updatedAtFields;
         T                             obj;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const SqlTags &tags) {
-                                                if (tags.updated_at) {
-                                                    updatedAtFields.emplace_back(name);
+                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+                                                auto sqlTags = detail::extractSqlTags(tags);
+                                                if (sqlTags.updated_at) {
+                                                    updatedAtFields.emplace_back(detail::reflectedFieldName(name, tags));
                                                 }
                                             });
         return updatedAtFields;
@@ -167,13 +180,15 @@ public:
         std::vector<std::string> quotedColumnsToInsert;
         NEKO_NAMESPACE::Reflect<T>::forEach(
             first_item, [&](const auto &field, std::string_view name, const auto &tags) {
+                const auto sqlTags    = detail::extractSqlTags(tags);
+                const auto columnName = detail::reflectedFieldName(name, tags);
                 // 如果字段是 created_at 并且它的值是空的，则跳过此列
-                if (tags.created_at && is_sql_null(field) && Dialect<BackendTag>::support_timestamp_default()) {
+                if (sqlTags.created_at && is_sql_null(field) && Dialect<BackendTag>::support_timestamp_default()) {
                     return;
                 }
                 // 否则，将此列加入到 INSERT 语句中
-                columnsToInsert.emplace_back(name);
-                quotedColumnsToInsert.emplace_back(Dialect<BackendTag>::quote_identifier(name));
+                columnsToInsert.emplace_back(columnName);
+                quotedColumnsToInsert.emplace_back(Dialect<BackendTag>::quote_identifier(columnName));
             });
         std::string rowPlaceholder = "(";
         for ([[maybe_unused]] int i = 0; i < (int)columnsToInsert.size(); ++i) {
@@ -188,15 +203,16 @@ public:
                           detail::join_strs(allRowsPlaceholder, ", ");
         auto ret = co_await derived().db().prepare(sql);
         if (!ret)
-            co_return Unexpected(ret.error());
+            co_return Err(ret.error());
         int                                bindIndex = 1;
         std::vector<std::shared_ptr<void>> binds;
         for (const auto &item : items) {
             if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
                 // if sql dialect support default timestamp, then we don't need to generate timestamp by ourselves
-                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const SqlTags &tags) {
+                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
                     using FieldType = std::decay_t<decltype(field)>;
-                    if (tags.created_at && is_sql_null(field)) {
+                    const auto sqlTags = detail::extractSqlTags(tags);
+                    if (sqlTags.created_at && is_sql_null(field)) {
                         return;
                     }
                     SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
@@ -204,12 +220,13 @@ public:
             }
             else {
                 // if sql dialect doesn't support default timestamp, then we need to generate timestamp by ourselves
-                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const SqlTags &tags) {
+                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
                     using FieldType = std::decay_t<decltype(field)>;
-                    if (tags.created_at) {
+                    const auto sqlTags = detail::extractSqlTags(tags);
+                    if (sqlTags.created_at) {
                         if constexpr (std::is_same_v<FieldType, std::string> || std::is_same_v<FieldType, SqlDate>) {
                             std::shared_ptr<FieldType> now = std::make_shared<FieldType>();
-                            detail::TimestampUpdater {.created_at = true}(*now, tags);
+                            detail::TimestampUpdater {.created_at = true}(*now, sqlTags);
                             SqlBinder<FieldType>::bind(**ret, bindIndex++, *now);
                             binds.push_back(now);
                             return;
@@ -234,11 +251,13 @@ public:
             auto insertBuilder =
                 detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
             T obj;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
-                if (tags.created_at) {
-                    detail::TimestampUpdater {.created_at = true}(field, tags);
-                    insertBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(name),
-                                                          std::string(name)) = std::move(field));
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
+                const auto sqlTags    = detail::extractSqlTags(tags);
+                const auto columnName = detail::reflectedFieldName(name, tags);
+                if (sqlTags.created_at) {
+                    detail::TimestampUpdater {.created_at = true}(field, sqlTags);
+                    insertBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
+                                                          std::string(columnName)) = std::move(field));
                 }
             });
             return insertBuilder;
@@ -252,11 +271,13 @@ public:
         else {
             auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().tableRef());
             T    obj;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const SqlTags &tags) {
-                if (tags.updated_at) {
-                    detail::TimestampUpdater {.updated_at = true}(field, tags);
-                    updateBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(name),
-                                                          std::string(name)) = std::move(field));
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
+                const auto sqlTags    = detail::extractSqlTags(tags);
+                const auto columnName = detail::reflectedFieldName(name, tags);
+                if (sqlTags.updated_at) {
+                    detail::TimestampUpdater {.updated_at = true}(field, sqlTags);
+                    updateBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
+                                                          std::string(columnName)) = std::move(field));
                     return;
                 }
             });
@@ -275,14 +296,16 @@ public:
         requires(detail::HasSqlMethod<Ts<Us>> && ...)
     auto select(Ts<Us>... args) const {
         return detail::ProjectedSelectBuilder<Us...>(derived().db(), derived().tableRef(), {args.sql()...},
-                                                     &Dialect<BackendTag>::quote_identifier_path);
+                                                     &Dialect<BackendTag>::quote_identifier_path,
+                                                     detail::collectSqlDiagnostics(args...));
     }
 
     template <typename... Ts>
         requires(detail::HasSqlMethod<Ts> && ...)
     auto select(Ts... args) const {
         return detail::ProjectedSelectBuilder<>(derived().db(), derived().tableRef(), {args.sql()...},
-                                                &Dialect<BackendTag>::quote_identifier_path);
+                                                &Dialect<BackendTag>::quote_identifier_path,
+                                                detail::collectSqlDiagnostics(args...));
     }
 
     auto select(std::string_view columns) const {
@@ -322,7 +345,8 @@ public:
     auto count(detail::TypedColumn<U> column) const {
         return detail::ProjectedSelectBuilder<int>(derived().db(), derived().tableRef(),
                                                    {"COUNT(" + column.sql() + ")"},
-                                                   &Dialect<BackendTag>::quote_identifier_path);
+                                                   &Dialect<BackendTag>::quote_identifier_path,
+                                                   detail::collectSqlDiagnostics(column));
     }
 
     // =========================================================
@@ -345,19 +369,30 @@ public:
 
     template <typename M>
     auto getColumnIndex(M T::*memberPtr) const -> int {
-        T             *tmp  = nullptr;
-        std::ptrdiff_t ptr  = (char *)&(tmp->*memberPtr) - (char *)tmp;
-        auto           item = derived().getColumnIndex().find(ptr);
-        if (item == derived().getColumnIndex().end())
-            return -1;
-        return item->second;
+        T    obj;
+        auto target = std::addressof(obj.*memberPtr);
+        int  index  = 0;
+        int  result = -1;
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field) {
+            if (result != -1) {
+                return;
+            }
+            using Field = std::remove_cvref_t<decltype(field)>;
+            if constexpr (std::is_same_v<Field, M>) {
+                if (std::addressof(field) == target) {
+                    result = index;
+                }
+            }
+            ++index;
+        });
+        return result;
     }
 
     template <typename M>
     auto getColumnName(M T::*memberPtr) const -> IoResult<std::string> {
         auto index = getColumnIndex(memberPtr);
         if (index == -1)
-            return Unexpected(std::make_error_code(std::errc::invalid_argument));
+            return Err(std::make_error_code(std::errc::invalid_argument));
         return derived().getColumnNames().at(index);
     }
 
@@ -365,7 +400,7 @@ public:
     auto getColumnTag(M T::*memberPtr) const -> IoResult<SqlTags> {
         auto index = getColumnIndex(memberPtr);
         if (index == -1)
-            return Unexpected(std::make_error_code(std::errc::invalid_argument));
+            return Err(std::make_error_code(std::errc::invalid_argument));
         return derived().getColumnTags().at(index);
     }
 
@@ -373,18 +408,69 @@ public:
     // 4. 列访问 DSL (col, sql)
     // =========================================================
 
+    auto invalidColumnDiagnostic(std::string_view op) const -> std::string {
+        return "ORM " + std::string(op) + " member pointer does not map to a reflected column in table '" +
+               derived().getTableName() + "'";
+    }
+
     template <typename M>
     auto col(M T::*memberPtr) const {
-        auto name = getColumnName(memberPtr).value();
+        auto nameRet = getColumnName(memberPtr);
+        if (!nameRet) {
+            return detail::TypedColumn<std::decay_t<M>>::invalid(invalidColumnDiagnostic("col"));
+        }
+        auto name = std::move(nameRet).value();
         return detail::TypedColumn<std::decay_t<M>>(derived().getAlias() + "." +
                                                         Dialect<BackendTag>::quote_identifier(name),
                                                     name);
     }
 
+    template <auto MemberPtr>
+        requires std::is_member_object_pointer_v<decltype(MemberPtr)>
+    auto col() const {
+        using Member = std::remove_cvref_t<decltype(std::declval<T &>().*MemberPtr)>;
+        constexpr auto index = detail::reflectedMemberPointerIndex<T, MemberPtr>();
+        if constexpr (index < 0) {
+            static_assert(index >= 0,
+                          "Member pointer does not map to ORM reflection metadata. "
+                          "Use col(&T::field) for the runtime-checked path.");
+        }
+        else {
+            constexpr auto names = detail::reflectedFieldNames<T>();
+            constexpr auto nameView = names[static_cast<std::size_t>(index)];
+            std::string    name(nameView);
+            return detail::TypedColumn<std::decay_t<Member>>(derived().getAlias() + "." +
+                                                                 Dialect<BackendTag>::quote_identifier(name),
+                                                             name);
+        }
+    }
+
     template <typename M>
     auto sql(M T::*memberPtr) const {
-        auto name = getColumnName(memberPtr).value();
+        auto nameRet = getColumnName(memberPtr);
+        if (!nameRet) {
+            return detail::TypedColumn<std::decay_t<M>>::invalid(invalidColumnDiagnostic("sql"));
+        }
+        auto name = std::move(nameRet).value();
         return detail::TypedColumn<std::decay_t<M>>(Dialect<BackendTag>::quote_identifier(name), name);
+    }
+
+    template <auto MemberPtr>
+        requires std::is_member_object_pointer_v<decltype(MemberPtr)>
+    auto sql() const {
+        using Member = std::remove_cvref_t<decltype(std::declval<T &>().*MemberPtr)>;
+        constexpr auto index = detail::reflectedMemberPointerIndex<T, MemberPtr>();
+        if constexpr (index < 0) {
+            static_assert(index >= 0,
+                          "Member pointer does not map to ORM reflection metadata. "
+                          "Use sql(&T::field) for the runtime-checked path.");
+        }
+        else {
+            constexpr auto names = detail::reflectedFieldNames<T>();
+            constexpr auto nameView = names[static_cast<std::size_t>(index)];
+            std::string    name(nameView);
+            return detail::TypedColumn<std::decay_t<Member>>(Dialect<BackendTag>::quote_identifier(name), name);
+        }
     }
 
     auto print(std::ostream &stream = std::cout) -> Task<void> {

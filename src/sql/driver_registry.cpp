@@ -108,7 +108,7 @@ auto DriverManager::instance() -> DriverManager & {
 auto DriverManager::registerDriver(std::string_view name, DriverFactoryFn factory) -> IoResult<void> {
     if (drivers_.find(std::string(name)) != drivers_.end()) {
         ILIAS_WARN("ilias-sql", "{} has already registerd", name);
-        return Unexpected(SqlError::Code::DriverAlreadyRegistered);
+        return Err(SqlError::Code::DriverAlreadyRegistered);
     }
     ILIAS_TRACE("ilias-sql", "Register driver: {}", name);
     drivers_[std::string(name)] = std::move(factory);
@@ -121,7 +121,7 @@ auto DriverManager::createConnection(std::string_view driverName, const ConnectO
     if (auto it = drivers_.find(std::string(driverName)); it != drivers_.end()) {
         return it->second(opts);
     }
-    return Unexpected(SqlError::Code::DriverNotFound);
+    return Err(SqlError::Code::DriverNotFound);
 }
 
 auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
@@ -135,7 +135,7 @@ auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
 
     if (!handle) {
         // 最好有更详细的错误报告
-        return Unexpected(std::make_error_code(std::errc::no_such_file_or_directory));
+        return Err(std::make_error_code(std::errc::no_such_file_or_directory));
     }
 
     // 定义注册函数的类型
@@ -154,18 +154,18 @@ auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
 
     if (!create_driver || !destroy_driver || !get_plugin_name || !get_plugin_api_version) {
         closePluginHandle(handle);
-        return Unexpected(std::make_error_code(std::errc::invalid_argument));
+        return Err(std::make_error_code(std::errc::invalid_argument));
     }
 
     try {
         if (get_plugin_api_version() != ILIAS_SQL_API_VERSION) {
             closePluginHandle(handle);
-            return Unexpected(std::make_error_code(std::errc::operation_not_supported));
+            return Err(std::make_error_code(std::errc::operation_not_supported));
         }
         auto pluginName = get_plugin_name();
         if (!pluginName || pluginName[0] == '\0') {
             closePluginHandle(handle);
-            return Unexpected(std::make_error_code(std::errc::invalid_argument));
+            return Err(std::make_error_code(std::errc::invalid_argument));
         }
         auto ret = registerDriver(pluginName, [create_driver, destroy_driver](const ConnectOptions &opts)
                                                   -> std::unique_ptr<IConnection> {
@@ -196,11 +196,11 @@ auto DriverManager::loadPlugin(std::string_view path_) -> IoResult<void> {
         });
         if (!ret) {
             closePluginHandle(handle);
-            return Unexpected(ret.error());
+            return Err(ret.error());
         }
     } catch (const std::exception &e) {
         closePluginHandle(handle);
-        return Unexpected(std::make_error_code(std::errc::invalid_argument));
+        return Err(std::make_error_code(std::errc::invalid_argument));
     }
 
     plugins_.push_back(handle);

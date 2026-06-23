@@ -126,7 +126,7 @@ static auto mapPostgresErrorToSqlError(PGresult *result) -> SqlError::Code {
             return SqlError::Code::ColumnNotFound;
         }
         // Generic syntax/access error
-        return (SqlError::Code)42;
+        return SqlError::Code::InvalidSqlStatement;
     }
     // Class 22: Data Exception
     if (errorClass == "22") {
@@ -139,39 +139,58 @@ static auto mapPostgresErrorToSqlError(PGresult *result) -> SqlError::Code {
             return SqlError::Code::DataTruncated;
         }
         // Generic data exception
-        return (SqlError::Code)22;
+        return SqlError::Code::InvalidDataFormat;
     }
     // Class 08: Connection Exception
     if (errorClass == "08") {
         return SqlError::Code::NotConnected;
     }
     // Default to unknown error
-    auto code = errorClass[0] * 128 + errorClass[1];
-    return static_cast<SqlError::Code>(code);
+    return SqlError::Code::UnknownError;
+}
+
+static auto makePostgresNativeError(PGresult *result) -> NativeSqlError {
+    NativeSqlError error;
+    error.backend = "postgresql";
+    if (!result) {
+        error.code    = static_cast<int>(PGRES_FATAL_ERROR);
+        error.message = "Unknown error (null result)";
+        return error;
+    }
+    error.code = static_cast<int>(PQresultStatus(result));
+    if (const char *sqlstate = PQresultErrorField(result, PG_DIAG_SQLSTATE); sqlstate) {
+        error.sqlstate = sqlstate;
+    }
+    error.message = extractDetailedErrorMessage(result);
+    return error;
+}
+
+static auto makePostgresNativeError(int ret, PGconn *conn) -> NativeSqlError {
+    NativeSqlError error;
+    error.backend = "postgresql";
+    error.code    = ret;
+    if (conn) {
+        if (const char *message = PQerrorMessage(conn); message) {
+            error.message = message;
+        }
+    }
+    return error;
 }
 
 /**
- * @brief Register a PostgreSQL error with the SqlErrorCategory
+ * @brief Map a PostgreSQL error to the portable SqlError code.
  *
- * This function extracts detailed error information and registers it
- * with the error category for later retrieval.
- *
- * @param result The PGresult containing the error
  * @return The appropriate SqlError::Code
  */
 static auto registerPostgresError(PGresult *result) -> SqlError::Code {
-    auto errorCode = mapPostgresErrorToSqlError(result);
-    auto message   = extractDetailedErrorMessage(result);
-    // Register the detailed message with the error category
-    SqlErrorCategory::instance().registerMessage(static_cast<int>(errorCode), message);
-    return errorCode;
+    return mapPostgresErrorToSqlError(result);
 }
 
 static auto registerPostgresError(int ret, PGconn *conn) -> SqlError::Code {
-    std::string    message = PQerrorMessage(conn);
-    SqlError::Code code    = static_cast<SqlError::Code>(ret);
-    SqlErrorCategory::instance().registerMessage(static_cast<int>(code), message);
-    return code;
+    if (conn && PQstatus(conn) == CONNECTION_BAD) {
+        return SqlError::Code::NotConnected;
+    }
+    return ret == 0 ? SqlError::Code::UnknownError : SqlError::Code::UnknownError;
 }
 
 template <typename Fn>
@@ -292,6 +311,14 @@ auto Postgres::lastErrorMessage() -> const char * {
     return PQerrorMessage(mConn);
 }
 
+auto Postgres::setLastNativeError(NativeSqlError error) -> void {
+    mLastNativeError = std::move(error);
+}
+
+auto Postgres::lastNativeError() const -> std::optional<NativeSqlError> {
+    return mLastNativeError;
+}
+
 // 在 connect() 成功后调用
 auto Postgres::initializeTypeMap() -> IoTask<void> {
     // 这个查询获取了基本类型的OID和它们的名称
@@ -300,12 +327,12 @@ auto Postgres::initializeTypeMap() -> IoTask<void> {
 
     auto send_result = co_await sendQuery(query_sql);
     if (!send_result) {
-        co_return Unexpected(send_result.error());
+        co_return Err(send_result.error());
     }
 
     auto res_ptr = co_await getResult();
     if (!res_ptr) {
-        co_return Unexpected(res_ptr.error());
+        co_return Err(res_ptr.error());
     }
 
     // Use unique_ptr to ensure PQclear is called
@@ -313,9 +340,10 @@ auto Postgres::initializeTypeMap() -> IoTask<void> {
 
     auto ret = PQresultStatus(result.get());
     if (ret != PGRES_TUPLES_OK && ret != PGRES_COMMAND_OK) {
+        mLastNativeError = makePostgresNativeError(result.get());
         auto code = registerPostgresError(result.get());
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
 
     int size = PQntuples(result.get());
@@ -355,36 +383,37 @@ auto Postgres::info() -> std::string {
 
 auto Postgres::connect(std::string_view conninfo) -> IoTask<void> {
     if (mConn) {
-        co_return Unexpected(SqlError::Code::AlreadyConnected);
+        co_return Err(SqlError::Code::AlreadyConnected);
     }
 
     mConn = PQconnectStart(std::string(conninfo).c_str());
     if (mConn == nullptr) {
         ILIAS_ERROR("ilias-pgsql", "PQconnectStart returned null, possibly out of memory");
-        co_return Unexpected(std::make_error_code(std::errc::not_enough_memory));
+        co_return Err(std::make_error_code(std::errc::not_enough_memory));
     }
 
     if (PQstatus(mConn) == CONNECTION_BAD) {
+        mLastNativeError = makePostgresNativeError(CONNECTION_BAD, mConn);
         auto code = registerPostgresError(CONNECTION_BAD, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
         PQfinish(mConn);
         mConn = nullptr;
-        co_return Unexpected(code);
+        co_return Err(code);
     }
 
     if (mCtxt == nullptr) {
-        co_return Unexpected(IoError::InvalidArgument);
+        co_return Err(IoError::InvalidArgument);
     }
     auto fd = PQsocket(mConn);
     if (fd < 0) {
         ILIAS_ERROR("ilias-pgsql", "get socket failed");
-        co_return Unexpected(IoError::Unknown);
+        co_return Err(IoError::Unknown);
     }
     if (!mPoller || (mPoller.fd() != (fd_t)fd)) {
         auto poller_result = co_await Poller::make((fd_t)fd, IoDescriptor::Socket);
         if (!poller_result) {
             ILIAS_ERROR("ilias-pgsql", "add fd({}) to IoContext failed.", fd);
-            co_return Unexpected(poller_result.error());
+            co_return Err(poller_result.error());
         }
         mPoller = std::move(poller_result.value());
     }
@@ -392,32 +421,34 @@ auto Postgres::connect(std::string_view conninfo) -> IoTask<void> {
     PostgresPollingStatusType poll_status;
     while ((poll_status = PQconnectPoll(mConn)) != PGRES_POLLING_OK) {
         if (poll_status == PGRES_POLLING_FAILED) {
+            mLastNativeError = makePostgresNativeError(PGRES_POLLING_FAILED, mConn);
             auto code = registerPostgresError(PGRES_POLLING_FAILED, mConn);
             ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code),
                         std::error_code(code).message());
             PQfinish(mConn);
             mConn = nullptr;
-            co_return Unexpected(code);
+            co_return Err(code);
         }
 
         uint32_t pollEvents = (poll_status == PGRES_POLLING_READING) ? POLLIN : POLLOUT;
 
         auto poll_ret = co_await mPoller.poll(pollEvents);
         if (!poll_ret) {
-            co_return Unexpected(poll_ret.error());
+            co_return Err(poll_ret.error());
         }
     }
 
     ILIAS_TRACE("ilias-pgsql", "PostgreSQL connection established.");
     if (int ret = PQsetnonblocking(mConn, 1); ret != 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
 
     auto init_ret = co_await initializeTypeMap();
     if (!init_ret) {
-        co_return Unexpected(init_ret.error());
+        co_return Err(init_ret.error());
     }
 
     // 注册PostgreSQL类型解析器和绑定器
@@ -432,29 +463,29 @@ auto Postgres::connect(std::string_view conninfo) -> IoTask<void> {
 
 auto Postgres::waitForReadable() -> IoTask<void> {
     if (!mPoller) {
-        co_return Unexpected(IoError::Unknown);
+        co_return Err(IoError::Unknown);
     }
     auto poll_ret = co_await mPoller.poll(POLLIN);
     if (!poll_ret) {
-        co_return Unexpected(poll_ret.error());
+        co_return Err(poll_ret.error());
     }
     co_return {};
 }
 
 auto Postgres::waitForWritable() -> IoTask<void> {
     if (!mPoller) {
-        co_return Unexpected(IoError::SocketIsNotConnected);
+        co_return Err(IoError::SocketIsNotConnected);
     }
     auto poll_ret = co_await mPoller.poll(POLLOUT);
     if (!poll_ret) {
-        co_return Unexpected(poll_ret.error());
+        co_return Err(poll_ret.error());
     }
     co_return {};
 }
 
 auto Postgres::flushOutput() -> IoTask<void> {
     if (!mConn) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     while (true) {
         int ret = PQflush(mConn);
@@ -462,28 +493,30 @@ auto Postgres::flushOutput() -> IoTask<void> {
             co_return {};
         }
         if (ret == -1) {
+            mLastNativeError = makePostgresNativeError(ret, mConn);
             auto code = registerPostgresError(ret, mConn);
             ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code),
                         std::error_code(code).message());
-            co_return Unexpected(code);
+            co_return Err(code);
         }
         // ret == 1: Need to wait for socket to be writable and try again
         auto wait_ret = co_await waitForWritable();
         if (!wait_ret) {
-            co_return Unexpected(wait_ret.error());
+            co_return Err(wait_ret.error());
         }
     }
 }
 
 auto Postgres::consumeInput() -> IoResult<void> {
     if (!mConn) {
-        return Unexpected(SqlError::Code::NotConnected);
+        return Err(SqlError::Code::NotConnected);
     }
     auto ret = PQconsumeInput(mConn);
     if (ret != 1) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        return Unexpected(code);
+        return Err(code);
     }
     return {};
 }
@@ -491,18 +524,19 @@ auto Postgres::consumeInput() -> IoResult<void> {
 auto Postgres::sendQuery(std::string_view sql) -> IoTask<void> {
     ILIAS_TRACE("ilias-pgsql", "Executing SQL: {}", sql);
     if (!mConn) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = PQsendQuery(mConn, std::string(sql).c_str());
     if (ret == 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
     // Flush the output buffer to ensure the query is sent to the server
     auto flush_ret = co_await flushOutput();
     if (!flush_ret) {
-        co_return Unexpected(flush_ret.error());
+        co_return Err(flush_ret.error());
     }
     co_return {};
 }
@@ -512,19 +546,20 @@ auto Postgres::sendQueryParams(std::string_view command, int nParams, const Oid 
                                int resultFormat) -> IoTask<void> {
     ILIAS_TRACE("ilias-pgsql", "Executing SQL with {} params: {}", nParams, command);
     if (!mConn) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = PQsendQueryParams(mConn, std::string(command).c_str(), nParams, paramTypes, paramValues, paramLengths,
                                  paramFormats, resultFormat);
     if (ret == 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
     // Flush the output buffer to ensure the query is sent to the server
     auto flush_ret = co_await flushOutput();
     if (!flush_ret) {
-        co_return Unexpected(flush_ret.error());
+        co_return Err(flush_ret.error());
     }
 
     co_return {};
@@ -534,18 +569,19 @@ auto Postgres::sendPrepare(std::string_view stmtName, std::string_view query, in
     -> IoTask<void> {
     ILIAS_TRACE("ilias-pgsql", "Preparing statement '{}' with {} params: {}", stmtName, nParams, query);
     if (!mConn) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = PQsendPrepare(mConn, std::string(stmtName).c_str(), std::string(query).c_str(), nParams, paramTypes);
     if (ret == 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
     // Flush the output buffer to ensure the prepare command is sent to the server
     auto flush_ret = co_await flushOutput();
     if (!flush_ret) {
-        co_return Unexpected(flush_ret.error());
+        co_return Err(flush_ret.error());
     }
     co_return {};
 }
@@ -554,19 +590,20 @@ auto Postgres::sendQueryPrepared(std::string_view stmtName, int nParams, const c
                                  const int *paramLengths, const int *paramFormats, int resultFormat) -> IoTask<void> {
     ILIAS_TRACE("ilias-pgsql", "Executing prepared statement '{}' with {} params", stmtName, nParams);
     if (!mConn) {
-        co_return Unexpected(SqlError::Code::NotConnected);
+        co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = PQsendQueryPrepared(mConn, std::string(stmtName).c_str(), nParams, paramValues, paramLengths,
                                    paramFormats, resultFormat);
     if (ret == 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         auto code = registerPostgresError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
     // Flush the output buffer to ensure the query is sent to the server
     auto flush_ret = co_await flushOutput();
     if (!flush_ret) {
-        co_return Unexpected(flush_ret.error());
+        co_return Err(flush_ret.error());
     }
     co_return {};
 }
@@ -578,6 +615,7 @@ auto Postgres::setSingleRowMode() -> bool {
     }
     int ret = PQsetSingleRowMode(mConn);
     if (ret == 0) {
+        mLastNativeError = makePostgresNativeError(ret, mConn);
         ILIAS_ERROR("ilias-pgsql", "PQsetSingleRowMode failed: {}", PQerrorMessage(mConn));
         return false;
     }
@@ -589,7 +627,7 @@ auto Postgres::getResult() -> IoTask<PGresult *> {
         co_await waitForReadable();
         if (auto ret = consumeInput(); !ret) {
             ILIAS_ERROR("ilias-pgsql", "Connection lost while waiting for result: {}", ret.error().message());
-            co_return Unexpected(ret.error());
+            co_return Err(ret.error());
         }
     }
     PGresult *result = PQgetResult(mConn);
@@ -645,6 +683,7 @@ auto PostgresStreamingResultSet::initColumnMetadata() -> void {
 auto PostgresStreamingResultSet::next() -> IoTask<bool> {
     if (mIsResultFetched == true) {
         mIsResultFetched = false;
+        ++mRowsFetched;
         co_return true;
     }
     mCurrentRow.reset(nullptr);
@@ -655,7 +694,7 @@ auto PostgresStreamingResultSet::next() -> IoTask<bool> {
     // Fetch the next row
     auto res_ptr = co_await mPg->getResult();
     if (!res_ptr) {
-        co_return Unexpected(res_ptr.error());
+        co_return Err(res_ptr.error());
     }
     PGresult *result = res_ptr.value();
     if (result == nullptr) {
@@ -681,9 +720,13 @@ auto PostgresStreamingResultSet::next() -> IoTask<bool> {
     else if (status == PGRES_COMMAND_OK) {
         char *cnt = PQcmdTuples(result);
         if (cnt && *cnt) {
-            auto ret = std::from_chars(cnt, cnt + strlen(cnt), mRowsAffected);
+            size_t affected = 0;
+            auto   ret      = std::from_chars(cnt, cnt + strlen(cnt), affected);
             if (ret.ec != std::errc()) {
                 ILIAS_TRACE("ilias-pgsql", "Failed to parse rows affected: {}", std::make_error_code(ret.ec).message());
+            }
+            else {
+                mRowsAffected = affected;
             }
         }
         PQclear(result);
@@ -691,20 +734,43 @@ auto PostgresStreamingResultSet::next() -> IoTask<bool> {
         co_return false;
     }
     else {
+        mLastNativeError = makePostgresNativeError(result);
+        if (mPg) {
+            mPg->setLastNativeError(*mLastNativeError);
+        }
+        auto code = registerPostgresError(result);
         PQclear(result);
         co_await drainRemainingResults();
-        auto code = registerPostgresError(result);
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
 }
 
-auto PostgresStreamingResultSet::rowCount() const -> size_t {
+auto PostgresStreamingResultSet::capabilities() const -> ResultCapabilities {
+    return ResultCapabilities {
+        .streaming     = true,
+        .exactRowCount = false,
+        .rowsAffected  = mRowsAffected.has_value(),
+    };
+}
+
+auto PostgresStreamingResultSet::rowsFetched() const -> size_t {
     return mRowsFetched;
 }
 
-auto PostgresStreamingResultSet::rowAffected() const -> size_t {
+auto PostgresStreamingResultSet::exactRowCount() const -> std::optional<size_t> {
+    return std::nullopt;
+}
+
+auto PostgresStreamingResultSet::rowsAffected() const -> std::optional<size_t> {
     return mRowsAffected;
+}
+
+auto PostgresStreamingResultSet::lastNativeError() const -> std::optional<NativeSqlError> {
+    if (mLastNativeError) {
+        return mLastNativeError;
+    }
+    return mPg ? mPg->lastNativeError() : std::nullopt;
 }
 
 auto PostgresStreamingResultSet::columnCount() const -> size_t {
@@ -720,19 +786,19 @@ auto PostgresStreamingResultSet::columnName(size_t index) const -> std::string_v
 
 auto PostgresStreamingResultSet::getValue(size_t index) -> IoResult<SqlCellView> {
     if (!mCurrentRow || index >= static_cast<size_t>(mColumnCount)) {
-        return Unexpected(SqlError::Code::InvalidIndex);
+        return Err(SqlError::Code::InvalidIndex);
     }
     return toValueView(static_cast<int>(index));
 }
 
 auto PostgresStreamingResultSet::getValue(std::string_view name) -> IoResult<SqlCellView> {
     if (!mCurrentRow) {
-        return Unexpected(SqlError::Code::NoMoreData);
+        return Err(SqlError::Code::NoMoreData);
     }
 
     auto it = mColumnIndex.find(std::string(name));
     if (it == mColumnIndex.end()) {
-        return Unexpected(SqlError::Code::InvalidIndex);
+        return Err(SqlError::Code::InvalidIndex);
     }
     return toValueView(it->second);
 }
@@ -744,7 +810,7 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
     }
     auto res_ptr = co_await mPg->getResult();
     if (!res_ptr) {
-        co_return Unexpected(res_ptr.error());
+        co_return Err(res_ptr.error());
     }
     PGresult *result = res_ptr.value();
     if (result == nullptr) {
@@ -754,10 +820,14 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
 
     auto status = PQresultStatus(result);
     if (status == PGRES_FATAL_ERROR) {
+        mLastNativeError = makePostgresNativeError(result);
+        if (mPg) {
+            mPg->setLastNativeError(*mLastNativeError);
+        }
         auto code     = registerPostgresError(result);
         mEndOfResults = true;
         PQclear(result); // 清理结果
-        co_return Unexpected(code);
+        co_return Err(code);
     }
 
     // 只要执行成功，就记录当前结果，并初始化元数据
@@ -771,10 +841,14 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
         if (status == PGRES_COMMAND_OK) {
             char *cnt = PQcmdTuples(result);
             if (cnt && *cnt) {
-                auto ret = std::from_chars(cnt, cnt + strlen(cnt), mRowsAffected);
+                size_t affected = 0;
+                auto   ret      = std::from_chars(cnt, cnt + strlen(cnt), affected);
                 if (ret.ec != std::errc()) {
                     ILIAS_TRACE("ilias-pgsql", "Failed to parse rows affected: {}",
                                 std::make_error_code(ret.ec).message());
+                }
+                else {
+                    mRowsAffected = affected;
                 }
             }
         }
@@ -786,7 +860,7 @@ auto PostgresStreamingResultSet::getResultForQuery() -> IoTask<void> {
 auto PostgresStreamingResultSet::toValueView(int colIndex) -> IoResult<SqlCellView> {
     if (!mCurrentRow) {
         ILIAS_TRACE("ilias-pgsql", "No current row available.");
-        return Unexpected(SqlError::Code::NoMoreData);
+        return Err(SqlError::Code::NoMoreData);
     }
     const int rowIndex = 0;
     if (PQgetisnull(mCurrentRow.get(), rowIndex, colIndex)) {
@@ -875,20 +949,26 @@ auto PostgresStatement::ensurePrepared() -> IoTask<void> {
     auto send_ret = co_await mPg->sendPrepare(*mStatementName, mPreparedSql, paramCount,
                                               mParamValuesPtrs.get_column<3>().data()); // Let server infer types
     if (!send_ret) {
+        mLastNativeError = mPg ? mPg->lastNativeError() : std::nullopt;
         ILIAS_ERROR("ilias-pgsql", "sendPrepare failed for '{}': {}", *mStatementName, mPg->lastErrorMessage());
-        co_return Unexpected(send_ret.error());
+        co_return Err(send_ret.error());
     }
     // Wait for the result of the prepare command
     auto res_ptr = co_await mPg->getResult();
     if (!res_ptr) {
+        mLastNativeError = mPg ? mPg->lastNativeError() : std::nullopt;
         ILIAS_ERROR("ilias-pgsql", "Prepare failed for '{}': {}", *mStatementName, mPg->lastErrorMessage());
-        co_return Unexpected(res_ptr.error());
+        co_return Err(res_ptr.error());
     }
     std::unique_ptr<PGresult, decltype(&PQclear)> result(res_ptr.value(), &PQclear);
     if (!result || PQresultStatus(result.get()) != PGRES_COMMAND_OK) {
+        mLastNativeError = makePostgresNativeError(result.get());
+        if (mPg) {
+            mPg->setLastNativeError(*mLastNativeError);
+        }
         auto code = registerPostgresError(result.get());
         ILIAS_ERROR("ilias-pgsql", "Postgres error {}: {}", static_cast<int>(code), std::error_code(code).message());
-        co_return Unexpected(code);
+        co_return Err(code);
     }
     // Drain any remaining results from the connection asynchronously
     while (true) {
@@ -912,10 +992,17 @@ auto PostgresStatement::nativeHandle() const -> void * {
     return mPg->native();
 }
 
+auto PostgresStatement::lastNativeError() const -> std::optional<NativeSqlError> {
+    if (mLastNativeError) {
+        return mLastNativeError;
+    }
+    return mPg ? mPg->lastNativeError() : std::nullopt;
+}
+
 auto PostgresStatement::bind(std::type_index type_index, size_t index, const SqlCellView &value)
     -> Result<void, std::error_code> {
     if (index == 0 || index > mParamValuesPtrs.column_size()) {
-        return Unexpected(SqlError::Code::InvalidIndex);
+        return Err(SqlError::Code::InvalidIndex);
     }
 
     // 使用PostgresValueConverterContext的绑定器
@@ -934,19 +1021,19 @@ auto PostgresStatement::bind(std::type_index type_index, size_t index, const Sql
             }
         }
         else {
-            return Unexpected(store.error());
+            return Err(store.error());
         }
         return {};
     }
     ILIAS_WARN("ilias-pgsql", "type {} is not supported bind", type_index);
-    return Unexpected(SqlError::Code::UnsupportBindType);
+    return Err(SqlError::Code::UnsupportBindType);
 }
 
 auto PostgresStatement::bind(std::type_index type_index, std::string_view name, const SqlCellView &value)
     -> Result<void, std::error_code> {
     auto it = mNamedParamIndex.find(std::string(name));
     if (it == mNamedParamIndex.end()) {
-        return Unexpected(SqlError::Code::InvalidIndex);
+        return Err(SqlError::Code::InvalidIndex);
     }
     return bind(type_index, it->second + 1, value);
 }
@@ -954,7 +1041,8 @@ auto PostgresStatement::bind(std::type_index type_index, std::string_view name, 
 auto PostgresStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     auto prepare = co_await ensurePrepared();
     if (!prepare) {
-        co_return Unexpected(prepare.error());
+        mLastNativeError = lastNativeError();
+        co_return Err(prepare.error());
     }
     ILIAS_TRACE("ilias-pgsql", "Executing query on prepared statement '{}': {}", *mStatementName, mPreparedSql);
     auto send_ret = co_await mPg->sendQueryPrepared(
@@ -962,20 +1050,23 @@ auto PostgresStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
         reinterpret_cast<const char *const *>(mParamValuesPtrs.get_column<0>().data()),
         mParamValuesPtrs.get_column<1>().data(), mParamValuesPtrs.get_column<2>().data(), 1); // binary format
     if (!send_ret) {
+        mLastNativeError = mPg ? mPg->lastNativeError() : std::nullopt;
         ILIAS_ERROR("ilias-pgsql", "Statement sendQueryPrepared failed: {}", mPg->lastErrorMessage());
-        co_return Unexpected(send_ret.error());
+        co_return Err(send_ret.error());
     }
     // Enable single-row mode for streaming results (Requirement 4.4)
     if (!mPg->setSingleRowMode()) {
+        mLastNativeError = mPg ? mPg->lastNativeError() : std::nullopt;
         ILIAS_ERROR("ilias-pgsql", "Failed to enable single-row mode for prepared statement");
-        co_return Unexpected(SqlError::Code::UnknownError);
+        co_return Err(SqlError::Code::UnknownError);
     }
     // Return streaming result set that fetches rows one at a time
     auto result_set = std::make_unique<PostgresStreamingResultSet>(mPg);
     result_set->bindStorage(mStatementName);
     auto ret = co_await result_set->getResultForQuery();
     if (!ret) {
-        co_return Unexpected(ret.error());
+        mLastNativeError = result_set->lastNativeError();
+        co_return Err(ret.error());
     }
     co_return std::move(result_set);
 }
@@ -984,17 +1075,17 @@ auto PostgresStatement::execute() -> IoTask<size_t> {
     ILIAS_TRACE("ilias-pgsql", "Executing prepared statement '{}': {}", *mStatementName, mPreparedSql);
     auto result_set_wrapper = co_await query();
     if (!result_set_wrapper) {
-        co_return Unexpected(result_set_wrapper.error());
+        co_return Err(result_set_wrapper.error());
     }
     auto result_set = std::move(result_set_wrapper.value());
     auto rset       = dynamic_cast<PostgresStreamingResultSet *>(result_set.get());
     while (rset) {
         auto next_ret = co_await rset->next();
         if (!next_ret) {
-            co_return Unexpected(next_ret.error());
+            co_return Err(next_ret.error());
         }
         if (!next_ret.value()) {
-            co_return rset->rowAffected();
+            co_return rset->rowsAffected().value_or(0);
         }
     }
     co_return 0;
@@ -1057,7 +1148,7 @@ auto PostgresConnection::sqlinfo() -> std::string {
 
 auto PostgresConnection::connect() -> IoTask<void> {
     if (mIsConnected) {
-        co_return Unexpected(SqlError::Code::AlreadyConnected);
+        co_return Err(SqlError::Code::AlreadyConnected);
     }
 
     std::string conninfo;
@@ -1077,7 +1168,7 @@ auto PostgresConnection::connect() -> IoTask<void> {
 
     auto result = co_await mPg->connect(conninfo);
     if (!result) {
-        co_return Unexpected(result.error());
+        co_return Err(result.error());
     }
 
     mIsConnected = true;
@@ -1090,16 +1181,16 @@ auto PostgresConnection::disconnect() -> IoTask<void> {
     co_return {};
 }
 
-auto PostgresConnection::selectDatabase(std::string_view name) -> IoTask<void> {
+auto PostgresConnection::selectDatabase([[maybe_unused]] std::string_view name) -> IoTask<void> {
     ILIAS_ERROR("ilias-pgsql", "PostgreSQL does not support changing databases on an active connection.");
-    co_return Unexpected(SqlError::Code::UnsupportedApi);
+    co_return Err(SqlError::Code::UnsupportedApi);
 }
 
 auto PostgresConnection::prepare(std::string_view sql) -> IoTask<std::unique_ptr<IStatement>> {
     auto stmt        = std::make_unique<PostgresStatement>(mPg);
     auto prep_result = co_await stmt->prepare(sql);
     if (!prep_result) {
-        co_return Unexpected(prep_result.error());
+        co_return Err(prep_result.error());
     }
     co_return std::move(stmt);
 }
@@ -1107,17 +1198,20 @@ auto PostgresConnection::prepare(std::string_view sql) -> IoTask<std::unique_ptr
 auto PostgresConnection::execute(std::string_view sql) -> IoTask<size_t> {
     auto result_set_wrapper = co_await query(sql);
     if (!result_set_wrapper) {
-        co_return Unexpected(result_set_wrapper.error());
+        co_return Err(result_set_wrapper.error());
     }
     auto result_set = std::move(result_set_wrapper.value());
     auto rset       = dynamic_cast<PostgresStreamingResultSet *>(result_set.get());
     while (rset) {
         auto next_ret = co_await rset->next();
         if (!next_ret) {
-            co_return Unexpected(next_ret.error());
+            if (auto native = rset->lastNativeError(); native && mPg) {
+                mPg->setLastNativeError(*native);
+            }
+            co_return Err(next_ret.error());
         }
         if (!next_ret.value()) {
-            co_return rset->rowAffected();
+            co_return rset->rowsAffected().value_or(0);
         }
     }
     co_return 0;
@@ -1127,16 +1221,19 @@ auto PostgresConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<I
     ILIAS_TRACE("ilias-pgsql", "exec query {}", sql);
     auto send_result = co_await mPg->sendQuery(sql);
     if (!send_result) {
-        co_return Unexpected(send_result.error());
+        co_return Err(send_result.error());
     }
     if (!mPg->setSingleRowMode()) {
         ILIAS_ERROR("ilias-pgsql", "Failed to enable single-row mode for prepared statement");
-        co_return Unexpected(SqlError::Code::UnknownError);
+        co_return Err(SqlError::Code::UnknownError);
     }
     auto result = std::make_unique<PostgresStreamingResultSet>(mPg);
     auto ret    = co_await result->getResultForQuery();
     if (!ret) {
-        co_return Unexpected(ret.error());
+        if (auto native = result->lastNativeError(); native && mPg) {
+            mPg->setLastNativeError(*native);
+        }
+        co_return Err(ret.error());
     }
     co_return std::move(result);
 }
@@ -1206,6 +1303,10 @@ auto PostgresConnection::valueConverterContext() const -> std::shared_ptr<SqlVal
 
 auto PostgresConnection::nativeHandle() const -> void * {
     return mPg->native();
+}
+
+auto PostgresConnection::lastNativeError() const -> std::optional<NativeSqlError> {
+    return mPg ? mPg->lastNativeError() : std::nullopt;
 }
 
 ILIAS_POSTGRES_NS_END

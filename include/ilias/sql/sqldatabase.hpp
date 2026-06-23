@@ -90,12 +90,12 @@ public:
      */
     auto connection() -> IoResult<IConnection *> {
         if (mInTransaction) {
-            return Unexpected(std::make_error_code(std::errc::device_or_resource_busy));
+            return Err(std::make_error_code(std::errc::device_or_resource_busy));
         }
         if (mConnection) {
             return mConnection.get();
         }
-        return Unexpected(SqlError::Code::NotConnected);
+        return Err(SqlError::Code::NotConnected);
     }
 
     /**
@@ -109,6 +109,13 @@ public:
      * @return IoTask<SqlTransaction> Async task that resolves to a SqlTransaction instance
      */
     auto transaction() -> IoTask<SqlTransaction>;
+
+    auto lastNativeError() const -> std::optional<NativeSqlError> {
+        if (!mConnection) {
+            return std::nullopt;
+        }
+        return mConnection->lastNativeError();
+    }
 
 private:
     void releaseTransaction() { mInTransaction = false; }
@@ -194,10 +201,10 @@ public:
      */
     auto connection() -> IoResult<IConnection *> {
         if (mState != State::kBeginned) {
-            return Unexpected(std::make_error_code(std::errc::operation_not_permitted));
+            return Err(std::make_error_code(std::errc::operation_not_permitted));
         }
         if (!mConnection) {
-            return Unexpected(SqlError::Code::NotConnected);
+            return Err(SqlError::Code::NotConnected);
         }
         return mConnection;
     }
@@ -219,6 +226,13 @@ public:
      * @return IoTask<void> Async task that completes when the transaction is rolled back
      */
     auto rollback() -> IoTask<void>;
+
+    auto lastNativeError() const -> std::optional<NativeSqlError> {
+        if (!mConnection) {
+            return std::nullopt;
+        }
+        return mConnection->lastNativeError();
+    }
 
 protected:
     /**

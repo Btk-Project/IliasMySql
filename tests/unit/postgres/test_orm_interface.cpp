@@ -49,7 +49,7 @@ using namespace ILIAS_NAMESPACE;
     do {                                                                                                               \
         CO_EXPECT_RESULT(ret);                                                                                         \
         if (!ret.has_value()) {                                                                                        \
-            co_return Unexpected(ret.error());                                                                         \
+            co_return Err(ret.error());                                                                         \
         }                                                                                                              \
     } while (0)
 

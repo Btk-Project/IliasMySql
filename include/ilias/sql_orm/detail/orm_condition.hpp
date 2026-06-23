@@ -1,9 +1,11 @@
 #pragma once
 
+#include <concepts>
 #include <vector>
 #include <string>
 #include <memory>
 #include <string_view>
+#include <utility>
 #include "ilias/sql/sqlstatement.hpp"
 #include <nekoproto/serialization/parsing/reflection.hpp>
 #include "ilias/sql_orm/detail/orm_types.hpp"
@@ -11,6 +13,46 @@
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
+
+template <typename T>
+concept HasSqlDiagnostic = requires(const T &t) {
+    { t.isValid() } -> std::convertible_to<bool>;
+    { t.diagnostic() } -> std::convertible_to<std::string>;
+};
+
+template <typename T>
+auto sqlNodeIsValid(const T &node) -> bool {
+    if constexpr (HasSqlDiagnostic<T>) {
+        return node.isValid();
+    }
+    else {
+        return true;
+    }
+}
+
+template <typename T>
+auto sqlNodeDiagnostic(const T &node) -> std::string {
+    if constexpr (HasSqlDiagnostic<T>) {
+        return node.diagnostic();
+    }
+    else {
+        return {};
+    }
+}
+
+template <typename T>
+void collectSqlDiagnostic(std::vector<std::string> &diagnostics, const T &node) {
+    if (!sqlNodeIsValid(node)) {
+        diagnostics.push_back(sqlNodeDiagnostic(node));
+    }
+}
+
+template <typename... Ts>
+auto collectSqlDiagnostics(const Ts &...nodes) -> std::vector<std::string> {
+    std::vector<std::string> diagnostics;
+    (collectSqlDiagnostic(diagnostics, nodes), ...);
+    return diagnostics;
+}
 
 // 绑定器基类
 class SqlStatementBinder {
@@ -109,6 +151,7 @@ class ILIAS_SQL_API SqlCondition {
 public:
     SqlCondition() = default;
     SqlCondition(std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders);
+    static auto invalid(std::string diagnostic) -> SqlCondition;
 
     // 逻辑运算符（实现在 cpp）
     SqlCondition operator&&(const SqlCondition &other) const;
@@ -119,27 +162,43 @@ public:
     int                bindTo(SqlStatement<void> &stmt, int startIndex = 1) const;
     bool               empty() const;
     auto               binds() const { return mBinders; }
+    auto               isValid() const -> bool { return mDiagnostic.empty(); }
+    auto               diagnostic() const -> std::string { return mDiagnostic; }
 
 private:
     std::string                                      mSql;
     std::vector<std::shared_ptr<SqlStatementBinder>> mBinders;
+    std::string                                      mDiagnostic;
 };
 
 struct SqlAssignment {
+    static auto invalid(std::string diagnostic) -> SqlAssignment {
+        SqlAssignment assignment;
+        assignment.diagnostic = std::move(diagnostic);
+        return assignment;
+    }
+
     auto binds() const { return std::vector {binders}; }
+    auto isValid() const -> bool { return diagnostic.empty(); }
+    auto diagnosticMessage() const -> const std::string & { return diagnostic; }
 
     std::string                                      sql;
     std::vector<std::shared_ptr<SqlStatementBinder>> binders;
+    std::string                                      diagnostic;
 };
 
 class ILIAS_SQL_API SqlVariable {
 public:
     explicit SqlVariable(std::string_view name);
     SqlVariable(std::string sql, std::string bindName);
+    static auto invalid(std::string diagnostic) -> SqlVariable;
 
     template <typename T>
         requires(SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)) || std::is_null_pointer_v<T>
     SqlCondition compare(const std::string &op, T &&value) const {
+        if (!isValid()) {
+            return SqlCondition::invalid(mDiagnostic);
+        }
         if (is_sql_null(value)) {
             if (op == "=")
                 return SqlCondition(mSql + " IS NULL", {});
@@ -155,6 +214,9 @@ public:
     template <typename T>
         requires std::is_invocable_v<T>
     SqlCondition compare(const std::string &op, T &&value) const {
+        if (!isValid()) {
+            return SqlCondition::invalid(mDiagnostic);
+        }
         using ResultT = std::invoke_result_t<T>;
         static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
@@ -165,6 +227,12 @@ public:
     template <typename T>
         requires HasSqlMethod<T>
     SqlCondition compare(const std::string &op, T &&value) const {
+        if (!isValid()) {
+            return SqlCondition::invalid(mDiagnostic);
+        }
+        if (!sqlNodeIsValid(value)) {
+            return SqlCondition::invalid(sqlNodeDiagnostic(value));
+        }
         return SqlCondition(mSql + " " + op + " " + value.sql(), {});
     }
 
@@ -193,8 +261,6 @@ public:
         return compare("!=", std::forward<T>(v));
     }
 
-    std::string sql() const { return mSql; }
-
     template <typename T>
     SqlCondition like(T &&v) const {
         return compare("LIKE", std::forward<T>(v));
@@ -203,30 +269,49 @@ public:
     template <typename T>
         requires SqlBindable<T> && (!HasSqlMethod<T>) && (!std::is_invocable_v<T>)
     SqlAssignment operator=(T &&value) const {
+        if (!isValid()) {
+            return SqlAssignment::invalid(mDiagnostic);
+        }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<T>>>(std::forward<T>(value)));
-        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders)};
+        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders), .diagnostic = {}};
     }
 
     template <typename T>
         requires std::is_invocable_v<T>
     SqlAssignment operator=(T &&u) const {
+        if (!isValid()) {
+            return SqlAssignment::invalid(mDiagnostic);
+        }
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         using ResultT = std::invoke_result_t<T>;
         static_assert(SqlBindable<ResultT>, "Lambda return type must be bindable to SQL");
         binders.push_back(std::make_shared<LambdaBinder<ResultT>>(std::forward<T>(u)));
-        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders)};
+        return SqlAssignment {.sql = mSql + " = :" + mBindName, .binders = std::move(binders), .diagnostic = {}};
     }
 
     template <typename T>
         requires HasSqlMethod<T>
     SqlAssignment operator=(const T &value) const {
+        if (!isValid()) {
+            return SqlAssignment::invalid(mDiagnostic);
+        }
+        if (!sqlNodeIsValid(value)) {
+            return SqlAssignment::invalid(sqlNodeDiagnostic(value));
+        }
         return SqlAssignment {.sql = mSql + " = " + value.sql(), .binders = {}};
     }
 
+    auto isValid() const -> bool { return mDiagnostic.empty(); }
+    auto diagnostic() const -> std::string { return mDiagnostic; }
+    std::string sql() const { return mSql; }
+
 protected:
+    SqlVariable(std::string sql, std::string bindName, std::string diagnostic);
+
     std::string mSql;
     std::string mBindName;
+    std::string mDiagnostic;
 };
 
 template <typename T>
@@ -235,6 +320,11 @@ public:
     using Type = T;
     explicit TypedColumn(std::string name) : SqlVariable(std::move(name)) {}
     TypedColumn(std::string sql, std::string bindName) : SqlVariable(std::move(sql), std::move(bindName)) {}
+    TypedColumn(std::string sql, std::string bindName, std::string diagnostic)
+        : SqlVariable(std::move(sql), std::move(bindName), std::move(diagnostic)) {}
+    static auto invalid(std::string diagnostic) -> TypedColumn {
+        return TypedColumn("", "", std::move(diagnostic));
+    }
 
     template <typename U>
     static constexpr bool IsValidOperand =
@@ -306,14 +396,27 @@ public:
     template <typename U = T>
         requires std::is_same_v<U, std::optional<typename U::value_type>>
     SqlCondition has_value() const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         return SqlCondition(this->sql() + " IS NOT NULL", {});
     }
 
     // 2. is_null() - 检查字段是否为 NULL
-    SqlCondition is_null() const { return SqlCondition(this->sql() + " IS NULL", {}); }
+    SqlCondition is_null() const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
+        return SqlCondition(this->sql() + " IS NULL", {});
+    }
 
     // 3. is_not_null() - 检查字段是否不为 NULL
-    SqlCondition is_not_null() const { return SqlCondition(this->sql() + " IS NOT NULL", {}); }
+    SqlCondition is_not_null() const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
+        return SqlCondition(this->sql() + " IS NOT NULL", {});
+    }
 
     // 4. in() - IN 操作符，支持多个值
     template <typename U>
@@ -325,6 +428,9 @@ public:
     template <typename U>
         requires IsValidOperand<U>
     SqlCondition in(const std::vector<U> &values) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         if (values.empty()) {
             return SqlCondition("1 = 0", {}); // 永远为假
         }
@@ -353,6 +459,9 @@ public:
     template <typename U>
         requires IsValidOperand<U>
     SqlCondition not_in(const std::vector<U> &values) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         if (values.empty()) {
             return SqlCondition("1 = 1", {}); // 永远为真
         }
@@ -375,6 +484,9 @@ public:
     template <typename U>
         requires IsValidOperand<U>
     SqlCondition between(U &&min_val, U &&max_val) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         std::string                                      sql = this->sql() + " BETWEEN ? AND ?";
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(min_val)));
@@ -386,6 +498,9 @@ public:
     template <typename U>
         requires IsValidOperand<U>
     SqlCondition not_between(U &&min_val, U &&max_val) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         std::string                                      sql = this->sql() + " NOT BETWEEN ? AND ?";
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<StorageType_t<U>>>(std::forward<U>(min_val)));
@@ -421,6 +536,9 @@ public:
     template <typename U>
         requires std::is_convertible_v<U, std::string>
     SqlCondition ilike(U &&pattern) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         std::string                                      sql = this->sql() + " ILIKE ?";
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<std::string>>(std::string(pattern)));
@@ -431,6 +549,9 @@ public:
     template <typename U>
         requires std::is_convertible_v<U, std::string>
     SqlCondition regexp(U &&pattern) const {
+        if (!this->isValid()) {
+            return SqlCondition::invalid(this->diagnostic());
+        }
         std::string                                      sql = this->sql() + " REGEXP ?";
         std::vector<std::shared_ptr<SqlStatementBinder>> binders;
         binders.push_back(std::make_shared<ValueBinder<std::string>>(std::string(pattern)));
@@ -443,13 +564,20 @@ class AggregateColumn : public SqlVariable {
 public:
     using Type = T;
     explicit AggregateColumn(std::string sql) : SqlVariable(std::move(sql)) {}
+    AggregateColumn(std::string sql, std::string diagnostic) : SqlVariable(std::move(sql), "", std::move(diagnostic)) {}
 
     // COUNT
     static AggregateColumn<int> count(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<int>("", col.diagnostic());
+        }
         return AggregateColumn<int>("COUNT(" + col.sql() + ")");
     }
 
     static AggregateColumn<int> count_distinct(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<int>("", col.diagnostic());
+        }
         return AggregateColumn<int>("COUNT(DISTINCT " + col.sql() + ")");
     }
 
@@ -457,6 +585,9 @@ public:
     template <typename U = T>
         requires std::is_arithmetic_v<U>
     static AggregateColumn<T> sum(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<T>("", col.diagnostic());
+        }
         return AggregateColumn<T>("SUM(" + col.sql() + ")");
     }
 
@@ -464,13 +595,26 @@ public:
     template <typename U = T>
         requires std::is_arithmetic_v<U>
     static AggregateColumn<double> avg(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<double>("", col.diagnostic());
+        }
         return AggregateColumn<double>("AVG(" + col.sql() + ")");
     }
 
     // MIN/MAX
-    static AggregateColumn<T> min(const TypedColumn<T> &col) { return AggregateColumn<T>("MIN(" + col.sql() + ")"); }
+    static AggregateColumn<T> min(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<T>("", col.diagnostic());
+        }
+        return AggregateColumn<T>("MIN(" + col.sql() + ")");
+    }
 
-    static AggregateColumn<T> max(const TypedColumn<T> &col) { return AggregateColumn<T>("MAX(" + col.sql() + ")"); }
+    static AggregateColumn<T> max(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return AggregateColumn<T>("", col.diagnostic());
+        }
+        return AggregateColumn<T>("MAX(" + col.sql() + ")");
+    }
 };
 
 // 14. 便利的聚合函数
@@ -513,14 +657,23 @@ class MathColumn : public SqlVariable {
 public:
     using Type = T;
     explicit MathColumn(std::string sql) : SqlVariable(std::move(sql)) {}
+    MathColumn(std::string sql, std::string diagnostic) : SqlVariable(std::move(sql), "", std::move(diagnostic)) {}
 
     // ABS
-    static MathColumn<T> abs(const TypedColumn<T> &col) { return MathColumn<T>("ABS(" + col.sql() + ")"); }
+    static MathColumn<T> abs(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return MathColumn<T>("", col.diagnostic());
+        }
+        return MathColumn<T>("ABS(" + col.sql() + ")");
+    }
 
     // ROUND (仅浮点类型)
     template <typename U = T>
         requires std::is_floating_point_v<U>
     static MathColumn<T> round(const TypedColumn<T> &col, int precision = 0) {
+        if (!col.isValid()) {
+            return MathColumn<T>("", col.diagnostic());
+        }
         return MathColumn<T>("ROUND(" + col.sql() + ", " + std::to_string(precision) + ")");
     }
 
@@ -528,12 +681,18 @@ public:
     template <typename U = T>
         requires std::is_floating_point_v<U>
     static MathColumn<T> ceil(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return MathColumn<T>("", col.diagnostic());
+        }
         return MathColumn<T>("CEIL(" + col.sql() + ")");
     }
 
     template <typename U = T>
         requires std::is_floating_point_v<U>
     static MathColumn<T> floor(const TypedColumn<T> &col) {
+        if (!col.isValid()) {
+            return MathColumn<T>("", col.diagnostic());
+        }
         return MathColumn<T>("FLOOR(" + col.sql() + ")");
     }
 };

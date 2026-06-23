@@ -112,7 +112,7 @@ SqlParserResult pq_parse_null(const SqlCellView &cell) {
     if (cell.is_null()) {
         return std::any(g_sql_null);
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -120,7 +120,7 @@ SqlParserResult pq_parse_null(const SqlCellView &cell) {
  */
 SqlParserResult pq_parse_bool(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && meta->format == 0) { // 文本格式
@@ -133,7 +133,7 @@ SqlParserResult pq_parse_bool(const SqlCellView &cell) {
         std::memcpy(&val, meta->data, 1);
         return std::any(val != 0);
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -143,7 +143,7 @@ template <typename T>
     requires std::is_integral_v<T>
 SqlParserResult pq_parse_integer(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && meta->format == 0) { // 文本格式
@@ -171,7 +171,7 @@ SqlParserResult pq_parse_integer(const SqlCellView &cell) {
                 break;
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -181,7 +181,7 @@ template <typename T>
     requires std::is_floating_point_v<T>
 SqlParserResult pq_parse_float(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && meta->format == 0) { // 文本格式
@@ -211,7 +211,7 @@ SqlParserResult pq_parse_float(const SqlCellView &cell) {
                 break;
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -219,7 +219,7 @@ SqlParserResult pq_parse_float(const SqlCellView &cell) {
  */
 SqlParserResult pq_parse_string(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && (meta->format == 0 || meta->format == 1)) {
@@ -227,7 +227,7 @@ SqlParserResult pq_parse_string(const SqlCellView &cell) {
         const char *value_str = static_cast<const char *>(meta->data);
         return std::any(SqlText(value_str, meta->size));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -235,14 +235,14 @@ SqlParserResult pq_parse_string(const SqlCellView &cell) {
  */
 SqlParserResult pq_parse_string_view(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && (meta->format == 0 || meta->format == 1)) {
         const char *value_str = static_cast<const char *>(meta->data);
         return std::any(SqlTextView(value_str, meta->size));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -250,7 +250,7 @@ SqlParserResult pq_parse_string_view(const SqlCellView &cell) {
  */
 SqlParserResult pq_parse_blob(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && meta->format == 0) {
@@ -260,13 +260,13 @@ SqlParserResult pq_parse_blob(const SqlCellView &cell) {
         size_t      hex_len = meta->size;
 
         if (hex_len < 2 || hex_str[0] != '\\' || hex_str[1] != 'x') {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+            return Err(SqlError::Code::UnsupportConvertFromSqlType);
         }
         hex_str += 2; // 跳过 "\x"
         hex_len -= 2;
 
         if (hex_len % 2 != 0) {
-            return Unexpected(SqlError::Code::UnsupportConvertFromSqlType); // 十六进制字符串必须是偶数长度
+            return Err(SqlError::Code::UnsupportConvertFromSqlType); // 十六进制字符串必须是偶数长度
         }
 
         SqlBlob blob;
@@ -285,7 +285,7 @@ SqlParserResult pq_parse_blob(const SqlCellView &cell) {
             int high = hex_char_to_int(hex_str[i * 2]);
             int low  = hex_char_to_int(hex_str[i * 2 + 1]);
             if (high == -1 || low == -1) {
-                return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+                return Err(SqlError::Code::UnsupportConvertFromSqlType);
             }
             blob[i] = static_cast<std::byte>((high << 4) | low);
         }
@@ -296,7 +296,7 @@ SqlParserResult pq_parse_blob(const SqlCellView &cell) {
         const std::byte *raw_bytes = static_cast<const std::byte *>(meta->data);
         return std::any(SqlBlobView(raw_bytes, meta->size));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 /**
@@ -304,7 +304,7 @@ SqlParserResult pq_parse_blob(const SqlCellView &cell) {
  */
 SqlParserResult pq_parse_date(const SqlCellView &cell) {
     if (cell.is_null()) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     auto meta = getPostgresMetadata(cell);
     if (meta && meta->format == 0) { // 文本格式
@@ -336,7 +336,7 @@ SqlParserResult pq_parse_date(const SqlCellView &cell) {
                 std::chrono::milliseconds(unix_ms))));
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 // ============================================================================
 // PostgreSQL类型绑定器实现

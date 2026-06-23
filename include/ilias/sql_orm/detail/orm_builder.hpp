@@ -27,7 +27,7 @@ template <typename T, typename ResultType = void>
 static auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>> {
     auto stmtRet = co_await self.prepare();
     if (!stmtRet) {
-        co_yield Unexpected(stmtRet.error());
+        co_yield Err(stmtRet.error());
     }
     else {
         auto stmt = std::move(stmtRet.value());
@@ -35,7 +35,7 @@ static auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType
             self.bind(stmt);
             auto queryRet = co_await stmt->query();
             if (!queryRet) {
-                co_yield Unexpected(queryRet.error());
+                co_yield Err(queryRet.error());
             }
             else {
                 co_yield std::move(queryRet.value());
@@ -49,7 +49,7 @@ template <typename T>
 static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
     auto stmtRet = co_await self.prepare();
     if (!stmtRet) {
-        co_yield Unexpected(stmtRet.error());
+        co_yield Err(stmtRet.error());
     }
     else {
         auto stmt = std::move(stmtRet.value());
@@ -57,7 +57,7 @@ static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
             self.bind(stmt);
             auto queryRet = co_await stmt->execute();
             if (!queryRet) {
-                co_yield Unexpected(queryRet.error());
+                co_yield Err(queryRet.error());
             }
             else {
                 co_yield queryRet.value();
@@ -68,9 +68,10 @@ static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
 }
 
 struct TimestampUpdater {
-    template <typename T>
-    void operator()(T &field, const SqlTags &tags) {
-        if ((tags.updated_at && updated_at) || (tags.created_at && created_at)) {
+    template <typename T, typename Tags>
+    void operator()(T &field, const Tags &tags) {
+        const auto sqlTags = detail::extractSqlTags(tags);
+        if ((sqlTags.updated_at && updated_at) || (sqlTags.created_at && created_at)) {
             if constexpr (std::is_same_v<std::decay_t<decltype(field)>, SqlDate>) {
                 field = SqlDate::now();
             }
@@ -111,18 +112,23 @@ public:
     using IdentifierQuoter = std::string (*)(std::string_view);
 
     SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols = {},
-                  IdentifierQuoter quoteIdentifier = nullptr);
+                  IdentifierQuoter quoteIdentifier = nullptr, std::vector<std::string> diagnostics = {});
 
     SelectBuilder &where(const SqlCondition &cond);
     SelectBuilder &orderBy(std::string_view column, bool desc = false);
     template <typename Column>
         requires HasSqlMethod<Column>
     SelectBuilder &orderBy(const Column &column, bool desc = false) {
+        if (!sqlNodeIsValid(column)) {
+            addDiagnostic(sqlNodeDiagnostic(column));
+            return *this;
+        }
         mOrderBy = " ORDER BY " + column.sql() + (desc ? " DESC" : " ASC");
         return *this;
     }
     SelectBuilder &limit(int limit);
     SelectBuilder &offset(int offset);
+    void addDiagnostic(std::string diagnostic);
 
     // 基础查询
     IoTask<SqlResult<void>>      query() const;
@@ -132,6 +138,7 @@ protected:
     auto prepare() const -> IoTask<SqlStatement<void>>;
     void bind(SqlStatement<void> &stmt) const;
     void storage(SqlResult<void> &res) const;
+    auto diagnostic() const -> std::string;
 
 protected:
     SqlDatabase &mDb;
@@ -142,6 +149,7 @@ protected:
     std::string  mLimit;
     std::string  mOffset;
     IdentifierQuoter mQuoteIdentifier = nullptr;
+    std::vector<std::string> mDiagnostics;
 };
 
 // ================== ProjectedSelectBuilder ==================
@@ -156,8 +164,9 @@ class ProjectedSelectBuilder : public SelectBuilder {
 
 public:
     ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols,
-                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
-        : SelectBuilder(db, std::move(tableName), cols, quoteIdentifier) {}
+                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr,
+                           std::vector<std::string> diagnostics = {})
+        : SelectBuilder(db, std::move(tableName), cols, quoteIdentifier, std::move(diagnostics)) {}
 
     // 专门用于 select * 的构造函数
     ProjectedSelectBuilder(SqlDatabase &db, std::string tableName,
@@ -167,8 +176,10 @@ public:
 
     // 专门用于 join 的构造
     ProjectedSelectBuilder(SqlDatabase &db, std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders,
-                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
-        : SelectBuilder(db, "", {}, quoteIdentifier), mBaseSql(std::move(sql)), mBinders(std::move(binders)) {}
+                           SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr,
+                           std::vector<std::string> diagnostics = {})
+        : SelectBuilder(db, "", {}, quoteIdentifier, std::move(diagnostics)), mBaseSql(std::move(sql)),
+          mBinders(std::move(binders)) {}
 
     ProjectedSelectBuilder &where(const SqlCondition &cond) {
         SelectBuilder::where(cond);
@@ -208,6 +219,11 @@ public:
 
 private:
     auto prepare() const -> IoTask<SqlStatement<void>> {
+        auto diag = diagnostic();
+        if (!diag.empty()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
         if (!mBaseSql.empty()) {
             std::string sql = mBaseSql;
             if (!mWhereCondition.empty()) {
@@ -281,17 +297,17 @@ public:
     template <typename... Us, template <typename U> typename... Ts>
         requires(detail::HasSqlMethod<Ts<Us>> && ...)
     auto select(Ts<Us>... args) const {
-        return select<Us...>({args.sql()...});
+        return select<Us...>({args.sql()...}, detail::collectSqlDiagnostics(args...));
     }
 
     template <typename... Ts>
         requires(detail::HasSqlMethod<Ts> && ...)
     auto select(Ts... args) const {
-        return select<>({args.sql()...});
+        return select<>({args.sql()...}, detail::collectSqlDiagnostics(args...));
     }
 
     template <typename... ColTypes>
-    auto select(const std::vector<std::string> &colSqls) const {
+    auto select(const std::vector<std::string> &colSqls, std::vector<std::string> diagnostics = {}) const {
         // 构建 SELECT 语句的基本部分
         std::string sql = "SELECT " + join_strs(colSqls, ", ");
 
@@ -327,7 +343,8 @@ public:
         // extraction" 鉴于原代码逻辑：
         using MainForm = std::remove_reference_t<decltype(mainForm)>;
         return ProjectedSelectBuilder<ColTypes...>(mainForm.db(), sql, allBinders,
-                                                   &MainForm::BackendDialect::quote_identifier_path);
+                                                   &MainForm::BackendDialect::quote_identifier_path,
+                                                   std::move(diagnostics));
     }
 
     template <typename NextTable, typename Tag = void>
@@ -360,6 +377,17 @@ public:
 
 private:
     IoTask<SqlStatement<void>> prepare() const {
+        if (!mWhereCondition.isValid()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", mWhereCondition.diagnostic());
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
+        for (const auto &node : mNodes) {
+            if (!node.onCondition.isValid()) {
+                ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", node.onCondition.diagnostic());
+                co_return Err(SqlError::Code::InvalidParameter);
+            }
+        }
+
         std::set<std::string> relationAliases;
         bool                  duplicateRelation = false;
         std::string           duplicateAlias;
@@ -376,7 +404,7 @@ private:
             mForms);
         if (duplicateRelation) {
             ILIAS_ERROR("ilias-sql", "Duplicate ORM relation alias in join: {}", duplicateAlias);
-            co_return Unexpected(SqlError::Code::InvalidParameter);
+            co_return Err(SqlError::Code::InvalidParameter);
         }
 
         std::vector<std::string> selectCols;
@@ -472,6 +500,11 @@ public:
 
 private:
     IoTask<SqlStatement<void>> prepare() {
+        if (!mWhereCondition.isValid()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", mWhereCondition.diagnostic());
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
+
         std::string sql = "DELETE FROM " + mTableName;
 
         if (!mWhereCondition.empty()) {
@@ -510,6 +543,11 @@ public:
     }
 
     IoTask<size_t> execute() {
+        auto diag = diagnostic();
+        if (!diag.empty()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
         if (mSetSqls.empty()) {
             co_return 0;
         }
@@ -523,6 +561,12 @@ public:
 
 private:
     IoTask<SqlStatement<void>> prepare() {
+        auto diag = diagnostic();
+        if (!diag.empty()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
+
         std::string sql = "UPDATE " + mTableName + " SET " + join_strs(mSetSqls, ", ");
         if (!mWhereCondition.empty()) {
             sql += " WHERE " + mWhereCondition.sql();
@@ -538,8 +582,20 @@ private:
     }
     // 辅助函数，用于处理单个 Assignment
     void addAssignment(const SqlAssignment &assign) {
+        if (!assign.isValid()) {
+            mDiagnostics.push_back(assign.diagnosticMessage());
+            return;
+        }
         mSetSqls.push_back(assign.sql);
         mSetBinders.insert(mSetBinders.end(), assign.binders.begin(), assign.binders.end());
+    }
+
+    auto diagnostic() const -> std::string {
+        std::vector<std::string> diagnostics = mDiagnostics;
+        if (!mWhereCondition.isValid()) {
+            diagnostics.push_back(mWhereCondition.diagnostic());
+        }
+        return join_strs(diagnostics, "; ");
     }
 
     SqlDatabase                                     &mDb;
@@ -547,6 +603,7 @@ private:
     std::vector<std::string>                         mSetSqls;
     std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders; // 统一存储所有 Set 的 binder
     SqlCondition                                     mWhereCondition;
+    std::vector<std::string>                         mDiagnostics;
 };
 
 template <typename T>
@@ -582,6 +639,11 @@ public:
 
     // 基础查询
     IoTask<size_t> execute() {
+        auto diag = diagnostic();
+        if (!diag.empty()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
         ILIAS_CO_TRY(auto stmt, co_await prepare());
         bind(stmt);
         co_return co_await stmt->execute();
@@ -591,6 +653,12 @@ public:
 
 private:
     auto prepare() const -> IoTask<SqlStatement<void>> {
+        auto diag = diagnostic();
+        if (!diag.empty()) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+            co_return Err(SqlError::Code::InvalidParameter);
+        }
+
         std::string sql = "INSERT INTO " + mTableName + " VALUES (" + join_strs(mColumnNames, ", ", ":") + ")";
         co_return co_await mDb.prepare(sql);
     }
@@ -601,6 +669,10 @@ private:
         }
     }
     void addAssignment(const SqlAssignment &assign) {
+        if (!assign.isValid()) {
+            mDiagnostics.push_back(assign.diagnosticMessage());
+            return;
+        }
         // assign 里面的 sql 形如 `"col" = :col`，绑定名来自右侧命名占位符。
         auto assign_pos = assign.sql.find('=');
         if (assign_pos == std::string::npos) {
@@ -622,11 +694,14 @@ private:
         }
     }
 
+    auto diagnostic() const -> std::string { return join_strs(mDiagnostics, "; "); }
+
 private:
     SqlDatabase                                     &mDb;
     std::string                                      mTableName;
     std::vector<std::string>                         mColumnNames;
     std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders;
+    std::vector<std::string>                         mDiagnostics;
 };
 } // namespace detail
 ILIAS_SQL_NS_END

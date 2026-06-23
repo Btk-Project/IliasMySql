@@ -11,7 +11,7 @@ SqlParserResult mysql_parse_null(const SqlCellView &cell) {
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
         return std::any(g_sql_null);
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 SqlBinderResult mysql_bind_null(const SqlCellView &cell, std::any data) {
@@ -30,7 +30,7 @@ template <typename T>
 SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     // mysql返回的可能是字符串，也可能是数据的指针
     auto string = cell.formatted_value();
@@ -43,7 +43,7 @@ SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
                 if (string == "true" || string == "false") {
                     return std::any(static_cast<T>(string == "true"));
                 } // if is a boolean
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+                return Err(sql::SqlError::UnsupportConvertFromSqlType);
             }
             return std::any(static_cast<T>(res));
         }
@@ -56,14 +56,14 @@ SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
             int64_t res;
             auto [ptr, ec] = std::from_chars(string.data(), string.data() + string.size(), res);
             if (ec != std::errc() || ptr != (string.data() + string.size())) {
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+                return Err(sql::SqlError::UnsupportConvertFromSqlType);
             }
             return std::any(static_cast<T>(res));
         }
     }
 
     if (cell.raw_value() == nullptr) {
-        return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+        return Err(sql::SqlError::UnsupportConvertFromSqlType);
     }
     if (cell.raw_type() == std::type_index(typeid(int32_t))) {
         int32_t value = *reinterpret_cast<const int32_t *>(cell.raw_value());
@@ -73,7 +73,7 @@ SqlParserResult mysql_parse_interage(const SqlCellView &cell) {
         int64_t value = *reinterpret_cast<const int64_t *>(cell.raw_value());
         return std::any(static_cast<T>(value));
     }
-    return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+    return Err(sql::SqlError::UnsupportConvertFromSqlType);
 }
 
 template <typename T>
@@ -86,7 +86,7 @@ SqlBinderResult mysql_bind_interage(const SqlCellView &cell, std::any data) {
     auto mysqlstmt = std::any_cast<MysqlStatement *>(data);
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const T))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     auto bind = mysqlstmt->dataBind(index);
     switch (sizeof(T)) {
@@ -100,7 +100,7 @@ SqlBinderResult mysql_bind_interage(const SqlCellView &cell, std::any data) {
             bind->buffer_type = MYSQL_TYPE_LONGLONG;
             break;
         default:
-            return Unexpected(SqlError::Code::UnsupportBindType);
+            return Err(SqlError::Code::UnsupportBindType);
     }
     bind->buffer        = const_cast<void *>(cell.raw_value());
     bind->buffer_length = cell.raw_value_size();
@@ -112,7 +112,7 @@ template <typename T>
 SqlParserResult mysql_parse_real(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     // mysql返回的可能是字符串，也可能是数据的指针
     auto string = cell.formatted_value();
@@ -128,14 +128,14 @@ SqlParserResult mysql_parse_real(const SqlCellView &cell) {
             T res;
             auto [ptr, ec] = std::from_chars(string.data(), string.data() + string.size(), res);
             if (ec != std::errc() || ptr != (string.data() + string.size())) {
-                return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+                return Err(sql::SqlError::UnsupportConvertFromSqlType);
             }
             return std::any(static_cast<T>(res));
         }
     }
 
     if (cell.raw_value() == nullptr) {
-        return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+        return Err(sql::SqlError::UnsupportConvertFromSqlType);
     }
     if (cell.raw_type() == std::type_index(typeid(float))) {
         float value = *reinterpret_cast<const float *>(cell.raw_value());
@@ -145,7 +145,7 @@ SqlParserResult mysql_parse_real(const SqlCellView &cell) {
         double value = *reinterpret_cast<const double *>(cell.raw_value());
         return std::any(static_cast<T>(value));
     }
-    return Unexpected(sql::SqlError::UnsupportConvertFromSqlType);
+    return Err(sql::SqlError::UnsupportConvertFromSqlType);
 }
 
 template <typename T>
@@ -158,7 +158,7 @@ SqlBinderResult mysql_bind_real(const SqlCellView &cell, std::any data) {
     auto mysqlstmt = std::any_cast<MysqlStatement *>(data);
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const T))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     auto bind = mysqlstmt->dataBind(index);
     switch (sizeof(T)) {
@@ -169,7 +169,7 @@ SqlBinderResult mysql_bind_real(const SqlCellView &cell, std::any data) {
             bind->buffer_type = MYSQL_TYPE_DOUBLE;
             break;
         default:
-            return Unexpected(SqlError::Code::UnsupportBindType);
+            return Err(SqlError::Code::UnsupportBindType);
     }
     bind->buffer        = const_cast<void *>(cell.raw_value());
     bind->buffer_length = cell.raw_value_size();
@@ -179,7 +179,7 @@ SqlBinderResult mysql_bind_real(const SqlCellView &cell, std::any data) {
 SqlParserResult mysql_parse_string(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kString) {
         return std::any(SqlText(cell.formatted_value()));
@@ -202,18 +202,18 @@ SqlParserResult mysql_parse_string(const SqlCellView &cell) {
             return std::any(std::to_string(value));
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 SqlParserResult mysql_parse_string_view(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kString) {
         return std::any(SqlTextView(cell.formatted_value()));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 SqlBinderResult mysql_bind_string(const SqlCellView &cell, std::any data) {
@@ -224,7 +224,7 @@ SqlBinderResult mysql_bind_string(const SqlCellView &cell, std::any data) {
     auto mysqlstmt = std::any_cast<MysqlStatement *>(data);
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const char *))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     auto bind           = mysqlstmt->dataBind(index);
     bind->buffer_type   = MYSQL_TYPE_STRING;
@@ -236,26 +236,26 @@ SqlBinderResult mysql_bind_string(const SqlCellView &cell, std::any data) {
 SqlParserResult mysql_parse_blob_view(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kString) {
         auto value = cell.formatted_value();
         return std::any(std::span<const std::byte>(reinterpret_cast<const std::byte *>(value.data()), value.size()));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 SqlParserResult mysql_parse_blob(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kString) {
         auto value = cell.formatted_value();
         return std::any(std::vector<std::byte>(reinterpret_cast<const std::byte *>(value.data()),
                                                reinterpret_cast<const std::byte *>(value.data()) + value.size()));
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 SqlBinderResult mysql_bind_blob(const SqlCellView &cell, std::any data) {
@@ -266,7 +266,7 @@ SqlBinderResult mysql_bind_blob(const SqlCellView &cell, std::any data) {
     auto mysqlstmt = std::any_cast<MysqlStatement *>(data);
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const std::byte *))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     auto bind           = mysqlstmt->dataBind(index);
     bind->buffer_type   = MYSQL_TYPE_BLOB;
@@ -278,7 +278,7 @@ SqlBinderResult mysql_bind_blob(const SqlCellView &cell, std::any data) {
 SqlParserResult mysql_parse_date(const SqlCellView &cell) {
     if (cell.is_null() || cell.formatted_type() == MYSQL_TYPE_NULL ||
         cell.raw_type() == std::type_index(typeid(g_sql_null))) {
-        return Unexpected(SqlError::Code::NullValue);
+        return Err(SqlError::Code::NullValue);
     }
     if (cell.format() == SqlCellView::DataFormat::kString) {
         auto type  = cell.formatted_type();
@@ -294,7 +294,7 @@ SqlParserResult mysql_parse_date(const SqlCellView &cell) {
             }
         }
     }
-    return Unexpected(SqlError::Code::UnsupportConvertFromSqlType);
+    return Err(SqlError::Code::UnsupportConvertFromSqlType);
 }
 
 MYSQL_TIME toMysqlTime(const SqlDate &dt) {
@@ -338,7 +338,7 @@ SqlBinderResult mysql_bind_date(const SqlCellView &cell, std::any data) {
     auto mysqlstmt = std::any_cast<MysqlStatement *>(data);
     if (cell.format() != SqlCellView::DataFormat::kValuePointer ||
         cell.raw_type() != std::type_index(typeid(const SqlDate))) {
-        return Unexpected(SqlError::Code::InvalidDataFormat);
+        return Err(SqlError::Code::InvalidDataFormat);
     }
     std::unique_ptr<void, void (*)(void *)> ptr {malloc(sizeof(MYSQL_TIME)), free};
 
@@ -356,7 +356,7 @@ SqlBinderResult mysql_bind_date(const SqlCellView &cell, std::any data) {
             bind->buffer_type = MYSQL_TYPE_TIME;
             break;
         default:
-            return Unexpected(std::make_error_code(std::errc::invalid_argument));
+            return Err(std::make_error_code(std::errc::invalid_argument));
     }
     bind->buffer        = const_cast<void *>(ptr.get());
     bind->buffer_length = sizeof(MYSQL_TIME);

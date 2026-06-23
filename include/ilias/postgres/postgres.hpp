@@ -24,6 +24,8 @@
 #include <ilias/task/when_any.hpp>
 #include <libpq-fe.h>
 
+#include <optional>
+
 #include "ilias/sql/sql_plugin.hpp"
 #include "ilias/sql/types.hpp"
 
@@ -74,6 +76,8 @@ public:
     // Status and error reporting
     auto lastError() -> int;
     auto lastErrorMessage() -> const char *;
+    auto setLastNativeError(NativeSqlError error) -> void;
+    auto lastNativeError() const -> std::optional<NativeSqlError>;
     auto info() -> std::string;
 
     bool operator==(Postgres &other);
@@ -87,6 +91,7 @@ private:
     Poller     mPoller;
     std::map<Oid, std::string> mTypeMap;
     std::shared_ptr<SqlValueConverterContext> mContext;
+    std::optional<NativeSqlError> mLastNativeError;
 };
 
 ILIAS_POSTGRES_NS_END

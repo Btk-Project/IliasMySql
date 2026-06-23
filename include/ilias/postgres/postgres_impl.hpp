@@ -1,9 +1,10 @@
 #pragma once
 
-#include <memory>
-#include <vector>
 #include <charconv>
+#include <memory>
+#include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include "postgres.hpp"
 #include "ilias/sql/sqlerror.hpp"
@@ -26,8 +27,11 @@ public:
     PostgresStreamingResultSet &operator=(PostgresStreamingResultSet &&)      = default;
 
     auto next() -> IoTask<bool> override;
-    auto rowCount() const -> size_t override;
-    auto rowAffected() const -> size_t;
+    auto capabilities() const -> ResultCapabilities override;
+    auto rowsFetched() const -> size_t override;
+    auto exactRowCount() const -> std::optional<size_t> override;
+    auto rowsAffected() const -> std::optional<size_t> override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
     auto getValue(size_t index) -> IoResult<SqlCellView> override;
@@ -48,7 +52,8 @@ private:
     std::unique_ptr<PGresult, decltype(&PQclear)> mCurrentRow {nullptr, &PQclear};
     int                                           mColumnCount         = 0;
     size_t                                        mRowsFetched         = 0;
-    size_t                                        mRowsAffected        = 0;
+    std::optional<size_t>                         mRowsAffected;
+    std::optional<NativeSqlError>                 mLastNativeError;
     bool                                          mEndOfResults        = false;
     bool                                          mMetadataInitialized = false;
     bool                                          mIsResultFetched     = false;
@@ -77,6 +82,7 @@ public:
     auto execute() -> IoTask<size_t> override;
     auto reset() -> void override;
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     auto prepare(std::string_view sql) -> IoTask<void>;
 
     /**
@@ -101,6 +107,7 @@ private:
     std::shared_ptr<std::string> mStatementName;
     std::string                  mPreparedSql;
     bool                         mPrepared = false;
+    std::optional<NativeSqlError> mLastNativeError;
 
     // Storage for bound values
     std::unordered_map<std::string, int>                 mNamedParamIndex;
@@ -132,6 +139,7 @@ public:
     auto lastInsertId() const -> int64_t override;
     auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> override;
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     auto ping() -> IoTask<bool> override;
 
 private:

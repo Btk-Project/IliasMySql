@@ -2,6 +2,7 @@
 
 #include "ilias/sql/global/global.hpp"
 #include "ilias/sql/detail/placeholder_parser.hpp"
+#include "ilias/sql/detail/reflection_metadata.hpp"
 
 #include <string_view>
 #include <array>
@@ -57,7 +58,7 @@ struct SqlStructCheck {
         }
         if constexpr (member_count > 0) {
             auto sql_names    = get_sql_param_names<member_count>(sql_view);
-            auto member_names = NEKO_NAMESPACE::Reflect<U>::names();
+            auto member_names = detail::reflectedFieldNames<U>();
 
             std::ranges::sort(sql_names);
             std::ranges::sort(member_names);

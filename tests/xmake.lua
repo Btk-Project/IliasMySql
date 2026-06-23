@@ -17,7 +17,7 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         includes(conf_path)
         goto continue
     end
-    sql_backend = string.match(dir, "unit/(%w+)")
+    local sql_backend = string.match(dir, "unit/(%w+)")
     if sql_backend == nil then
         sql_backend = string.match(dir, "unit\\(%w+)")
     end
@@ -49,6 +49,14 @@ for _, file in ipairs(os.files("unit/**/test_*.cpp")) do
         end
         add_packages("gtest", "cpptrace")
         add_includedirs("$(projectdir)/include")
+        if is_plat("linux") and has_config("memcheck") then
+            on_run(function (target)
+                local argv = {}
+                table.insert(argv, "--leak-check=full")
+                table.insert(argv, target:targetfile())
+                os.execv("valgrind", argv)
+            end)
+        end
     target_end()
 
     ::continue::

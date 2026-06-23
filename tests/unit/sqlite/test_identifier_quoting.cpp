@@ -6,6 +6,7 @@
 
 #include <ilias/platform.hpp>
 #include "ilias/sql/sqldatabase.hpp"
+#include "ilias/sql_orm/detail/schema_generator.hpp"
 #include "ilias/sql_orm/orm_form.hpp"
 
 ILIAS_SQL_USE_NAMESPACE
@@ -15,26 +16,38 @@ NEKO_USE_NAMESPACE
 struct KeywordRecord {
     int         id         = 0;
     std::string from_value = "";
+
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
+                    (make_tags<rename_tag<"from", SqlTags {.not_null = true}>>(from_value)))
 };
 
 struct DuplicateColumnRecord {
     int id    = 0;
     int other = 0;
+
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
+                    (make_tags<rename_tag<"id", SqlTags {}>>(other)))
+};
+
+struct RenamedKeywordRecord {
+    int         id         = 0;
+    std::string from_value = "";
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
+                    (make_tags<rename_tag<"from", SqlTags {.not_null = true, .index = true}>>(from_value)))
+};
+
+struct PartialReflectionRecord {
+    int         id     = 0;
+    int         hidden = 0;
+    std::string name   = "";
 };
 
 NEKO_BEGIN_NAMESPACE
 template <>
-struct Meta<KeywordRecord, void> {
+struct Meta<PartialReflectionRecord, void> {
     constexpr static auto value = Object(
-        "id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&KeywordRecord::id),
-        "from", make_tags<SqlTags {.not_null = true}>(&KeywordRecord::from_value));
-};
-
-template <>
-struct Meta<DuplicateColumnRecord, void> {
-    constexpr static auto value = Object(
-        "id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&DuplicateColumnRecord::id),
-        "id", make_tags<SqlTags {}>(&DuplicateColumnRecord::other));
+        "id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&PartialReflectionRecord::id),
+        "name", make_tags<SqlTags {.not_null = true}>(&PartialReflectionRecord::name));
 };
 NEKO_END_NAMESPACE
 
@@ -131,9 +144,8 @@ static auto test_reserved_identifier_roundtrip() -> IoTask<void> {
     }
     EXPECT_EQ(update_ret.value(), 1U);
 
-    auto verify_ret = co_await form.select(form.sql(&KeywordRecord::from_value))
-                          .where(form.sql(&KeywordRecord::id) == 1)
-                          .query();
+    auto verify_ret =
+        co_await form.select(form.sql(&KeywordRecord::from_value)).where(form.sql(&KeywordRecord::id) == 1).query();
     if (!verify_ret) {
         ADD_FAILURE() << verify_ret.error().message();
         co_return {};
@@ -145,6 +157,49 @@ static auto test_reserved_identifier_roundtrip() -> IoTask<void> {
         }
         EXPECT_EQ(std::get<0>(row.value()), "updated");
     }
+    co_return {};
+}
+
+static auto test_member_pointer_column_errors() -> IoTask<void> {
+    auto db_ret = co_await SqlDatabase::open_in_memory();
+    if (!db_ret) {
+        ADD_FAILURE() << db_ret.error().message();
+        co_return {};
+    }
+    auto db = std::move(db_ret.value());
+
+    auto form_ret = co_await Form<PartialReflectionRecord, SqliteTag>::create_if_not_exists(db, "partial_records");
+    if (!form_ret) {
+        ADD_FAILURE() << form_ret.error().message();
+        co_return {};
+    }
+    auto form = std::move(form_ret.value());
+
+    auto id_col = form.sql<&PartialReflectionRecord::id>();
+    EXPECT_TRUE(id_col.isValid());
+    EXPECT_EQ(id_col.sql(), "\"id\"");
+
+    auto valid_query = co_await form.select(form.sql<&PartialReflectionRecord::id>()).query();
+    if (!valid_query) {
+        ADD_FAILURE() << valid_query.error().message();
+        co_return {};
+    }
+
+    auto invalid_col = form.sql(&PartialReflectionRecord::hidden);
+    EXPECT_FALSE(invalid_col.isValid());
+
+    auto invalid_where = co_await form.select().where(invalid_col == 1).query();
+    EXPECT_FALSE(invalid_where.has_value());
+    if (!invalid_where) {
+        EXPECT_EQ(invalid_where.error(), SqlError::Code::InvalidParameter);
+    }
+
+    auto invalid_projection = co_await form.select(form.sql(&PartialReflectionRecord::hidden)).query();
+    EXPECT_FALSE(invalid_projection.has_value());
+    if (!invalid_projection) {
+        EXPECT_EQ(invalid_projection.error(), SqlError::Code::InvalidParameter);
+    }
+    co_return {};
 }
 
 static auto test_identifier_errors() -> IoTask<void> {
@@ -157,12 +212,16 @@ static auto test_identifier_errors() -> IoTask<void> {
 
     auto invalid_table = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(db, "bad table");
     EXPECT_FALSE(invalid_table.has_value());
-    EXPECT_EQ(invalid_table.error(), SqlError::Code::InvalidParameter);
+    if (!invalid_table) {
+        EXPECT_EQ(invalid_table.error(), SqlError::Code::InvalidParameter);
+    }
 
     auto duplicate_columns =
         co_await Form<DuplicateColumnRecord, SqliteTag>::create_if_not_exists(db, "duplicate_records");
     EXPECT_FALSE(duplicate_columns.has_value());
-    EXPECT_EQ(duplicate_columns.error(), SqlError::Code::InvalidParameter);
+    if (!duplicate_columns) {
+        EXPECT_EQ(duplicate_columns.error(), SqlError::Code::InvalidParameter);
+    }
 
     auto form_ret = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(db, "keyword_records");
     if (!form_ret) {
@@ -173,11 +232,115 @@ static auto test_identifier_errors() -> IoTask<void> {
 
     EXPECT_THROW((void)form.as("bad alias"), std::invalid_argument);
 
-    auto duplicate_relation = co_await form.join(form)
-                                  .on(form.col(&KeywordRecord::id) == form.col(&KeywordRecord::id))
-                                  .query();
+    auto duplicate_relation =
+        co_await form.join(form).on(form.col(&KeywordRecord::id) == form.col(&KeywordRecord::id)).query();
     EXPECT_FALSE(duplicate_relation.has_value());
-    EXPECT_EQ(duplicate_relation.error(), SqlError::Code::InvalidParameter);
+    if (!duplicate_relation) {
+        EXPECT_EQ(duplicate_relation.error(), SqlError::Code::InvalidParameter);
+    }
+    co_return {};
+}
+
+static auto test_rename_tag_identifier_roundtrip() -> IoTask<void> {
+    auto db_ret = co_await SqlDatabase::open_in_memory();
+    if (!db_ret) {
+        ADD_FAILURE() << db_ret.error().message();
+        co_return {};
+    }
+    auto db = std::move(db_ret.value());
+
+    auto form_ret = co_await Form<RenamedKeywordRecord, SqliteTag>::create_if_not_exists(db, "rename_records");
+    if (!form_ret) {
+        ADD_FAILURE() << form_ret.error().message();
+        co_return {};
+    }
+    auto form = std::move(form_ret.value());
+
+    EXPECT_EQ(form.getColumnNames().size(), 2U);
+    if (form.getColumnNames().size() != 2U) {
+        co_return {};
+    }
+    EXPECT_EQ(form.getColumnNames()[1], "from");
+
+    auto schema = form.createTableSchema();
+    EXPECT_TRUE(schema.has_value());
+    if (!schema) {
+        co_return {};
+    }
+    EXPECT_NE(schema.value().find("\"from\""), std::string::npos);
+    EXPECT_EQ(schema.value().find("from_value"), std::string::npos);
+
+    auto if_not_exists_schema = form.createTableSchema(true);
+    EXPECT_TRUE(if_not_exists_schema.has_value());
+    if (!if_not_exists_schema) {
+        co_return {};
+    }
+    EXPECT_NE(if_not_exists_schema.value().find("CREATE TABLE IF NOT EXISTS \"rename_records\""), std::string::npos);
+
+    auto generated_schema =
+        ILIAS_SQL_COMPLETE_NAMESPACE::detail::SchemaGenerator<SqliteTag>::generateTableSchema<RenamedKeywordRecord>(
+            "rename_records", true);
+    EXPECT_TRUE(generated_schema.has_value());
+    if (!generated_schema) {
+        co_return {};
+    }
+    EXPECT_EQ(generated_schema->createTableSql, if_not_exists_schema.value());
+    EXPECT_EQ(generated_schema->indexStatements.size(), 1U);
+    if (generated_schema->indexStatements.size() != 1U) {
+        co_return {};
+    }
+    EXPECT_EQ(generated_schema->indexStatements.front(),
+              "CREATE INDEX \"idx_rename_records_from\" ON \"rename_records\" (\"from\")");
+    auto complete_schema = form.completeSchema();
+    EXPECT_EQ(complete_schema.size(), 2U);
+    if (complete_schema.size() != 2U) {
+        co_return {};
+    }
+    EXPECT_EQ(complete_schema.front(), schema.value());
+    EXPECT_EQ(complete_schema.back(), generated_schema->indexStatements.front());
+
+    auto index_statements = form.indexStatementsSchema();
+    EXPECT_EQ(index_statements.size(), 1U);
+    if (index_statements.size() != 1U) {
+        co_return {};
+    }
+    EXPECT_EQ(index_statements.front(), "CREATE INDEX \"idx_rename_records_from\" ON \"rename_records\" (\"from\")");
+
+    auto insert_ret = co_await form.emplace(1, "hello");
+    if (!insert_ret) {
+        ADD_FAILURE() << insert_ret.error().message();
+        co_return {};
+    }
+
+    auto projected_ret = co_await form.select(form.sql(&RenamedKeywordRecord::from_value))
+                             .where(form.sql(&RenamedKeywordRecord::id) == 1)
+                             .query();
+    if (!projected_ret) {
+        ADD_FAILURE() << projected_ret.error().message();
+        co_return {};
+    }
+    ilias_for_await(auto row, projected_ret.value().rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_EQ(std::get<0>(row.value()), "hello");
+    }
+
+    auto full_ret = co_await form.select().where(form.sql(&RenamedKeywordRecord::id) == 1).query();
+    if (!full_ret) {
+        ADD_FAILURE() << full_ret.error().message();
+        co_return {};
+    }
+    ilias_for_await(auto row, full_ret.value().rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_EQ(row.value().id, 1);
+        EXPECT_EQ(row.value().from_value, "hello");
+    }
+    co_return {};
 }
 
 TEST(SqlIdentifierQuoting, ReservedIdentifiersWorkThroughOrmDsl) {
@@ -188,7 +351,16 @@ TEST(SqlIdentifierQuoting, DeterministicIdentifierErrorsAreReportedEarly) {
     test_identifier_errors().wait();
 }
 
+TEST(SqlIdentifierQuoting, MemberPointerColumnErrorsFlowThroughIoResult) {
+    test_member_pointer_column_errors().wait();
+}
+
+TEST(SqlIdentifierQuoting, RenameTagAppliesToSqlIdentifiers) {
+    test_rename_tag_identifier_roundtrip().wait();
+}
+
 int main(int argc, char **argv) {
+    ILIAS_LOG_SET_LEVEL(ILIAS_TRACE_LEVEL);
     ilias::PlatformContext ioContext;
     ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);

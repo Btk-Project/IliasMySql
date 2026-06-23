@@ -9,6 +9,7 @@
 #pragma once
 
 #include "ilias/sql/global/global.hpp"
+#include "ilias/sql/detail/reflection_metadata.hpp"
 #include "ilias/sql/detail/type_traits.hpp"
 #include "ilias/sql/interfaces.hpp"
 #include "ilias/sql/sqlresult.hpp"
@@ -51,9 +52,18 @@ public:
     auto operator->() const -> const IStatement * { return mStmt.get(); }
     auto operator*() -> IStatement & { return *mStmt; }
     auto operator*() const -> const IStatement & { return *mStmt; }
+    /**
+     * @brief 绑定反射对象，wrapper 会保存一份参数存储以覆盖后续 query()/execute()。
+     *
+     * 这比直接调用 IStatement::bind() 更适合临时值和表达式结果；如绑定了大对象，
+     * 可在执行完成且不再复用这些参数后调用 clearKeepAlives() 释放保存的副本。
+     */
     template <typename U>
         requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
     auto bind(U &&arg) -> IoResult<void>;
+    /**
+     * @brief 绑定位置参数，wrapper 会按值保存参数副本以保证绑定生命周期。
+     */
     template <typename... Args>
         requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... &&
                                           !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
@@ -63,6 +73,7 @@ public:
     auto execute() -> IoTask<size_t>;
     auto reset() -> void;
     auto clearKeepAlives() -> void;
+    auto lastNativeError() const -> std::optional<NativeSqlError>;
 
 private:
     using DeleterFunc = void (*)(void *);
@@ -127,13 +138,13 @@ auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     auto keepAlive     = new KeepAliveT(std::forward<U>(arg));
     // clang-format off
     NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
-        [&ret, this](auto &field, std::string_view name) {
+        [&ret, this](auto &field, std::string_view name, const auto &tags) {
             // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
             if (!ret) {
                 return;
             }
             using FieldType = std::decay_t<decltype(field)>;
-            ret = SqlBinder<FieldType>::bind(*mStmt, name, field);
+            ret = SqlBinder<FieldType>::bind(*mStmt, detail::reflectedFieldName(name, tags), field);
         });
     // clang-format on
     mKeepAlive.emplace_back(
@@ -177,6 +188,13 @@ inline auto SqlStatement<void>::reset() -> void {
 
 inline auto SqlStatement<void>::clearKeepAlives() -> void {
     mKeepAlive.clear();
+}
+
+inline auto SqlStatement<void>::lastNativeError() const -> std::optional<NativeSqlError> {
+    if (!mStmt) {
+        return std::nullopt;
+    }
+    return mStmt->lastNativeError();
 }
 
 template <typename T>

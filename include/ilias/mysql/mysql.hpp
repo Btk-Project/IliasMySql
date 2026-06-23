@@ -22,6 +22,8 @@
 #include <ilias/task/when_any.hpp>
 #include <mariadb/mysql.h>
 
+#include <optional>
+
 #include "global.hpp"
 #include "mysqlopt.hpp"
 #include "ilias/sql/types.hpp"
@@ -48,11 +50,12 @@ public:
 
     [[nodiscard("Don't forget to use co_await")]]
     virtual auto next() -> IoTask<bool>                              = 0;
-    virtual auto countRows() -> size_t                               = 0;
+    virtual auto exactRowCount() const -> std::optional<size_t>       = 0;
     virtual auto countFields() -> size_t                             = 0;
     virtual auto fieldName(size_t index) -> std::string_view         = 0;
     virtual auto get(size_t index) -> IoResult<SqlCellView>          = 0;
     virtual auto get(std::string_view name) -> IoResult<SqlCellView> = 0;
+    virtual auto lastNativeError() const -> std::optional<NativeSqlError> = 0;
     auto stmtToValue(MYSQL_FIELD *field, uint8_t *buffer, size_t bufferSize, bool isNull) -> IoResult<SqlCellView>;
     auto toValue(MYSQL_FIELD *field, char *buffer, size_t bufferSize) -> IoResult<SqlCellView>;
     virtual auto nativeResult() -> MYSQL_RES * = 0;
@@ -141,6 +144,10 @@ public:
     auto close() -> void;
     auto lastError() -> int;
     auto lastErrorMessage() -> const char *;
+    auto captureLastNativeError() -> NativeSqlError;
+    auto setLastNativeError(NativeSqlError error) -> void;
+    auto lastNativeError() const -> std::optional<NativeSqlError>;
+    static auto nativeErrorCodeToSqlError(int code) -> SqlError::Code;
     auto info() -> std::string;
 
     bool operator==(MySql &other);
@@ -152,6 +159,7 @@ private:
     MYSQL                                     mMysql;
     Poller                                    mPoller;
     std::shared_ptr<SqlValueConverterContext> mContext;
+    std::optional<NativeSqlError>             mLastNativeError;
 };
 
 class ILIAS_SQL_API MysqlResultSet final : public IResultSet {
@@ -163,7 +171,11 @@ public:
     MysqlResultSet(std::unique_ptr<MySqlResultBase>&& imp);
     ~MysqlResultSet();
     auto next() -> IoTask<bool> override;
-    auto rowCount() const -> size_t override;
+    auto capabilities() const -> ResultCapabilities override;
+    auto rowsFetched() const -> size_t override;
+    auto exactRowCount() const -> std::optional<size_t> override;
+    auto rowsAffected() const -> std::optional<size_t> override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
     auto getValue(size_t index) -> IoResult<SqlCellView> override;
@@ -173,6 +185,7 @@ public:
 
 private:
     std::unique_ptr<MySqlResultBase> mImp;
+    size_t                           mRowsFetched = 0;
 };
 
 class ILIAS_SQL_API MysqlStatement final : public IStatement {
@@ -197,6 +210,7 @@ public:
     auto clearBinds() -> void;
     auto close() -> IoTask<void>;
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
 
     auto dataBind(size_t index) -> MYSQL_BIND *;
 private:
@@ -209,6 +223,7 @@ private:
     std::vector<MYSQL_BIND>                  mBinds;
     std::unordered_map<std::string, int>     mIndexs;
     std::vector<std::unique_ptr<void, void (*)(void *)>> mDataGuards;
+    std::optional<NativeSqlError>            mLastNativeError;
 };
 
 class ILIAS_SQL_API MysqlConnection final : public IConnection {
@@ -236,6 +251,7 @@ public:
     auto ping() -> IoTask<bool> override;
     auto mysql() -> std::shared_ptr<MySql> { return mMysql; }
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> override;
 
 private:

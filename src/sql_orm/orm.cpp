@@ -81,7 +81,17 @@ SqlCondition::SqlCondition(std::string sql, std::vector<std::shared_ptr<SqlState
     : mSql(std::move(sql)), mBinders(std::move(binders)) {
 }
 
+auto SqlCondition::invalid(std::string diagnostic) -> SqlCondition {
+    SqlCondition condition;
+    condition.mDiagnostic = std::move(diagnostic);
+    return condition;
+}
+
 SqlCondition SqlCondition::operator&&(const SqlCondition &other) const {
+    if (!isValid())
+        return *this;
+    if (!other.isValid())
+        return other;
     if (mSql.empty())
         return other;
     if (other.mSql.empty())
@@ -92,6 +102,10 @@ SqlCondition SqlCondition::operator&&(const SqlCondition &other) const {
 }
 
 SqlCondition SqlCondition::operator||(const SqlCondition &other) const {
+    if (!isValid())
+        return *this;
+    if (!other.isValid())
+        return other;
     if (mSql.empty())
         return other;
     if (other.mSql.empty())
@@ -102,6 +116,8 @@ SqlCondition SqlCondition::operator||(const SqlCondition &other) const {
 }
 
 SqlCondition SqlCondition::operator!() const {
+    if (!isValid())
+        return *this;
     if (mSql.empty())
         return *this;
     return SqlCondition("NOT (" + mSql + ")", mBinders);
@@ -129,11 +145,20 @@ SqlVariable::SqlVariable(std::string_view name) : mSql(name), mBindName(name) {
 SqlVariable::SqlVariable(std::string sql, std::string bindName) : mSql(std::move(sql)), mBindName(std::move(bindName)) {
 }
 
+SqlVariable::SqlVariable(std::string sql, std::string bindName, std::string diagnostic)
+    : mSql(std::move(sql)), mBindName(std::move(bindName)), mDiagnostic(std::move(diagnostic)) {
+}
+
+auto SqlVariable::invalid(std::string diagnostic) -> SqlVariable {
+    return SqlVariable("", "", std::move(diagnostic));
+}
+
 // ================= SelectBuilder =================
 
 SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols,
-                             IdentifierQuoter quoteIdentifier)
-    : mDb(db), mTableName(std::move(tableName)), mQuoteIdentifier(quoteIdentifier) {
+                             IdentifierQuoter quoteIdentifier, std::vector<std::string> diagnostics)
+    : mDb(db), mTableName(std::move(tableName)), mQuoteIdentifier(quoteIdentifier),
+      mDiagnostics(std::move(diagnostics)) {
     if (cols.empty())
         mSelectColumns = "*";
     else
@@ -153,6 +178,12 @@ SelectBuilder &SelectBuilder::orderBy(std::string_view column, bool desc) {
     return *this;
 }
 
+void SelectBuilder::addDiagnostic(std::string diagnostic) {
+    if (!diagnostic.empty()) {
+        mDiagnostics.push_back(std::move(diagnostic));
+    }
+}
+
 SelectBuilder &SelectBuilder::limit(int limit) {
     mLimit = " LIMIT " + std::to_string(limit);
     return *this;
@@ -166,18 +197,24 @@ SelectBuilder &SelectBuilder::offset(int offset) {
 IoTask<SqlResult<void>> SelectBuilder::query() const {
     auto ret = co_await prepare();
     if (!ret)
-        co_return Unexpected(ret.error());
+        co_return Err(ret.error());
 
     bind(ret.value());
     auto res = co_await ret->query();
     if (!res) {
-        co_return Unexpected(res.error());
+        co_return Err(res.error());
     }
     storage(res.value());
     co_return res;
 }
 
 IoTask<SqlStatement<void>> SelectBuilder::prepare() const {
+    auto diag = diagnostic();
+    if (!diag.empty()) {
+        ILIAS_ERROR("ilias-sql", "Invalid ORM SQL expression: {}", diag);
+        co_return Err(SqlError::Code::InvalidParameter);
+    }
+
     std::string sql = "SELECT " + mSelectColumns + " FROM " + mTableName;
     if (!mWhereCondition.empty()) {
         sql += " WHERE " + mWhereCondition.sql();
@@ -195,6 +232,14 @@ void SelectBuilder::storage(SqlResult<void> &res) const {
     for (auto &binder : mWhereCondition.binds()) {
         res.storage(binder);
     }
+}
+
+auto SelectBuilder::diagnostic() const -> std::string {
+    std::vector<std::string> diagnostics = mDiagnostics;
+    if (!mWhereCondition.isValid()) {
+        diagnostics.push_back(mWhereCondition.diagnostic());
+    }
+    return detail::join_strs(diagnostics, "; ");
 }
 
 IoGenerator<SqlResult<void>> SelectBuilder::loop(int count) {

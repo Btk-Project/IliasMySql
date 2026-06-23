@@ -137,7 +137,7 @@ public:
     static auto setup_db() -> IoTask<SqlDatabase> {
         auto options = get_options();
         // 重试打开连接，缓解临时网络/服务抖动
-        IoResult<SqlDatabase> open_ret     = Unexpected(SqlError::UnknownError);
+        IoResult<SqlDatabase> open_ret     = Err(SqlError::UnknownError);
         int                   attempts     = 0;
         const int             max_attempts = 3;
         while (attempts < max_attempts) {
@@ -370,6 +370,29 @@ public:
         // ILIAS_INFO("mysql-test", "Expected error: {}", ret2.error().message());
 
         ILIAS_INFO("mysql-test", ">>> test_errors PASSED");
+        co_return {};
+    }
+
+    static auto test_native_error_snapshot() -> IoTask<void> {
+        auto db = (co_await setup_db()).value();
+        ILIAS_INFO("mysql-test", ">>> Running test_native_error_snapshot");
+
+        auto ret = co_await db.execute("SELECT * FROM missing_native_error_table");
+        CO_EXPECT_NOT_RESULT(ret);
+        EXPECT_EQ(ret.error(), SqlError::Code::TableNotFound);
+        EXPECT_EQ(ret.error().message().find("missing_native_error_table"), std::string::npos);
+
+        auto native = db.lastNativeError();
+        EXPECT_TRUE(native.has_value());
+        if (!native.has_value()) {
+            co_return {};
+        }
+        EXPECT_EQ(native->backend, "mysql");
+        EXPECT_NE(native->code, 0);
+        EXPECT_EQ(native->sqlstate, "42S02");
+        EXPECT_NE(native->message.find("missing_native_error_table"), std::string::npos);
+
+        ILIAS_INFO("mysql-test", ">>> test_native_error_snapshot PASSED");
         co_return {};
     }
 
@@ -886,6 +909,10 @@ TEST(MySQL, ERRORS) {
     MySqlTestSuite::test_errors().wait();
 }
 
+TEST(MySQL, NATIVE_ERROR_SNAPSHOT) {
+    MySqlTestSuite::test_native_error_snapshot().wait();
+}
+
 TEST(MySQL, NULL_BIND) {
     MySqlTestSuite::test_null_handling().wait();
 }
@@ -920,6 +947,7 @@ ILIAS_NAMESPACE::Task<void> run_all_tests() {
         co_await MySqlTestSuite::test_pagination();
         co_await MySqlTestSuite::test_bulk_update_delete();
         co_await MySqlTestSuite::test_errors();
+        co_await MySqlTestSuite::test_native_error_snapshot();
         co_await MySqlTestSuite::test_null_handling();
         co_await MySqlTestSuite::test_transaction_rollback();
         co_await MySqlTestSuite::test_raii_rollback();

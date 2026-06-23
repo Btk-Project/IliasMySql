@@ -4,10 +4,8 @@ ILIAS_SQL_NS_BEGIN
 
 SqlError::SqlError(int64_t err, std::error_category &c) : mErr(err), mCategory(dynamic_cast<SqlErrorCategory *>(&c)) {
 }
-SqlError::SqlError(Code err, const std::string &message) : mErr(err), mCategory(&SqlErrorCategory::instance()) {
-    if (mCategory) {
-        mCategory->registerMessage(err, message);
-    }
+SqlError::SqlError(Code err, [[maybe_unused]] const std::string &message)
+    : mErr(err), mCategory(&SqlErrorCategory::instance()) {
 }
 SqlError::SqlError(const SqlError &err) : mErr(err.mErr), mCategory(err.mCategory) {
 }

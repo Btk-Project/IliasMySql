@@ -57,12 +57,14 @@ public:
     auto clearBinds() -> void;
     auto close() -> IoTask<void>;
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
 
 private:
     std::shared_ptr<sqlite3>                             mSqlite     = nullptr;
     std::shared_ptr<sqlite3_stmt>                        mSqliteStmt = nullptr;
     std::vector<std::unique_ptr<void, void (*)(void *)>> mDataGuards;
     std::shared_ptr<SqlValueConverterContext>            mContext;
+    std::optional<NativeSqlError>                         mLastNativeError;
 };
 
 /**
@@ -77,7 +79,11 @@ public:
     ~SqliteStmtResultSet();
     auto next() -> IoTask<bool> override;
 
-    auto rowCount() const -> size_t override;
+    auto capabilities() const -> ResultCapabilities override;
+    auto rowsFetched() const -> size_t override;
+    auto exactRowCount() const -> std::optional<size_t> override;
+    auto rowsAffected() const -> std::optional<size_t> override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
     // 获取列数
     auto columnCount() const -> size_t override;
     auto columnName(size_t index) const -> std::string_view override;
@@ -95,6 +101,8 @@ private:
     std::shared_ptr<sqlite3>                  mSqlite     = nullptr;
     std::shared_ptr<sqlite3_stmt>             mSqliteStmt = nullptr;
     bool                                      mIsFirst    = true;
+    size_t                                    mRowsFetched = 0;
+    std::optional<NativeSqlError>             mLastNativeError;
     std::unordered_map<std::string, int>      mIndexs;
     std::unique_ptr<SqliteStatement>          mPrivate;
     std::shared_ptr<SqlValueConverterContext> mContext;
@@ -138,11 +146,13 @@ public:
 
     auto valueConverterContext() const -> std::shared_ptr<SqlValueConverterContext> override;
     auto nativeHandle() const -> void * override;
+    auto lastNativeError() const -> std::optional<NativeSqlError> override;
 
 private:
     std::shared_ptr<sqlite3>                  mSqlite = nullptr;
     ConnectOptions                            mOptions;
     std::shared_ptr<SqlValueConverterContext> mContext;
+    std::optional<NativeSqlError>             mLastNativeError;
 };
 
 ILIAS_SQLITE_NS_END

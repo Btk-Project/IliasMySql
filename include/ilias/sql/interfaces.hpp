@@ -5,6 +5,7 @@
 #pragma once
 #include <ilias/io/context.hpp>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <map>
 
@@ -26,6 +27,12 @@ struct ConnectOptions {
 // 前置声明
 class IStatement;
 
+struct ResultCapabilities {
+    bool streaming        = false;
+    bool exactRowCount    = false;
+    bool rowsAffected     = false;
+};
+
 /**
  * @brief 结果集迭代器接口
  * 对应 rusqlite 的 Rows
@@ -37,7 +44,11 @@ public:
     // 移动到下一行。返回 false 表示结束。
     virtual auto next() -> IoTask<bool> = 0;
 
-    virtual auto rowCount() const -> size_t = 0;
+    virtual auto capabilities() const -> ResultCapabilities = 0;
+    virtual auto rowsFetched() const -> size_t = 0;
+    virtual auto exactRowCount() const -> std::optional<size_t> = 0;
+    virtual auto rowsAffected() const -> std::optional<size_t> = 0;
+    virtual auto lastNativeError() const -> std::optional<NativeSqlError> { return std::nullopt; }
     // 获取列数
     virtual auto columnCount() const -> size_t                      = 0;
     virtual auto columnName(size_t index) const -> std::string_view = 0;
@@ -46,6 +57,13 @@ public:
 
     // 按列名获取
     virtual auto getValue(std::string_view name) -> IoResult<SqlCellView> = 0;
+    /**
+     * @brief 返回后端原生结果句柄，仅用于高级互操作。
+     *
+     * 指针类型由具体驱动决定，例如 sqlite3_stmt*、MYSQL_RES*、PGresult*。
+     * 调用方不拥有该指针，不得释放；其有效期不超过当前 result set，
+     * 且可能在 next()/close()/析构后失效。
+     */
     virtual auto nativeHandle() const -> void *                           = 0;
 };
 
@@ -65,8 +83,21 @@ public:
 
     // 重置状态以便复用
     virtual auto reset() -> void                = 0;
+    /**
+     * @brief 返回后端原生 statement 句柄，仅用于高级互操作。
+     *
+     * 调用方不拥有该指针，不得释放。句柄在 statement close/reset/析构后失效；
+     * 对句柄做出的后端操作可能破坏本抽象层维护的绑定和结果状态。
+     */
     virtual auto nativeHandle() const -> void * = 0;
+    virtual auto lastNativeError() const -> std::optional<NativeSqlError> { return std::nullopt; }
 
+    /**
+     * @brief 绑定一个外部变量引用。
+     *
+     * 低层 IStatement 不复制 value，调用方必须保证 value 至少活到 query()/execute()
+     * 消费完本次绑定。需要自动保存临时值时，使用高层 SqlStatement wrapper。
+     */
     template <typename T>
     auto bind(size_t index, T &&value) -> IoResult<void>;
     template <typename T>
@@ -112,7 +143,15 @@ public:
 
     // 连通性检测
     virtual auto ping() -> IoTask<bool>         = 0;
+    /**
+     * @brief 返回后端原生连接句柄，仅用于高级互操作。
+     *
+     * 指针类型由具体驱动决定，例如 sqlite3*、MYSQL*、PGconn*。
+     * 调用方不拥有该指针，不得释放；其有效期不超过当前 connection。
+     * 直接调用后端 API 可能绕过本库的异步状态机、事务状态和错误快照。
+     */
     virtual auto nativeHandle() const -> void * = 0;
+    virtual auto lastNativeError() const -> std::optional<NativeSqlError> { return std::nullopt; }
 };
 
 template <typename T>

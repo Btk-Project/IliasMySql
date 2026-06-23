@@ -12,6 +12,9 @@
 
 #include <nekoproto/serialization/reflection.hpp>
 
+#include <optional>
+
+#include "ilias/sql/detail/reflection_metadata.hpp"
 #include "ilias/sql/interfaces.hpp"
 #include "ilias/sql/detail/coverter.hpp"
 
@@ -67,6 +70,36 @@ public:
     auto operator->() const -> const IResultSet * { return mImp.get(); }
     auto operator*() -> IResultSet & { return *mImp; }
     auto operator*() const -> const IResultSet & { return *mImp; }
+    auto capabilities() const -> ResultCapabilities {
+        if (!mImp) {
+            return {};
+        }
+        return mImp->capabilities();
+    }
+    auto rowsFetched() const -> size_t {
+        if (!mImp) {
+            return 0;
+        }
+        return mImp->rowsFetched();
+    }
+    auto exactRowCount() const -> std::optional<size_t> {
+        if (!mImp) {
+            return std::nullopt;
+        }
+        return mImp->exactRowCount();
+    }
+    auto rowsAffected() const -> std::optional<size_t> {
+        if (!mImp) {
+            return std::nullopt;
+        }
+        return mImp->rowsAffected();
+    }
+    auto lastNativeError() const -> std::optional<NativeSqlError> {
+        if (!mImp) {
+            return std::nullopt;
+        }
+        return mImp->lastNativeError();
+    }
 
     void storage(std::shared_ptr<void> ptr) { mStorage.push_back(std::move(ptr)); }
     void storage(std::initializer_list<std::shared_ptr<void>> ptrs) {
@@ -148,7 +181,7 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
-            co_yield Unexpected(rc.error());
+            co_yield Err(rc.error());
             break;
         }
         if (!*rc) {
@@ -169,7 +202,7 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
         if (!rc) {
-            co_yield Unexpected(rc.error());
+            co_yield Err(rc.error());
             break;
         }
         if (!*rc) {
@@ -179,8 +212,10 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
         if constexpr (sizeof...(Args) == 1) {
             auto handler = [this, &ret](auto &value) {
                 using ObjT = std::decay_t<decltype(value)>;
-                NEKO_NAMESPACE::Reflect<ObjT>::forEach(
-                    value, [this, &ret](auto &field, std::string_view name) { ret = ret ? load(name, field) : ret; });
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret](auto &field, std::string_view name,
+                                                                            const auto &tags) {
+                    ret = ret ? load(detail::reflectedFieldName(name, tags), field) : ret;
+                });
             };
             [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {
                 (handler(std::get<I>(tuple)), ...);
@@ -216,7 +251,7 @@ auto SqlResult<T>::rangeResult() -> Generator<IoResult<T>> {
                 value = T {};
             }
             else {
-                co_yield Unexpected(rc.error());
+                co_yield Err(rc.error());
                 value = T {};
             }
         }
@@ -228,7 +263,7 @@ auto SqlResult<T>::rangeResult() -> Generator<IoResult<T>> {
                 value = T {};
             }
             else {
-                co_yield Unexpected(rc.error());
+                co_yield Err(rc.error());
                 value = T {};
             }
         }

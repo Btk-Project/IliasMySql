@@ -1,4 +1,4 @@
-add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage")
+add_rules("mode.debug", "mode.release", "mode.releasedbg", "mode.coverage", "mode.asan")
 
 set_version("0.1.0", {build = "%Y%m%d%H%M"})
 add_repositories("btk-repo https://github.com/Btk-Project/xmake-repo.git")
@@ -31,6 +31,13 @@ option("enable_test")
     set_showmenu(true)
     set_category("test")
     set_description("enable test")
+option_end()
+
+option("memcheck")
+    set_default(false)
+    set_showmenu(true)
+    set_category("test")
+    set_description("run tests through valgrind memcheck on Linux")
 option_end()
 
 option("enable_mysql")
@@ -102,9 +109,15 @@ if is_plat("windows") then
     add_cxxflags("/bigobj", "/Zc:preprocessor")
 end
 
-if is_mode("debug") and is_plat("linux") then
+if is_mode("debug") and is_plat("linux") and not has_config("memcheck") then
     set_policy("build.sanitizer.address", true)
     set_policy("build.sanitizer.undefined", true)
+end
+
+if is_mode("asan") and is_plat("linux") then
+    set_policy("build.sanitizer.address", true)
+    set_policy("build.sanitizer.undefined", true)
+    set_policy("build.sanitizer.leak", true)
 end
 
 target("ilias_sql")
