@@ -16,24 +16,27 @@ NEKO_USE_NAMESPACE
 struct KeywordRecord {
     int         id         = 0;
     std::string from_value = "";
+};
 
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
-                    (make_tags<rename_tag<"from", SqlTags {.not_null = true}>>(from_value)))
+template <>
+struct NEKO_NAMESPACE::Meta<KeywordRecord> {
+    static constexpr auto value =
+        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&KeywordRecord::id), "from",
+               make_tags<rename_tag<"from">, SqlTags {.not_null = true}>(&KeywordRecord::from_value));
 };
 
 struct DuplicateColumnRecord {
     int id    = 0;
     int other = 0;
 
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
-                    (make_tags<rename_tag<"id", SqlTags {}>>(other)))
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id), (make_tags<rename_tag<"id">>(other)))
 };
 
 struct RenamedKeywordRecord {
     int         id         = 0;
     std::string from_value = "";
     NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
-                    (make_tags<rename_tag<"from", SqlTags {.not_null = true, .index = true}>>(from_value)))
+                    (make_tags<rename_tag<"from">, SqlTags {.not_null = true, .index = true}>(from_value)))
 };
 
 struct PartialReflectionRecord {
@@ -45,9 +48,9 @@ struct PartialReflectionRecord {
 NEKO_BEGIN_NAMESPACE
 template <>
 struct Meta<PartialReflectionRecord, void> {
-    constexpr static auto value = Object(
-        "id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&PartialReflectionRecord::id),
-        "name", make_tags<SqlTags {.not_null = true}>(&PartialReflectionRecord::name));
+    constexpr static auto value =
+        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&PartialReflectionRecord::id), "name",
+               make_tags<SqlTags {.not_null = true}>(&PartialReflectionRecord::name));
 };
 NEKO_END_NAMESPACE
 

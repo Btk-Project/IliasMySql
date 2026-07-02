@@ -4,6 +4,8 @@
 #include "ilias/sql/detail/reflection_metadata.hpp"
 #include "ilias/sql_orm/detail/orm_traits.hpp"
 
+#include <nekoproto/global/reflection_tags.hpp>
+
 #include <type_traits>
 
 ILIAS_SQL_NS_BEGIN
@@ -217,6 +219,18 @@ struct ILIAS_SQL_API SqlTags {
     }
 };
 
+namespace tag_properties {
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, primary_key, primary_key)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, not_null, not_null)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, unique, unique)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, auto_increment, auto_increment)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, index, index)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, unsigned_type, unsigned_type)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(int, length, length)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, created_at, created_at)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, updated_at, updated_at)
+} // namespace tag_properties
+
 // 前置声明
 class SqlDatabase;
 template <typename T>
@@ -238,18 +252,10 @@ ILIAS_SQL_API std::string join_strs(const std::vector<std::string> &vec, const s
 
 template <typename Tags>
 constexpr auto extractSqlTags(const Tags &tags) -> SqlTags {
-    using CleanTags = std::remove_cvref_t<Tags>;
-    if constexpr (std::is_same_v<CleanTags, SqlTags>) {
-        return tags;
-    }
-    else if constexpr (std::is_convertible_v<const Tags &, SqlTags>) {
-        return static_cast<SqlTags>(tags);
-    }
-    else if constexpr (requires { CleanTags::base; }) {
-        return extractSqlTags(CleanTags::base);
-    }
-    else {
-        return {};
+    if constexpr (NEKO_NAMESPACE::tag_query::has_tag<SqlTags, Tags>(Tags{})) {
+        return NEKO_NAMESPACE::tag_query::get_tag<SqlTags, Tags>(tags);
+    } else {
+        return SqlTags{};
     }
 }
 } // namespace detail

@@ -16,7 +16,7 @@ namespace detail {
 
 template <typename Tags>
 constexpr auto reflectedFieldName(std::string_view reflectedName, const Tags &tags) -> std::string_view {
-    const auto renamed = NEKO_NAMESPACE::tag_access::recursive_name(tags);
+    const auto renamed = NEKO_NAMESPACE::tag_query::get<NEKO_NAMESPACE::tag_property::name>(tags);
     return renamed.empty() ? reflectedName : renamed;
 }
 
@@ -73,7 +73,7 @@ consteval auto reflectedMemberPointerIndex(std::index_sequence<Is...>) -> int {
     static_assert(requires(T &obj) { obj.*MemberPtr; },
                   "ORM column member pointer must belong to the mapped entity type");
 
-    constexpr auto accessors = NEKO_NAMESPACE::detail::ReflectHelper<T>::getValues();
+    constexpr auto accessors = NEKO_NAMESPACE::detail::ReflectProvider<T>::accessors();
     constexpr auto rawNames  = NEKO_NAMESPACE::Reflect<T>::names();
     constexpr auto memberName = memberPointerFieldName<MemberPtr>();
     auto matches = [&]<std::size_t I, typename Accessor>(const Accessor &accessor) constexpr -> bool {

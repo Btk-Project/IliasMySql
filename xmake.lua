@@ -22,8 +22,8 @@ option("3rd_custom",   {showmenu = true, type = "boolean", default = false})
 add_requires("ilias", "neko-proto-tools")
 
 if not has_config("3rd_custom") then
-    add_requireconfs("**ilias", {version = "0.4.2", override = true, configs = {log = true, shared = is_kind("shared"), stdcxx = get_config("stdcxx")}})
-    add_requireconfs("**neko-proto-tools", {override = true, version = "dev", configs = {shared = is_kind("shared"), stdcxx = get_config("stdcxx"), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
+    add_requireconfs("**ilias", {version = "0.4.2", override = true, configs = {log = true, shared = is_kind("shared"), stdcxx = tonumber(get_config("stdcxx")) }})
+    add_requireconfs("**neko-proto-tools", {override = true, version = "dev", configs = {shared = is_kind("shared"), stdcxx = tonumber(get_config("stdcxx")), enable_rapidxml = false, enable_simdjson = false, enable_protocol = false, enable_rapidjson = false, enable_fmt = false, enable_communication = false, enable_jsonrpc = false}})
 end
 
 option("enable_test")
