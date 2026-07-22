@@ -52,13 +52,13 @@ struct SqlStructCheck {
     consteval SqlStructCheck(const T &s) : sql(s) {
         std::string_view sql_view     = sql;
         size_t           param_count  = count_sql_params(sql_view);
-        constexpr size_t member_count = NEKO_NAMESPACE::Reflect<U>::size();
+        constexpr size_t member_count = detail::reflectedSqlFieldCount<U>();
         if (param_count != member_count) {
             throw SQL_Placeholder_Count_Mismatch("Error: SQL placeholder count does not match struct member count!");
         }
         if constexpr (member_count > 0) {
             auto sql_names    = get_sql_param_names<member_count>(sql_view);
-            auto member_names = detail::reflectedFieldNames<U>();
+            auto member_names = detail::reflectedSqlFieldNames<U>();
 
             std::ranges::sort(sql_names);
             std::ranges::sort(member_names);
@@ -79,8 +79,8 @@ template <typename T>
 struct SqlCheck {
     template <typename U>
     SqlCheck(SqlStructCheck<U> sqls) : sql(sqls.sql) {
-        size_t param_count  = count_sql_params(sql);
-        size_t member_count = NEKO_NAMESPACE::Reflect<U>::size();
+        size_t           param_count  = count_sql_params(sql);
+        constexpr size_t member_count = detail::reflectedSqlFieldCount<U>();
         if (param_count != member_count) {
             throw SQL_Placeholder_Count_Mismatch("Error: SQL placeholder count does not match struct member count!");
         }

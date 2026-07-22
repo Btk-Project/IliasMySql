@@ -26,6 +26,7 @@ public:
     struct TableSchema {
         std::string                                  createTableSql;
         std::vector<std::string>                     columnDefinitions;
+        std::vector<std::string>                     tableConstraints;
         std::vector<std::pair<std::string, SqlTags>> columns;
         std::vector<std::string>                     indexStatements;
 
@@ -49,11 +50,16 @@ public:
      */
     template <typename T>
     static std::string generateColumnDefinition(std::string_view columnName, const SqlTags &tags) {
-        // Validate SqlTags configuration before generating SQL
-        auto errors = tags.getValidationErrors<T>();
+        return generateColumnDefinition<T>(columnName, SqlColumnMetadata {.tags = tags});
+    }
+
+    template <typename T>
+    static std::string generateColumnDefinition(std::string_view columnName, const SqlColumnMetadata &metadata) {
+        // Validate the normalized core and extension metadata before generating SQL.
+        auto errors = metadata.template getValidationErrors<T>();
         if (!errors.empty()) {
             std::ostringstream oss;
-            oss << "Invalid SqlTags configuration for column '" << columnName << "': ";
+            oss << "Invalid SQL column metadata for column '" << columnName << "': ";
             for (size_t i = 0; i < errors.size(); ++i) {
                 if (i > 0)
                     oss << ", ";
@@ -63,7 +69,7 @@ public:
         }
 
         // Delegate to the dialect-specific implementation
-        return Dialect<BackendTag>::template generate_column_definition<T>(columnName, tags);
+        return Dialect<BackendTag>::template generate_column_definition<T>(columnName, metadata);
     }
 
     template <typename EntityType>
@@ -75,11 +81,16 @@ public:
             EntityType  obj;
             NEKO_NAMESPACE::Reflect<EntityType>::forEach(
                 obj, [&](const auto &field, std::string_view name, const auto &tags) {
-                    const auto columnName = detail::reflectedFieldName(name, tags);
-                    const auto sqlTags    = detail::extractSqlTags(tags);
-                    schema.columns.emplace_back(std::string(columnName), sqlTags);
-                    schema.columnDefinitions.push_back(
-                        generateColumnDefinition<std::decay_t<decltype(field)>>(columnName, sqlTags));
+                    if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                        const auto columnName = detail::reflectedFieldName(name, tags);
+                        const auto metadata   = detail::extractSqlColumnMetadata(tags);
+                        schema.columns.emplace_back(std::string(columnName), metadata.tags);
+                        schema.columnDefinitions.push_back(
+                            generateColumnDefinition<std::decay_t<decltype(field)>>(columnName, metadata));
+                        if (metadata.hasReference()) {
+                            schema.tableConstraints.push_back(generateReferenceConstraint(columnName, metadata));
+                        }
+                    }
                 });
 
             if (schema.columnDefinitions.empty()) {
@@ -88,13 +99,16 @@ public:
 
             schema.indexStatements = generateIndexStatements(tableName, schema.columns);
 
+            auto definitions = schema.columnDefinitions;
+            definitions.insert(definitions.end(), schema.tableConstraints.begin(), schema.tableConstraints.end());
+
             std::ostringstream sql;
             sql << "CREATE TABLE ";
             if (ifNotExists) {
                 sql << "IF NOT EXISTS ";
             }
-            sql << Dialect<BackendTag>::quote_identifier(tableName) << " ("
-                << detail::join_strs(schema.columnDefinitions, ", ") << ")";
+            sql << Dialect<BackendTag>::quote_identifier(tableName) << " (" << detail::join_strs(definitions, ", ")
+                << ")";
             schema.createTableSql = sql.str();
 
             return schema;
@@ -144,6 +158,20 @@ public:
             return {};
         }
         return schema->completeStatements();
+    }
+
+private:
+    static std::string generateReferenceConstraint(std::string_view columnName, const SqlColumnMetadata &metadata) {
+        std::string reference = "FOREIGN KEY (" + Dialect<BackendTag>::quote_identifier(columnName) + ") REFERENCES " +
+                                Dialect<BackendTag>::quote_identifier_path(metadata.reference_table) + " (" +
+                                Dialect<BackendTag>::quote_identifier(metadata.reference_column) + ")";
+        if (const auto action = detail::referential_action_sql(metadata.on_delete); !action.empty()) {
+            reference += " ON DELETE " + std::string(action);
+        }
+        if (const auto action = detail::referential_action_sql(metadata.on_update); !action.empty()) {
+            reference += " ON UPDATE " + std::string(action);
+        }
+        return reference;
     }
 };
 

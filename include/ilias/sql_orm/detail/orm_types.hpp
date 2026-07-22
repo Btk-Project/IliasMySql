@@ -5,8 +5,13 @@
 #include "ilias/sql_orm/detail/orm_traits.hpp"
 
 #include <nekoproto/global/reflection_tags.hpp>
+#include <nekoproto/global/string_literal.hpp>
 
+#include <string>
+#include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <vector>
 
 ILIAS_SQL_NS_BEGIN
 
@@ -219,6 +224,133 @@ struct ILIAS_SQL_API SqlTags {
     }
 };
 
+/**
+ * @brief Referential actions shared by the supported SQL dialects.
+ *
+ * NoAction is also used as the default value and therefore omits the
+ * corresponding ON DELETE / ON UPDATE clause.
+ */
+enum class SqlReferenceAction {
+    NoAction,
+    Restrict,
+    Cascade,
+    SetNull,
+    SetDefault,
+};
+
+/** @brief Stable insertion points for raw column-definition fragments. */
+enum class SqlCustomPosition {
+    AfterType,
+    Tail,
+};
+
+namespace sql_tag_detail {
+
+template <NEKO_NAMESPACE::ConstexprString Expression>
+struct sql_default_impl {
+    static_assert(Expression.size() > 0, "SQL default expression must not be empty");
+    constexpr static auto sql_default_expression = Expression.view();
+
+    template <typename T, auto /*tags*/>
+    constexpr static bool constexpr_check() {
+        return true;
+    }
+};
+
+template <NEKO_NAMESPACE::ConstexprString Expression>
+struct sql_check_impl {
+    static_assert(Expression.size() > 0, "SQL check expression must not be empty");
+    constexpr static auto sql_check_expression = Expression.view();
+
+    template <typename T, auto /*tags*/>
+    constexpr static bool constexpr_check() {
+        return true;
+    }
+};
+
+template <NEKO_NAMESPACE::ConstexprString Collation>
+struct sql_collate_impl {
+    static_assert(Collation.size() > 0, "SQL collation name must not be empty");
+    constexpr static auto sql_collation = Collation.view();
+
+    template <typename T, auto /*tags*/>
+    constexpr static bool constexpr_check() {
+        return true;
+    }
+};
+
+template <NEKO_NAMESPACE::ConstexprString Table, NEKO_NAMESPACE::ConstexprString Column, SqlReferenceAction OnDelete,
+          SqlReferenceAction OnUpdate>
+struct sql_references_impl {
+    static_assert(Table.size() > 0, "SQL referenced table must not be empty");
+    static_assert(Column.size() > 0, "SQL referenced column must not be empty");
+
+    constexpr static auto sql_reference_table  = Table.view();
+    constexpr static auto sql_reference_column = Column.view();
+    constexpr static auto sql_on_delete        = OnDelete;
+    constexpr static auto sql_on_update        = OnUpdate;
+
+    template <typename T, auto /*tags*/>
+    constexpr static bool constexpr_check() {
+        return true;
+    }
+};
+
+template <NEKO_NAMESPACE::ConstexprString Fragment, NEKO_NAMESPACE::ConstexprString Backend, SqlCustomPosition Position>
+struct sql_custom_impl {
+    static_assert(Fragment.size() > 0, "Custom SQL fragment must not be empty");
+
+    constexpr static auto sql_custom_fragment = Fragment.view();
+    constexpr static auto sql_custom_backend  = Backend.view();
+    constexpr static auto sql_custom_position = Position;
+
+    template <typename T, auto /*tags*/>
+    constexpr static bool constexpr_check() {
+        return true;
+    }
+};
+
+} // namespace sql_tag_detail
+
+/**
+ * @brief Use a trusted SQL expression as the column default.
+ *
+ * The expression is emitted verbatim after DEFAULT. String literals therefore
+ * need SQL quoting, for example sql_default<"'pending'">.
+ */
+template <NEKO_NAMESPACE::ConstexprString Expression>
+inline constexpr auto sql_default = sql_tag_detail::sql_default_impl<Expression> {};
+
+/** @brief Add a column CHECK constraint. The generator supplies CHECK (...). */
+template <NEKO_NAMESPACE::ConstexprString Expression>
+inline constexpr auto sql_check = sql_tag_detail::sql_check_impl<Expression> {};
+
+/** @brief Set the column collation using a validated SQL identifier path. */
+template <NEKO_NAMESPACE::ConstexprString Collation>
+inline constexpr auto sql_collate = sql_tag_detail::sql_collate_impl<Collation> {};
+
+/**
+ * @brief Add a single-column foreign key constraint.
+ *
+ * It is emitted as a table constraint so MySQL enforces it as well. Composite
+ * foreign keys still belong to explicit table-level schema metadata.
+ */
+template <NEKO_NAMESPACE::ConstexprString Table, NEKO_NAMESPACE::ConstexprString Column,
+          SqlReferenceAction OnDelete = SqlReferenceAction::NoAction,
+          SqlReferenceAction OnUpdate = SqlReferenceAction::NoAction>
+inline constexpr auto sql_references = sql_tag_detail::sql_references_impl<Table, Column, OnDelete, OnUpdate> {};
+
+/**
+ * @brief Append a trusted raw fragment to a generated column definition.
+ *
+ * An empty backend applies to all dialects. Supported backend selectors are
+ * sqlite, mysql/mariadb and postgres/postgresql/pg. Matching fragments remain
+ * repeatable and are emitted in declaration order.
+ */
+template <NEKO_NAMESPACE::ConstexprString Fragment, NEKO_NAMESPACE::ConstexprString Backend = "",
+          SqlCustomPosition Position = SqlCustomPosition::Tail>
+inline constexpr auto sql_custom = sql_tag_detail::sql_custom_impl<Fragment, Backend, Position> {};
+
 namespace tag_properties {
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, primary_key, primary_key)
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, not_null, not_null)
@@ -229,7 +361,86 @@ NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, unsigned_type, unsigned_type)
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(int, length, length)
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, created_at, created_at)
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, updated_at, updated_at)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(std::string_view, sql_default_expression, sql_default_expression)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(std::string_view, sql_check_expression, sql_check_expression)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(std::string_view, sql_collation, sql_collation)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(std::string_view, sql_reference_table, sql_reference_table)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(std::string_view, sql_reference_column, sql_reference_column)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(SqlReferenceAction, sql_on_delete, sql_on_delete)
+NEKO_DETAIL_DEFINE_TAG_PROPERTY(SqlReferenceAction, sql_on_update, sql_on_update)
 } // namespace tag_properties
+
+/**
+ * @brief Normalized SQL metadata for one reflected column.
+ *
+ * Core behavioral tags remain grouped in SqlTags. DDL fragments and
+ * relationship metadata stay independent so new properties can be added
+ * without continuously growing SqlTags.
+ */
+struct SqlCustomClause {
+    std::string_view  fragment {};
+    std::string_view  backend {};
+    SqlCustomPosition position = SqlCustomPosition::Tail;
+};
+
+struct SqlColumnMetadata {
+    SqlTags                      tags {};
+    std::string_view             default_expression {};
+    std::string_view             check_expression {};
+    std::string_view             collation {};
+    std::string_view             reference_table {};
+    std::string_view             reference_column {};
+    SqlReferenceAction           on_delete = SqlReferenceAction::NoAction;
+    SqlReferenceAction           on_update = SqlReferenceAction::NoAction;
+    std::vector<SqlCustomClause> custom_clauses {};
+
+    [[nodiscard]] constexpr bool hasDefault() const noexcept { return !default_expression.empty(); }
+    [[nodiscard]] constexpr bool hasCheck() const noexcept { return !check_expression.empty(); }
+    [[nodiscard]] constexpr bool hasCollation() const noexcept { return !collation.empty(); }
+    [[nodiscard]] constexpr bool hasReference() const noexcept {
+        return !reference_table.empty() || !reference_column.empty();
+    }
+
+    template <typename T>
+    auto getValidationErrors() const -> std::vector<std::string> {
+        auto errors = tags.template getValidationErrors<T>();
+
+        if (hasDefault() && tags.created_at) {
+            errors.emplace_back("Explicit SQL default conflicts with created_at's automatic CURRENT_TIMESTAMP default");
+        }
+        if (hasDefault() && tags.auto_increment) {
+            errors.emplace_back("Explicit SQL default conflicts with auto-increment behavior");
+        }
+        if (reference_table.empty() != reference_column.empty()) {
+            errors.emplace_back("SQL reference requires both a table and a column");
+        }
+        if (!hasReference() &&
+            (on_delete != SqlReferenceAction::NoAction || on_update != SqlReferenceAction::NoAction)) {
+            errors.emplace_back("SQL referential actions require a reference target");
+        }
+        if ((tags.not_null || tags.primary_key) &&
+            (on_delete == SqlReferenceAction::SetNull || on_update == SqlReferenceAction::SetNull)) {
+            errors.emplace_back("SET NULL referential actions require a nullable column");
+        }
+        for (const auto &clause : custom_clauses) {
+            if (clause.fragment.empty()) {
+                errors.emplace_back("Custom SQL fragments must not be empty");
+            }
+        }
+
+        if (hasCollation()) {
+            using RawType                 = detail::strip_wrapper_t<T>;
+            constexpr bool is_string_type = std::is_same_v<RawType, std::string> ||
+                                            std::is_same_v<RawType, std::string_view> ||
+                                            std::is_same_v<RawType, const char *>;
+            if constexpr (!is_string_type) {
+                errors.emplace_back("SQL collation is only supported for string fields");
+            }
+        }
+
+        return errors;
+    }
+};
 
 // 前置声明
 class SqlDatabase;
@@ -252,11 +463,63 @@ ILIAS_SQL_API std::string join_strs(const std::vector<std::string> &vec, const s
 
 template <typename Tags>
 constexpr auto extractSqlTags(const Tags &tags) -> SqlTags {
-    if constexpr (NEKO_NAMESPACE::tag_query::has_tag<SqlTags, Tags>(Tags{})) {
-        return NEKO_NAMESPACE::tag_query::get_tag<SqlTags, Tags>(tags);
-    } else {
-        return SqlTags{};
+    SqlTags ret;
+#define ILIAS_SQL_EXTRACT_TAG_PROPERTY(Property, Member)                                                               \
+    if constexpr (NEKO_NAMESPACE::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
+        ret.Member = NEKO_NAMESPACE::tag_query::get<tag_properties::Property>(tags);                                   \
     }
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(primary_key, primary_key)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(not_null, not_null)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(unique, unique)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(auto_increment, auto_increment)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(index, index)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(unsigned_type, unsigned_type)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(length, length)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(created_at, created_at)
+    ILIAS_SQL_EXTRACT_TAG_PROPERTY(updated_at, updated_at)
+#undef ILIAS_SQL_EXTRACT_TAG_PROPERTY
+    return ret;
+}
+
+template <typename Tags, typename Visitor>
+constexpr void forEachSqlTag(const Tags &tags, Visitor &&visitor) {
+    if constexpr (NEKO_NAMESPACE::is_tag_list_v<std::remove_cvref_t<Tags>>) {
+        std::apply([&visitor](const auto &...tag) { (visitor(tag), ...); }, tags.tuple());
+    }
+    else {
+        visitor(tags);
+    }
+}
+
+template <typename Tags>
+constexpr auto extractSqlColumnMetadata(const Tags &tags) -> SqlColumnMetadata {
+    SqlColumnMetadata ret {.tags = extractSqlTags(tags)};
+#define ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(Property, Member)                                                            \
+    if constexpr (NEKO_NAMESPACE::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
+        ret.Member = NEKO_NAMESPACE::tag_query::get<tag_properties::Property>(tags);                                   \
+    }
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_default_expression, default_expression)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_check_expression, check_expression)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_collation, collation)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_reference_table, reference_table)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_reference_column, reference_column)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_on_delete, on_delete)
+    ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_on_update, on_update)
+#undef ILIAS_SQL_EXTRACT_COLUMN_PROPERTY
+    forEachSqlTag(tags, [&ret](const auto &tag) {
+        if constexpr (requires {
+                          tag.sql_custom_fragment;
+                          tag.sql_custom_backend;
+                          tag.sql_custom_position;
+                      }) {
+            ret.custom_clauses.push_back({
+                .fragment = tag.sql_custom_fragment,
+                .backend  = tag.sql_custom_backend,
+                .position = tag.sql_custom_position,
+            });
+        }
+    });
+    return ret;
 }
 } // namespace detail
 

@@ -212,10 +212,14 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
         if constexpr (sizeof...(Args) == 1) {
             auto handler = [this, &ret](auto &value) {
                 using ObjT = std::decay_t<decltype(value)>;
-                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret](auto &field, std::string_view name,
-                                                                            const auto &tags) {
-                    ret = ret ? load(detail::reflectedFieldName(name, tags), field) : ret;
-                });
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(
+                    value, [this, &ret](auto &field, std::string_view name, const auto &tags) {
+                        if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                            if (ret) {
+                                ret = load(detail::reflectedFieldName(name, tags), field);
+                            }
+                        }
+                    });
             };
             [&handler]<std::size_t... I>(std::index_sequence<I...>, auto tuple) {
                 (handler(std::get<I>(tuple)), ...);
@@ -225,10 +229,15 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
             int  idx     = 0;
             auto handler = [this, &ret, &idx](auto &value) {
                 using ObjT = std::decay_t<decltype(value)>;
-                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret, &idx](auto &field) {
-                    ret = ret ? load(idx++, field) : ret;
-                    if (!ret) {
-                        ILIAS_TRACE("ilias-sql", "Failed to load field '{}': {}", idx, ret.error().message());
+                NEKO_NAMESPACE::Reflect<ObjT>::forEach(value, [this, &ret, &idx](auto &field, std::string_view /*name*/,
+                                                                                 const auto &tags) {
+                    if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                        if (ret) {
+                            ret = load(idx++, field);
+                            if (!ret) {
+                                ILIAS_TRACE("ilias-sql", "Failed to load field '{}': {}", idx, ret.error().message());
+                            }
+                        }
                     }
                 });
             };

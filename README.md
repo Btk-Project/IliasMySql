@@ -383,6 +383,88 @@ co_await db.execute(createTableSQL);
 // )
 ```
 
+### 常用列级 SQL tags
+
+不适合放入 `SqlTags` 聚合结构的 DDL 元数据使用独立 tag。它们可以与 `SqlTags`、
+`rename_tag` 等其他 NekoProtoTools tags 组合：
+
+```cpp
+struct AppConfig {
+    int         singleton_id;
+    int64_t     owner_id;
+    std::string status;
+    std::string code;
+};
+
+NEKO_BEGIN_NAMESPACE
+template <>
+struct Meta<AppConfig, void> {
+    constexpr static auto value = Object(
+        "singleton_id",
+        make_tags<
+            SqlTags::createPrimaryKeyTags(),
+            sql_default<"1">,
+            sql_check<"singleton_id = 1">
+        >(&AppConfig::singleton_id),
+        "owner_id",
+        make_tags<
+            SqlTags{.not_null = true},
+            sql_references<"users", "id", SqlReferenceAction::Cascade>
+        >(&AppConfig::owner_id),
+        "status",
+        make_tags<
+            SqlTags{.not_null = true},
+            sql_default<"'pending'">
+        >(&AppConfig::status),
+        "code",
+        make_tags<sql_collate<"NOCASE">>(&AppConfig::code));
+};
+NEKO_END_NAMESPACE
+```
+
+NekoProtoTools 的两个通用字段 tag 也直接作用于 SQL ORM：
+
+- `rename_tag<"column_name">`：修改数据库列名，并统一应用于建表、索引、CRUD、列 DSL、
+  命名绑定和结果加载。
+- `serialization_ignore_tag`：将字段标记为非持久化状态；ORM 会在 schema、校验、读写、
+  自动时间戳、打印和成员指针列访问中完整忽略它，读取对象时保留该成员的 C++ 默认值。
+  过滤发生在编译期类型分派之前，因此该成员可以是没有 SQL 类型映射、Binder 或结果转换器的类型。
+
+`serialization_ignore_tag` 表示“完全不属于数据库映射”，不适合表达数据库中真实存在、但只读或
+只禁止 INSERT/UPDATE 的列；这类方向性语义应由后续独立的 generated/read-only tag 表达，避免
+一个模糊的 `ignore` 在不同操作中产生意外行为。
+
+- `sql_default<"...">`：生成 `DEFAULT ...`。参数是受信任的 SQL 表达式，字符串默认值需要自行添加 SQL 单引号。
+- `sql_check<"...">`：生成 `CHECK (...)`，适合只依赖当前列的约束。
+- `sql_references<"table", "column", OnDelete, OnUpdate>`：生成表级单列外键（避免 MySQL 忽略列内联
+  `REFERENCES`）；复合外键应使用表级 schema。
+- `sql_collate<"...">`：为字符串列指定排序规则。
+
+这些 tag 使用属性查询解析。自定义 tag 可以通过提供 `sql_default_expression`、
+`sql_check_expression` 等同名静态属性接入 schema 生成，无需修改 `SqlTags`。
+
+对于不通用或不值得抽象的列属性，可以使用可重复的 `sql_custom`：
+
+```cpp
+make_tags<
+    sql_custom<"CHECK (external_id > 0)">,                 // 所有后端
+    sql_custom<"COMMENT 'external id'", "mysql">          // 仅 MySQL
+>(&Entity::external_id);
+
+make_tags<
+    sql_custom<"COMPRESSION lz4", "postgres",
+               SqlCustomPosition::AfterType>               // 紧跟类型
+>(&Entity::payload);
+```
+
+后端选择器为空时对所有后端生效；内置识别 `sqlite`、`mysql`/`mariadb` 和
+`postgres`/`postgresql`/`pg`。同一列上所有匹配项按声明顺序生成。默认位置是
+`Tail`（内置列约束之后），只有语法明确要求紧跟类型时才使用 `AfterType`。
+
+`sql_custom` 是受信任的编译期 SQL 原文，不做转义、语法验证或参数绑定；用户需要
+自行保证片段对目标后端有效，并自行正确引用其中的 SQL 字面量和标识符。它仅扩展
+列定义，表级约束和建表尾部选项仍应使用对应的表级 schema 能力。
+
 ## 快速开始
 
 ### 环境依赖

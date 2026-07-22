@@ -36,10 +36,12 @@ public:
         std::string result;
         T           obj;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view fname, const auto &tags) {
-            const auto columnName = detail::reflectedFieldName(fname, tags);
-            if (name == columnName) {
-                result = detail::SchemaGenerator<BackendTag>::template generateColumnDefinition<
-                    std::decay_t<decltype(field)>>(columnName, detail::extractSqlTags(tags));
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                const auto columnName = detail::reflectedFieldName(fname, tags);
+                if (name == columnName) {
+                    result = detail::SchemaGenerator<BackendTag>::template generateColumnDefinition<
+                        std::decay_t<decltype(field)>>(columnName, detail::extractSqlColumnMetadata(tags));
+                }
             }
         });
         return result;
@@ -79,11 +81,13 @@ public:
 
         T obj;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const auto &tags) {
-            using rawType    = detail::strip_wrapper_t<decltype(field)>;
-            auto sqlTags     = detail::extractSqlTags(tags);
-            auto fieldErrors = sqlTags.template getValidationErrors<rawType>();
-            for (const auto &error : fieldErrors) {
-                errors.push_back(std::string(detail::reflectedFieldName(name, tags)) + ": " + error);
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                using rawType    = detail::strip_wrapper_t<decltype(field)>;
+                auto metadata    = detail::extractSqlColumnMetadata(tags);
+                auto fieldErrors = metadata.template getValidationErrors<rawType>();
+                for (const auto &error : fieldErrors) {
+                    errors.push_back(std::string(detail::reflectedFieldName(name, tags)) + ": " + error);
+                }
             }
         });
 
@@ -93,39 +97,42 @@ public:
     static decltype(auto) getTimestampFields() {
         std::vector<std::string_view> timestampFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-                                                auto sqlTags = detail::extractSqlTags(tags);
-                                                if (sqlTags.hasTimestampBehavior()) {
-                                                    timestampFields.emplace_back(detail::reflectedFieldName(name, tags));
-                                                }
-                                            });
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                auto sqlTags = detail::extractSqlTags(tags);
+                if (sqlTags.hasTimestampBehavior()) {
+                    timestampFields.emplace_back(detail::reflectedFieldName(name, tags));
+                }
+            }
+        });
         return timestampFields;
     }
 
     static decltype(auto) getCreatedAtFields() {
         std::vector<std::string_view> createdAtFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-                                                auto sqlTags = detail::extractSqlTags(tags);
-                                                if (sqlTags.created_at) {
-                                                    createdAtFields.emplace_back(detail::reflectedFieldName(name, tags));
-                                                }
-                                            });
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                auto sqlTags = detail::extractSqlTags(tags);
+                if (sqlTags.created_at) {
+                    createdAtFields.emplace_back(detail::reflectedFieldName(name, tags));
+                }
+            }
+        });
         return createdAtFields;
     }
 
     static decltype(auto) getUpdatedAtFields() {
         std::vector<std::string_view> updatedAtFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj,
-                                            [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-                                                auto sqlTags = detail::extractSqlTags(tags);
-                                                if (sqlTags.updated_at) {
-                                                    updatedAtFields.emplace_back(detail::reflectedFieldName(name, tags));
-                                                }
-                                            });
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                auto sqlTags = detail::extractSqlTags(tags);
+                if (sqlTags.updated_at) {
+                    updatedAtFields.emplace_back(detail::reflectedFieldName(name, tags));
+                }
+            }
+        });
         return updatedAtFields;
     }
 
@@ -180,15 +187,17 @@ public:
         std::vector<std::string> quotedColumnsToInsert;
         NEKO_NAMESPACE::Reflect<T>::forEach(
             first_item, [&](const auto &field, std::string_view name, const auto &tags) {
-                const auto sqlTags    = detail::extractSqlTags(tags);
-                const auto columnName = detail::reflectedFieldName(name, tags);
-                // 如果字段是 created_at 并且它的值是空的，则跳过此列
-                if (sqlTags.created_at && is_sql_null(field) && Dialect<BackendTag>::support_timestamp_default()) {
-                    return;
+                if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                    const auto sqlTags    = detail::extractSqlTags(tags);
+                    const auto columnName = detail::reflectedFieldName(name, tags);
+                    // 如果字段是 created_at 并且它的值是空的，则跳过此列
+                    if (sqlTags.created_at && is_sql_null(field) && Dialect<BackendTag>::support_timestamp_default()) {
+                        return;
+                    }
+                    // 否则，将此列加入到 INSERT 语句中
+                    columnsToInsert.emplace_back(columnName);
+                    quotedColumnsToInsert.emplace_back(Dialect<BackendTag>::quote_identifier(columnName));
                 }
-                // 否则，将此列加入到 INSERT 语句中
-                columnsToInsert.emplace_back(columnName);
-                quotedColumnsToInsert.emplace_back(Dialect<BackendTag>::quote_identifier(columnName));
             });
         std::string rowPlaceholder = "(";
         for ([[maybe_unused]] int i = 0; i < (int)columnsToInsert.size(); ++i) {
@@ -210,29 +219,34 @@ public:
             if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
                 // if sql dialect support default timestamp, then we don't need to generate timestamp by ourselves
                 NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
-                    using FieldType = std::decay_t<decltype(field)>;
-                    const auto sqlTags = detail::extractSqlTags(tags);
-                    if (sqlTags.created_at && is_sql_null(field)) {
-                        return;
+                    if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                        using FieldType    = std::decay_t<decltype(field)>;
+                        const auto sqlTags = detail::extractSqlTags(tags);
+                        if (sqlTags.created_at && is_sql_null(field)) {
+                            return;
+                        }
+                        SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
                     }
-                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
                 });
             }
             else {
                 // if sql dialect doesn't support default timestamp, then we need to generate timestamp by ourselves
                 NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
-                    using FieldType = std::decay_t<decltype(field)>;
-                    const auto sqlTags = detail::extractSqlTags(tags);
-                    if (sqlTags.created_at) {
-                        if constexpr (std::is_same_v<FieldType, std::string> || std::is_same_v<FieldType, SqlDate>) {
-                            std::shared_ptr<FieldType> now = std::make_shared<FieldType>();
-                            detail::TimestampUpdater {.created_at = true}(*now, sqlTags);
-                            SqlBinder<FieldType>::bind(**ret, bindIndex++, *now);
-                            binds.push_back(now);
-                            return;
+                    if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                        using FieldType    = std::decay_t<decltype(field)>;
+                        const auto sqlTags = detail::extractSqlTags(tags);
+                        if (sqlTags.created_at) {
+                            if constexpr (std::is_same_v<FieldType, std::string> ||
+                                          std::is_same_v<FieldType, SqlDate>) {
+                                std::shared_ptr<FieldType> now = std::make_shared<FieldType>();
+                                detail::TimestampUpdater {.created_at = true}(*now, sqlTags);
+                                SqlBinder<FieldType>::bind(**ret, bindIndex++, *now);
+                                binds.push_back(now);
+                                return;
+                            }
                         }
+                        SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
                     }
-                    SqlBinder<FieldType>::bind(**ret, bindIndex++, field);
                 });
             }
         }
@@ -252,12 +266,14 @@ public:
                 detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
             T obj;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
-                const auto sqlTags    = detail::extractSqlTags(tags);
-                const auto columnName = detail::reflectedFieldName(name, tags);
-                if (sqlTags.created_at) {
-                    detail::TimestampUpdater {.created_at = true}(field, sqlTags);
-                    insertBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
-                                                          std::string(columnName)) = std::move(field));
+                if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                    const auto sqlTags    = detail::extractSqlTags(tags);
+                    const auto columnName = detail::reflectedFieldName(name, tags);
+                    if (sqlTags.created_at) {
+                        detail::TimestampUpdater {.created_at = true}(field, sqlTags);
+                        insertBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
+                                                              std::string(columnName)) = std::move(field));
+                    }
                 }
             });
             return insertBuilder;
@@ -272,13 +288,15 @@ public:
             auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().tableRef());
             T    obj;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
-                const auto sqlTags    = detail::extractSqlTags(tags);
-                const auto columnName = detail::reflectedFieldName(name, tags);
-                if (sqlTags.updated_at) {
-                    detail::TimestampUpdater {.updated_at = true}(field, sqlTags);
-                    updateBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
-                                                          std::string(columnName)) = std::move(field));
-                    return;
+                if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                    const auto sqlTags    = detail::extractSqlTags(tags);
+                    const auto columnName = detail::reflectedFieldName(name, tags);
+                    if (sqlTags.updated_at) {
+                        detail::TimestampUpdater {.updated_at = true}(field, sqlTags);
+                        updateBuilder.set(detail::SqlVariable(Dialect<BackendTag>::quote_identifier(columnName),
+                                                              std::string(columnName)) = std::move(field));
+                        return;
+                    }
                 }
             });
             return updateBuilder;
@@ -373,17 +391,19 @@ public:
         auto target = std::addressof(obj.*memberPtr);
         int  index  = 0;
         int  result = -1;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field) {
+        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view /*name*/, const auto &tags) {
             if (result != -1) {
                 return;
             }
-            using Field = std::remove_cvref_t<decltype(field)>;
-            if constexpr (std::is_same_v<Field, M>) {
-                if (std::addressof(field) == target) {
-                    result = index;
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                using Field = std::remove_cvref_t<decltype(field)>;
+                if constexpr (std::is_same_v<Field, M>) {
+                    if (std::addressof(field) == target) {
+                        result = index;
+                    }
                 }
+                ++index;
             }
-            ++index;
         });
         return result;
     }
@@ -492,16 +512,19 @@ public:
             }
             auto obj = std::move(row.value());
             std::vector<std::string> rowStrings;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field) {
-                using FieldType = std::decay_t<decltype(field)>;
-                if constexpr (std::is_same_v<FieldType, std::vector<char>> || std::is_same_v<FieldType, SqlBlob>) {
-                    rowStrings.push_back("(BLOB " + std::to_string(field.size()) + " bytes)");
-                }
-                else if constexpr (requires(FieldType field) { detail::to_string_view(field); }) {
-                    rowStrings.push_back(detail::to_string_view(field));
-                }
-                else {
-                    static_assert(std::is_void_v<FieldType>, "Field type is not convertible to string");
+            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/,
+                                                         const auto &tags) {
+                if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                    using FieldType = std::decay_t<decltype(field)>;
+                    if constexpr (std::is_same_v<FieldType, std::vector<char>> || std::is_same_v<FieldType, SqlBlob>) {
+                        rowStrings.push_back("(BLOB " + std::to_string(field.size()) + " bytes)");
+                    }
+                    else if constexpr (requires(FieldType value) { detail::to_string_view(value); }) {
+                        rowStrings.push_back(detail::to_string_view(field));
+                    }
+                    else {
+                        static_assert(std::is_void_v<FieldType>, "Field type is not convertible to string");
+                    }
                 }
             });
             table.addRow(rowStrings);

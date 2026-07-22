@@ -15,6 +15,17 @@ ILIAS_SQL_NS_BEGIN
 namespace detail {
 
 template <typename Tags>
+constexpr bool reflectedFieldIgnored(const Tags &tags) {
+    return NEKO_NAMESPACE::tag_query::get<NEKO_NAMESPACE::tag_property::ignore>(tags);
+}
+
+template <typename Tags>
+consteval bool reflectedFieldTypeIgnored() {
+    using RawTags = std::remove_cvref_t<Tags>;
+    return reflectedFieldIgnored(RawTags {});
+}
+
+template <typename Tags>
 constexpr auto reflectedFieldName(std::string_view reflectedName, const Tags &tags) -> std::string_view {
     const auto renamed = NEKO_NAMESPACE::tag_query::get<NEKO_NAMESPACE::tag_property::name>(tags);
     return renamed.empty() ? reflectedName : renamed;
@@ -30,6 +41,38 @@ constexpr auto reflectedFieldNames(std::index_sequence<Is...>) {
 template <typename T>
 constexpr auto reflectedFieldNames() {
     return reflectedFieldNames<T>(std::make_index_sequence<NEKO_NAMESPACE::Reflect<T>::value_count> {});
+}
+
+template <typename T, std::size_t... Is>
+consteval auto reflectedSqlFieldCount(std::index_sequence<Is...>) -> std::size_t {
+    constexpr auto tags = NEKO_NAMESPACE::Reflect<T>::field_tags;
+    return (std::size_t {!reflectedFieldIgnored(std::get<Is>(tags))} + ... + 0);
+}
+
+template <typename T>
+consteval auto reflectedSqlFieldCount() -> std::size_t {
+    return reflectedSqlFieldCount<T>(std::make_index_sequence<NEKO_NAMESPACE::Reflect<T>::value_count> {});
+}
+
+template <typename T, std::size_t... Is>
+consteval auto reflectedSqlFieldNames(std::index_sequence<Is...>) {
+    constexpr auto                                            names = NEKO_NAMESPACE::Reflect<T>::names();
+    constexpr auto                                            tags  = NEKO_NAMESPACE::Reflect<T>::field_tags;
+    std::array<std::string_view, reflectedSqlFieldCount<T>()> result {};
+    std::size_t                                               resultIndex = 0;
+    (
+        [&] {
+            if constexpr (!reflectedFieldIgnored(std::get<Is>(tags))) {
+                result[resultIndex++] = reflectedFieldName(names[Is], std::get<Is>(tags));
+            }
+        }(),
+        ...);
+    return result;
+}
+
+template <typename T>
+consteval auto reflectedSqlFieldNames() {
+    return reflectedSqlFieldNames<T>(std::make_index_sequence<NEKO_NAMESPACE::Reflect<T>::value_count> {});
 }
 
 template <auto MemberPtr>
@@ -70,13 +113,14 @@ consteval auto memberPointerFieldName() -> std::string_view {
 template <typename T, auto MemberPtr, std::size_t... Is>
 consteval auto reflectedMemberPointerIndex(std::index_sequence<Is...>) -> int {
     static_assert(std::is_member_object_pointer_v<decltype(MemberPtr)>, "ORM column selector must be a member pointer");
-    static_assert(requires(T &obj) { obj.*MemberPtr; },
-                  "ORM column member pointer must belong to the mapped entity type");
+    static_assert(
+        requires(T &obj) { obj.*MemberPtr; }, "ORM column member pointer must belong to the mapped entity type");
 
-    constexpr auto accessors = NEKO_NAMESPACE::detail::ReflectProvider<T>::accessors();
-    constexpr auto rawNames  = NEKO_NAMESPACE::Reflect<T>::names();
+    constexpr auto accessors  = NEKO_NAMESPACE::detail::ReflectProvider<T>::accessors();
+    constexpr auto rawNames   = NEKO_NAMESPACE::Reflect<T>::names();
+    constexpr auto tags       = NEKO_NAMESPACE::Reflect<T>::field_tags;
     constexpr auto memberName = memberPointerFieldName<MemberPtr>();
-    auto matches = [&]<std::size_t I, typename Accessor>(const Accessor &accessor) constexpr -> bool {
+    auto           matches    = [&]<std::size_t I, typename Accessor>(const Accessor &accessor) constexpr -> bool {
         using AccessorT = std::remove_cvref_t<Accessor>;
         if constexpr (std::is_member_object_pointer_v<AccessorT> && std::is_same_v<AccessorT, decltype(MemberPtr)>) {
             return accessor == MemberPtr;
@@ -89,12 +133,14 @@ consteval auto reflectedMemberPointerIndex(std::index_sequence<Is...>) -> int {
         return false;
     };
     auto matchesAt = [&]<std::size_t I>() constexpr -> bool {
-        using Accessors = decltype(accessors);
-        if constexpr (requires { std::tuple_size<std::remove_cvref_t<Accessors>>::value; }) {
-            return matches.template operator()<I>(std::get<I>(accessors));
-        }
-        else if constexpr (I == 0) {
-            return matches.template operator()<I>(accessors);
+        if constexpr (!reflectedFieldIgnored(std::get<I>(tags))) {
+            using Accessors = decltype(accessors);
+            if constexpr (requires { std::tuple_size<std::remove_cvref_t<Accessors>>::value; }) {
+                return matches.template operator()<I>(std::get<I>(accessors));
+            }
+            else if constexpr (I == 0) {
+                return matches.template operator()<I>(accessors);
+            }
         }
         return false;
     };

@@ -204,34 +204,36 @@ private:
 
         // 1. 检查C++结构体中的每个字段是否与数据库匹配
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const auto &tags) {
-            std::string name(detail::reflectedFieldName(name_sv, tags));
-            const auto  sqlTags = detail::extractSqlTags(tags);
-            struct_columns.insert(name);
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                std::string name(detail::reflectedFieldName(name_sv, tags));
+                const auto  sqlTags = detail::extractSqlTags(tags);
+                struct_columns.insert(name);
 
-            auto it = actual_schema.find(name);
-            if (it == actual_schema.end()) {
-                result.add_error("Column '" + name + "' (in C++) not found in database table.");
-                return; // 后续检查无意义
-            }
-            const auto &col_info = it->second;
+                auto it = actual_schema.find(name);
+                if (it == actual_schema.end()) {
+                    result.add_error("Column '" + name + "' (in C++) not found in database table.");
+                    return; // 后续检查无意义
+                }
+                const auto &col_info = it->second;
 
-            // 校验类型
-            if (!BackendDialect::template are_types_compatible<decltype(field)>(col_info.db_type, sqlTags)) {
-                result.add_error("Column '" + name + "': Type mismatch. DB has '" + col_info.db_type + "'.");
-            }
+                // 校验类型
+                if (!BackendDialect::template are_types_compatible<decltype(field)>(col_info.db_type, sqlTags)) {
+                    result.add_error("Column '" + name + "': Type mismatch. DB has '" + col_info.db_type + "'.");
+                }
 
-            // 校验 NOT NULL
-            // 简单假设：非optional类型需要NOT NULL
-            bool expected_not_null = sqlTags.not_null;
-            if (expected_not_null != col_info.tags.not_null) {
-                result.add_error("Column '" + name +
-                                 "': NOT NULL constraint mismatch. Expected: " + std::to_string(expected_not_null) +
-                                 ", Actual: " + std::to_string(col_info.tags.not_null));
-            }
+                // 校验 NOT NULL
+                // 简单假设：非optional类型需要NOT NULL
+                bool expected_not_null = sqlTags.not_null;
+                if (expected_not_null != col_info.tags.not_null) {
+                    result.add_error("Column '" + name +
+                                     "': NOT NULL constraint mismatch. Expected: " + std::to_string(expected_not_null) +
+                                     ", Actual: " + std::to_string(col_info.tags.not_null));
+                }
 
-            // 校验主键
-            if (sqlTags.primary_key != col_info.tags.primary_key) {
-                result.add_error("Column '" + name + "': PRIMARY KEY constraint mismatch.");
+                // 校验主键
+                if (sqlTags.primary_key != col_info.tags.primary_key) {
+                    result.add_error("Column '" + name + "': PRIMARY KEY constraint mismatch.");
+                }
             }
         });
 
@@ -254,12 +256,14 @@ private:
         T                     obj;
         std::set<std::string> column_names;
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-            const auto columnName = detail::reflectedFieldName(name, tags);
-            if (!BackendDialect::validate_identifier(columnName)) {
-                result.add_error("Invalid column identifier '" + std::string(columnName) + "'.");
-            }
-            if (!column_names.emplace(columnName).second) {
-                result.add_error("Duplicate column identifier '" + std::string(columnName) + "'.");
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                const auto columnName = detail::reflectedFieldName(name, tags);
+                if (!BackendDialect::validate_identifier(columnName)) {
+                    result.add_error("Invalid column identifier '" + std::string(columnName) + "'.");
+                }
+                if (!column_names.emplace(columnName).second) {
+                    result.add_error("Duplicate column identifier '" + std::string(columnName) + "'.");
+                }
             }
         });
 
@@ -334,7 +338,9 @@ std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = [](
     std::vector<std::string> names;
     names.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
     NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-        names.emplace_back(detail::reflectedFieldName(name, tags));
+        if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+            names.emplace_back(detail::reflectedFieldName(name, tags));
+        }
     });
     return names;
 }();
@@ -357,7 +363,9 @@ std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
     tags_array.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
     T obj;
     NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view /*name*/, const auto &tags) {
-        tags_array.emplace_back(detail::extractSqlTags(tags));
+        if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+            tags_array.emplace_back(detail::extractSqlTags(tags));
+        }
     });
     return tags_array;
 }();
@@ -370,12 +378,14 @@ std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex 
     int                           index    = 0;
     const auto                    objBegin = reinterpret_cast<std::uintptr_t>(std::addressof(obj));
     const auto                    objEnd   = objBegin + sizeof(T);
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field) {
-        const auto fieldAddr = reinterpret_cast<std::uintptr_t>(std::addressof(field));
-        if (fieldAddr >= objBegin && fieldAddr < objEnd) {
-            indexMap[static_cast<std::ptrdiff_t>(fieldAddr - objBegin)] = index;
+    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/, const auto &tags) {
+        if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+            const auto fieldAddr = reinterpret_cast<std::uintptr_t>(std::addressof(field));
+            if (fieldAddr >= objBegin && fieldAddr < objEnd) {
+                indexMap[static_cast<std::ptrdiff_t>(fieldAddr - objBegin)] = index;
+            }
+            ++index;
         }
-        ++index;
     });
     return indexMap;
 }();
@@ -386,9 +396,11 @@ std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
     T           obj;
     std::string ret;
     NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
-        auto sqlTags = detail::extractSqlTags(tags);
-        if (sqlTags.primary_key) {
-            ret = std::string(detail::reflectedFieldName(name, tags));
+        if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+            auto sqlTags = detail::extractSqlTags(tags);
+            if (sqlTags.primary_key) {
+                ret = std::string(detail::reflectedFieldName(name, tags));
+            }
         }
     });
     return ret;

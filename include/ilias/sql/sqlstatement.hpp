@@ -140,11 +140,12 @@ auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
         [&ret, this](auto &field, std::string_view name, const auto &tags) {
             // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
-            if (!ret) {
-                return;
+            if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
+                if (ret) {
+                    using FieldType = std::decay_t<decltype(field)>;
+                    ret = SqlBinder<FieldType>::bind(*mStmt, detail::reflectedFieldName(name, tags), field);
+                }
             }
-            using FieldType = std::decay_t<decltype(field)>;
-            ret = SqlBinder<FieldType>::bind(*mStmt, detail::reflectedFieldName(name, tags), field);
         });
     // clang-format on
     mKeepAlive.emplace_back(

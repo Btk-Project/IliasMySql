@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -38,6 +39,24 @@ struct RenamedKeywordRecord {
     NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
                     (make_tags<rename_tag<"from">, SqlTags {.not_null = true, .index = true}>(from_value)))
 };
+
+struct UnsupportedTransientState {
+    std::string value = "local-default";
+};
+
+struct IgnoredFieldRecord {
+    int                       id = 0;
+    UnsupportedTransientState transient;
+    std::string               name;
+
+    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
+                    (make_tags<serialization_ignore_tag>(transient)), (make_tags<rename_tag<"display_name">>(name)))
+};
+
+static_assert(ILIAS_SQL_COMPLETE_NAMESPACE::detail::reflectedSqlFieldCount<IgnoredFieldRecord>() == 2);
+static_assert(ILIAS_SQL_COMPLETE_NAMESPACE::detail::reflectedSqlFieldNames<IgnoredFieldRecord>()[1] == "display_name");
+[[maybe_unused]] constexpr SqlStructCheck<IgnoredFieldRecord> ignoredFieldSql {
+    "INSERT INTO ignored_records VALUES (:id, :display_name)"};
 
 struct PartialReflectionRecord {
     int         id     = 0;
@@ -346,6 +365,101 @@ static auto test_rename_tag_identifier_roundtrip() -> IoTask<void> {
     co_return {};
 }
 
+static auto test_ignore_tag_roundtrip() -> IoTask<void> {
+    auto db_ret = co_await SqlDatabase::open_in_memory();
+    if (!db_ret) {
+        ADD_FAILURE() << db_ret.error().message();
+        co_return {};
+    }
+    auto db = std::move(db_ret.value());
+
+    auto form_ret = co_await Form<IgnoredFieldRecord, SqliteTag>::create_if_not_exists(db, "ignored_records");
+    if (!form_ret) {
+        ADD_FAILURE() << form_ret.error().message();
+        co_return {};
+    }
+    auto form = std::move(form_ret.value());
+
+    EXPECT_EQ(form.getColumnNames().size(), 2U);
+    if (form.getColumnNames().size() != 2U) {
+        co_return {};
+    }
+    EXPECT_EQ(form.getColumnNames()[0], "id");
+    EXPECT_EQ(form.getColumnNames()[1], "display_name");
+    EXPECT_FALSE(form.getColumnName(&IgnoredFieldRecord::transient).has_value());
+    EXPECT_FALSE(form.col(&IgnoredFieldRecord::transient).isValid());
+    auto renamed_column = form.sql<&IgnoredFieldRecord::name>();
+    EXPECT_TRUE(renamed_column.isValid());
+    EXPECT_EQ(renamed_column.sql(), "\"display_name\"");
+
+    auto schema = form.createTableSchema();
+    if (!schema) {
+        ADD_FAILURE() << schema.error().message();
+        co_return {};
+    }
+    EXPECT_NE(schema->find("\"display_name\""), std::string::npos);
+    EXPECT_EQ(schema->find("transient"), std::string::npos);
+
+    auto first_insert = co_await form.emplace(1, UnsupportedTransientState {"never persisted"}, "Alice");
+    if (!first_insert) {
+        ADD_FAILURE() << first_insert.error().message();
+        co_return {};
+    }
+
+    auto second_insert =
+        co_await form.insert().set(IgnoredFieldRecord {2, UnsupportedTransientState {"also ignored"}, "Bob"}).execute();
+    if (!second_insert) {
+        ADD_FAILURE() << second_insert.error().message();
+        co_return {};
+    }
+
+    auto rows_ret = co_await form.select().orderBy(form.sql(&IgnoredFieldRecord::id)).query();
+    if (!rows_ret) {
+        ADD_FAILURE() << rows_ret.error().message();
+        co_return {};
+    }
+    std::vector<IgnoredFieldRecord> rows;
+    ilias_for_await(auto row, rows_ret->rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        rows.push_back(std::move(row.value()));
+    }
+    EXPECT_EQ(rows.size(), 2U);
+    if (rows.size() != 2U) {
+        co_return {};
+    }
+    EXPECT_EQ(rows[0].name, "Alice");
+    EXPECT_EQ(rows[1].name, "Bob");
+    EXPECT_EQ(rows[0].transient.value, "local-default");
+    EXPECT_EQ(rows[1].transient.value, "local-default");
+
+    std::ostringstream printed;
+    co_await form.print(50, printed);
+    EXPECT_EQ(printed.str().find("transient"), std::string::npos);
+
+    auto alias = form.as("ignored_alias");
+    auto join_ret =
+        co_await form.join(alias).on(form.col(&IgnoredFieldRecord::id) == alias.col(&IgnoredFieldRecord::id)).query();
+    if (!join_ret) {
+        ADD_FAILURE() << join_ret.error().message();
+        co_return {};
+    }
+    std::size_t joined_rows = 0;
+    ilias_for_await(auto row, join_ret->rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_EQ(std::get<0>(row.value()).transient.value, "local-default");
+        EXPECT_EQ(std::get<1>(row.value()).transient.value, "local-default");
+        ++joined_rows;
+    }
+    EXPECT_EQ(joined_rows, 2U);
+    co_return {};
+}
+
 TEST(SqlIdentifierQuoting, ReservedIdentifiersWorkThroughOrmDsl) {
     test_reserved_identifier_roundtrip().wait();
 }
@@ -360,6 +474,10 @@ TEST(SqlIdentifierQuoting, MemberPointerColumnErrorsFlowThroughIoResult) {
 
 TEST(SqlIdentifierQuoting, RenameTagAppliesToSqlIdentifiers) {
     test_rename_tag_identifier_roundtrip().wait();
+}
+
+TEST(SqlIdentifierQuoting, IgnoreTagExcludesNonPersistentFields) {
+    test_ignore_tag_roundtrip().wait();
 }
 
 int main(int argc, char **argv) {

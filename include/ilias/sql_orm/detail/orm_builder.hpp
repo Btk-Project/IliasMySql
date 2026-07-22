@@ -70,21 +70,23 @@ static auto executeLoopWrap(T self, int count) -> IoGenerator<size_t> {
 struct TimestampUpdater {
     template <typename T, typename Tags>
     void operator()(T &field, const Tags &tags) {
-        const auto sqlTags = detail::extractSqlTags(tags);
-        if ((sqlTags.updated_at && updated_at) || (sqlTags.created_at && created_at)) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(field)>, SqlDate>) {
-                field = SqlDate::now();
-            }
-            else if constexpr (std::is_same_v<std::decay_t<decltype(field)>, std::string>) {
-                field = SqlDate::now().toUTCString();
-            }
-            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
-                               sizeof(std::decay_t<decltype(field)>) == sizeof(int64_t)) {
-                field = SqlDate::now().toTimestamp();
-            }
-            else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
-                               sizeof(std::decay_t<decltype(field)>) == sizeof(int32_t)) {
-                field = SqlDate::now().toTimestamp() / 1000;
+        if constexpr (!detail::reflectedFieldTypeIgnored<Tags>()) {
+            const auto sqlTags = detail::extractSqlTags(tags);
+            if ((sqlTags.updated_at && updated_at) || (sqlTags.created_at && created_at)) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(field)>, SqlDate>) {
+                    field = SqlDate::now();
+                }
+                else if constexpr (std::is_same_v<std::decay_t<decltype(field)>, std::string>) {
+                    field = SqlDate::now().toUTCString();
+                }
+                else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                                   sizeof(std::decay_t<decltype(field)>) == sizeof(int64_t)) {
+                    field = SqlDate::now().toTimestamp();
+                }
+                else if constexpr (std::is_integral_v<std::decay_t<decltype(field)>> &&
+                                   sizeof(std::decay_t<decltype(field)>) == sizeof(int32_t)) {
+                    field = SqlDate::now().toTimestamp() / 1000;
+                }
             }
         }
     }

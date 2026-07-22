@@ -79,6 +79,44 @@ inline auto quote_sql_identifier_path(std::string_view identifier, char quote) -
     }
     return quoted;
 }
+
+inline constexpr auto referential_action_sql(SqlReferenceAction action) -> std::string_view {
+    switch (action) {
+        case SqlReferenceAction::NoAction:
+            return {};
+        case SqlReferenceAction::Restrict:
+            return "RESTRICT";
+        case SqlReferenceAction::Cascade:
+            return "CASCADE";
+        case SqlReferenceAction::SetNull:
+            return "SET NULL";
+        case SqlReferenceAction::SetDefault:
+            return "SET DEFAULT";
+    }
+    return {};
+}
+
+inline constexpr bool sql_custom_backend_matches(std::string_view selector, std::string_view dialect) {
+    if (selector.empty() || selector == dialect) {
+        return true;
+    }
+    if (dialect == "mysql") {
+        return selector == "mariadb";
+    }
+    if (dialect == "postgres") {
+        return selector == "postgresql" || selector == "pg";
+    }
+    return false;
+}
+
+inline void append_sql_custom(std::vector<std::string> &parts, const SqlColumnMetadata &metadata,
+                              std::string_view dialect, SqlCustomPosition position) {
+    for (const auto &clause : metadata.custom_clauses) {
+        if (clause.position == position && sql_custom_backend_matches(clause.backend, dialect)) {
+            parts.emplace_back(clause.fragment);
+        }
+    }
+}
 } // namespace detail
 
 struct ColumnSchema {
@@ -134,9 +172,16 @@ struct Dialect<SqliteTag> {
 
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
+        return generate_column_definition<T>(name, SqlColumnMetadata {.tags = tags});
+    }
+
+    template <typename T>
+    static std::string generate_column_definition(std::string_view name, const SqlColumnMetadata &metadata) {
+        const auto              &tags = metadata.tags;
         std::vector<std::string> parts;
         parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
+        detail::append_sql_custom(parts, metadata, "sqlite", SqlCustomPosition::AfterType);
 
         // 约束
         // 注意: SQLite中，PRIMARY KEY AUTOINCREMENT 必须一起使用且作用于INTEGER类型
@@ -153,10 +198,22 @@ struct Dialect<SqliteTag> {
             parts.push_back("UNIQUE");
         }
 
-        // 时间戳默认值处理
-        if (tags.created_at) {
+        if (metadata.hasDefault()) {
+            parts.push_back("DEFAULT " + std::string(metadata.default_expression));
+        }
+        else if (tags.created_at) {
             parts.push_back("DEFAULT CURRENT_TIMESTAMP");
         }
+
+        if (metadata.hasCollation()) {
+            parts.push_back("COLLATE " + quote_identifier_path(metadata.collation));
+        }
+
+        if (metadata.hasCheck()) {
+            parts.push_back("CHECK (" + std::string(metadata.check_expression) + ")");
+        }
+
+        detail::append_sql_custom(parts, metadata, "sqlite", SqlCustomPosition::Tail);
 
         // 注意：SQLite不支持ON UPDATE CURRENT_TIMESTAMP，updated_at需要在应用层处理
 
@@ -305,21 +362,31 @@ struct Dialect<MysqlTag> {
 
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
+        return generate_column_definition<T>(name, SqlColumnMetadata {.tags = tags});
+    }
+
+    template <typename T>
+    static std::string generate_column_definition(std::string_view name, const SqlColumnMetadata &metadata) {
+        const auto              &tags = metadata.tags;
         std::vector<std::string> parts;
 
         parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
+        detail::append_sql_custom(parts, metadata, "mysql", SqlCustomPosition::AfterType);
 
         if (tags.not_null) {
             parts.push_back("NOT NULL");
         }
-        if (tags.auto_increment) {
-            parts.push_back("AUTO_INCREMENT");
+
+        if (metadata.hasDefault()) {
+            parts.push_back("DEFAULT " + std::string(metadata.default_expression));
+        }
+        else if (tags.created_at) {
+            parts.push_back("DEFAULT CURRENT_TIMESTAMP");
         }
 
-        // 时间戳默认值和更新行为
-        if (tags.created_at) {
-            parts.push_back("DEFAULT CURRENT_TIMESTAMP");
+        if (tags.auto_increment) {
+            parts.push_back("AUTO_INCREMENT");
         }
 
         if (tags.updated_at) {
@@ -340,6 +407,16 @@ struct Dialect<MysqlTag> {
             // 注意：更规范的做法是在表末尾用 KEY `idx_name` (`col_name`) 创建
             parts.push_back("KEY");
         }
+
+        if (metadata.hasCollation()) {
+            parts.push_back("COLLATE " + quote_identifier_path(metadata.collation));
+        }
+
+        if (metadata.hasCheck()) {
+            parts.push_back("CHECK (" + std::string(metadata.check_expression) + ")");
+        }
+
+        detail::append_sql_custom(parts, metadata, "mysql", SqlCustomPosition::Tail);
 
         return detail::join_strs(parts, " ");
     }
@@ -471,14 +548,17 @@ struct Dialect<PostgresTag> {
 
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
+        return generate_column_definition<T>(name, SqlColumnMetadata {.tags = tags});
+    }
+
+    template <typename T>
+    static std::string generate_column_definition(std::string_view name, const SqlColumnMetadata &metadata) {
+        const auto              &tags = metadata.tags;
         std::vector<std::string> parts;
 
         parts.push_back(quote_identifier(name));
         parts.push_back(type_name<T>(tags));
-
-        if (tags.not_null) {
-            parts.push_back("NOT NULL");
-        }
+        detail::append_sql_custom(parts, metadata, "postgres", SqlCustomPosition::AfterType);
 
         // PostgreSQL uses SERIAL/BIGSERIAL for auto increment
         if (tags.auto_increment) {
@@ -493,9 +573,19 @@ struct Dialect<PostgresTag> {
             }
         }
 
-        // 时间戳默认值处理
-        if (tags.created_at) {
+        if (metadata.hasCollation()) {
+            parts.push_back("COLLATE " + quote_identifier_path(metadata.collation));
+        }
+
+        if (metadata.hasDefault()) {
+            parts.push_back("DEFAULT " + std::string(metadata.default_expression));
+        }
+        else if (tags.created_at) {
             parts.push_back("DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        if (tags.not_null) {
+            parts.push_back("NOT NULL");
         }
 
         // PostgreSQL doesn't support ON UPDATE CURRENT_TIMESTAMP like MySQL
@@ -508,6 +598,12 @@ struct Dialect<PostgresTag> {
         if (tags.primary_key) {
             parts.push_back("PRIMARY KEY");
         }
+
+        if (metadata.hasCheck()) {
+            parts.push_back("CHECK (" + std::string(metadata.check_expression) + ")");
+        }
+
+        detail::append_sql_custom(parts, metadata, "postgres", SqlCustomPosition::Tail);
 
         return detail::join_strs(parts, " ");
     }
