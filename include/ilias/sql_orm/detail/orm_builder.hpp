@@ -2,6 +2,7 @@
 
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
+#include "ilias/sql_orm/dialect.hpp"
 #include "ilias/sql_orm/detail/orm_condition.hpp"
 #include <algorithm>
 #include <cctype>
@@ -15,6 +16,45 @@
 
 ILIAS_SQL_NS_BEGIN
 namespace detail {
+
+/**
+ * @brief Non-owning type-erased reference to SqlDatabase or SqlTransaction.
+ *
+ * ORM builders only need prepare(). Keeping this small capability reference
+ * lets the same builder execute on a connection or an already-open
+ * transaction without duplicating every builder template.
+ */
+class SqlExecutorRef {
+public:
+    SqlExecutorRef(const SqlExecutorRef &) = default;
+    SqlExecutorRef(SqlExecutorRef &&) = default;
+    auto operator=(const SqlExecutorRef &) -> SqlExecutorRef & = default;
+    auto operator=(SqlExecutorRef &&) -> SqlExecutorRef & = default;
+
+    template <typename SqlApi>
+        requires(!std::same_as<std::remove_cvref_t<SqlApi>, SqlExecutorRef>) &&
+                requires(SqlApi &api, std::string_view sql) {
+            { api.prepare(sql) } -> std::same_as<IoTask<SqlStatement<void>>>;
+        }
+    SqlExecutorRef(SqlApi &api)
+        : mInstance(std::addressof(api)), mPrepare(&prepareWith<SqlApi>) {}
+
+    auto prepare(std::string_view sql) const -> IoTask<SqlStatement<void>> {
+        return mPrepare(mInstance, sql);
+    }
+
+private:
+    template <typename SqlApi>
+    static auto prepareWith(void *instance, std::string_view sql)
+        -> IoTask<SqlStatement<void>> {
+        return static_cast<SqlApi *>(instance)->prepare(sql);
+    }
+
+    using Prepare = IoTask<SqlStatement<void>> (*)(void *, std::string_view);
+
+    void *mInstance = nullptr;
+    Prepare mPrepare = nullptr;
+};
 
 struct JoinNode {
     std::string              tableName;
@@ -113,7 +153,7 @@ class ILIAS_SQL_API SelectBuilder {
 public:
     using IdentifierQuoter = std::string (*)(std::string_view);
 
-    SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols = {},
+    SelectBuilder(SqlExecutorRef db, std::string tableName, const std::vector<std::string> &cols = {},
                   IdentifierQuoter quoteIdentifier = nullptr, std::vector<std::string> diagnostics = {});
 
     SelectBuilder &where(const SqlCondition &cond);
@@ -143,7 +183,7 @@ protected:
     auto diagnostic() const -> std::string;
 
 protected:
-    SqlDatabase &mDb;
+    SqlExecutorRef mDb;
     std::string  mTableName;
     std::string  mSelectColumns = "*";
     SqlCondition mWhereCondition;
@@ -165,19 +205,20 @@ class ProjectedSelectBuilder : public SelectBuilder {
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;
 
 public:
-    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> cols,
+    ProjectedSelectBuilder(SqlExecutorRef db, std::string tableName, std::vector<std::string> cols,
                            SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr,
                            std::vector<std::string> diagnostics = {})
         : SelectBuilder(db, std::move(tableName), cols, quoteIdentifier, std::move(diagnostics)) {}
 
     // 专门用于 select * 的构造函数
-    ProjectedSelectBuilder(SqlDatabase &db, std::string tableName,
+    ProjectedSelectBuilder(SqlExecutorRef db, std::string tableName,
                            SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr)
         requires(sizeof...(ResultTypes) == 1)
         : SelectBuilder(db, std::move(tableName), {"*"}, quoteIdentifier) {}
 
     // 专门用于 join 的构造
-    ProjectedSelectBuilder(SqlDatabase &db, std::string sql, std::vector<std::shared_ptr<SqlStatementBinder>> binders,
+    ProjectedSelectBuilder(SqlExecutorRef db, std::string sql,
+                           std::vector<std::shared_ptr<SqlStatementBinder>> binders,
                            SelectBuilder::IdentifierQuoter quoteIdentifier = nullptr,
                            std::vector<std::string> diagnostics = {})
         : SelectBuilder(db, "", {}, quoteIdentifier, std::move(diagnostics)), mBaseSql(std::move(sql)),
@@ -484,7 +525,7 @@ class DeleteBuilder {
     friend auto executeLoopWrap(U self, int count) -> IoGenerator<size_t>;
 
 public:
-    DeleteBuilder(SqlDatabase &db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
+    DeleteBuilder(SqlExecutorRef db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
 
     DeleteBuilder &where(const SqlCondition &cond) {
         mWhereCondition = cond;
@@ -519,7 +560,7 @@ private:
     void bind(SqlStatement<void> &stmt) { mWhereCondition.bindTo(stmt, 1); }
 
 private:
-    SqlDatabase &mDb;
+    SqlExecutorRef mDb;
     std::string  mTableName;
     SqlCondition mWhereCondition;
 };
@@ -529,7 +570,7 @@ class UpdateBuilder {
     friend auto executeLoopWrap(U self, int count) -> IoGenerator<size_t>;
 
 public:
-    UpdateBuilder(SqlDatabase &db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
+    UpdateBuilder(SqlExecutorRef db, std::string tableName) : mDb(db), mTableName(std::move(tableName)) {}
 
     // [核心] 支持 set(col = val, col2 = val2, ...)
     template <typename... Assignments>
@@ -600,7 +641,7 @@ private:
         return join_strs(diagnostics, "; ");
     }
 
-    SqlDatabase                                     &mDb;
+    SqlExecutorRef                                   mDb;
     std::string                                      mTableName;
     std::vector<std::string>                         mSetSqls;
     std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders; // 统一存储所有 Set 的 binder
@@ -614,24 +655,41 @@ class InsertBuilder {
     friend auto executeLoopWrap(U self, int count) -> IoGenerator<size_t>;
 
 public:
-    InsertBuilder(SqlDatabase &db, std::string tableName, std::vector<std::string> columnNames)
-        : mDb(db), mTableName(std::move(tableName)), mColumnNames(std::move(columnNames)) {}
+    InsertBuilder(SqlExecutorRef db, std::string tableName, std::vector<std::string> columnNames,
+                  std::vector<std::string> columnRefs)
+        : mDb(db), mTableName(std::move(tableName)), mColumnNames(std::move(columnNames)),
+          mColumnRefs(std::move(columnRefs)) {}
     template <typename... Assignments>
-        requires(sizeof...(Assignments) > 1 && (std::is_same_v<SqlAssignment, Assignments> && ...))
+        requires(sizeof...(Assignments) > 0 &&
+                 (std::same_as<std::remove_cvref_t<Assignments>, SqlAssignment> && ...))
     InsertBuilder &set(Assignments &&...assignments) {
-        // 折叠表达式，依次处理每个赋值
+        if (mUsesObjectBinding) {
+            mDiagnostics.emplace_back("Insert cannot mix object and column assignment bindings");
+            return *this;
+        }
+        mUsesAssignments = true;
         (addAssignment(std::forward<Assignments>(assignments)), ...);
         return *this;
     }
     template <typename... Columns>
         requires(sizeof...(Columns) > 1 && std::is_constructible_v<T, Columns...>)
     InsertBuilder &set(Columns &&...cloumns) {
+        if (mUsesAssignments) {
+            mDiagnostics.emplace_back("Insert cannot mix object and column assignment bindings");
+            return *this;
+        }
+        mUsesObjectBinding = true;
         mSetBinders.emplace_back(std::make_shared<ObjBinder<T, Columns...>>(std::forward<Columns>(cloumns)...));
         return *this;
     }
     template <typename U>
         requires(std::is_constructible_v<T, U>)
     InsertBuilder &set(U &&obj) {
+        if (mUsesAssignments) {
+            mDiagnostics.emplace_back("Insert cannot mix object and column assignment bindings");
+            return *this;
+        }
+        mUsesObjectBinding = true;
         // Apply created_at timestamps before binding the object
         applyCreatedAtTimestamps(obj);
 
@@ -661,7 +719,15 @@ private:
             co_return Err(SqlError::Code::InvalidParameter);
         }
 
-        std::string sql = "INSERT INTO " + mTableName + " VALUES (" + join_strs(mColumnNames, ", ", ":") + ")";
+        std::string sql = "INSERT INTO " + mTableName + " (";
+        if (mUsesAssignments) {
+            sql += join_strs(mAssignmentColumns, ", ") + ") VALUES (" +
+                   join_strs(mAssignmentValues, ", ") + ")";
+        }
+        else {
+            sql += join_strs(mColumnRefs, ", ") + ") VALUES (" +
+                   join_strs(mColumnNames, ", ", ":") + ")";
+        }
         co_return co_await mDb.prepare(sql);
     }
     void bind(SqlStatement<void> &stmt) const {
@@ -675,35 +741,233 @@ private:
             mDiagnostics.push_back(assign.diagnosticMessage());
             return;
         }
-        // assign 里面的 sql 形如 `"col" = :col`，绑定名来自右侧命名占位符。
         auto assign_pos = assign.sql.find('=');
         if (assign_pos == std::string::npos) {
-            throw std::runtime_error("Invalid assignment: " + assign.sql);
+            mDiagnostics.push_back("Invalid insert assignment: " + assign.sql);
+            return;
         }
-        std::string value = assign.sql.substr(assign_pos + 1);
+        std::string column = assign.sql.substr(0, assign_pos);
+        std::string value  = assign.sql.substr(assign_pos + 1);
         auto        is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+        column.erase(column.begin(), std::find_if_not(column.begin(), column.end(), is_space));
+        column.erase(std::find_if_not(column.rbegin(), column.rend(), is_space).base(), column.end());
         value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), is_space));
         value.erase(std::find_if_not(value.rbegin(), value.rend(), is_space).base(), value.end());
-        if (value.size() < 2 || value.front() != ':') {
-            throw std::runtime_error("Invalid assignment placeholder: " + assign.sql);
+        if (column.empty() || value.size() < 2 || value.front() != ':' ||
+            value.find_first_of(" \t\r\n", 1) != std::string::npos) {
+            mDiagnostics.push_back("Invalid insert assignment placeholder: " + assign.sql);
+            return;
         }
         std::string name = value.substr(1);
         if (assign.binders.size() != 1) {
-            throw std::runtime_error("Invalid assignment: value: " + value + " with: " + name);
+            mDiagnostics.push_back("Insert assignments require one bound value per column");
+            return;
         }
+        if (std::ranges::find(mAssignmentColumns, column) != mAssignmentColumns.end()) {
+            mDiagnostics.push_back("Duplicate insert assignment column: " + column);
+            return;
+        }
+        mAssignmentColumns.push_back(std::move(column));
+        mAssignmentValues.push_back(std::move(value));
         for (auto &binder : assign.binders) {
             mSetBinders.emplace_back(std::make_shared<NamedBinder>(name, binder));
         }
     }
 
-    auto diagnostic() const -> std::string { return join_strs(mDiagnostics, "; "); }
+    auto diagnostic() const -> std::string {
+        auto diagnostics = mDiagnostics;
+        if (mSetBinders.empty()) {
+            diagnostics.emplace_back("Insert requires an object or at least one column assignment");
+        }
+        return join_strs(diagnostics, "; ");
+    }
 
 private:
-    SqlDatabase                                     &mDb;
+    SqlExecutorRef                                   mDb;
     std::string                                      mTableName;
     std::vector<std::string>                         mColumnNames;
+    std::vector<std::string>                         mColumnRefs;
+    std::vector<std::string>                         mAssignmentColumns;
+    std::vector<std::string>                         mAssignmentValues;
     std::vector<std::shared_ptr<SqlStatementBinder>> mSetBinders;
     std::vector<std::string>                         mDiagnostics;
+    bool                                             mUsesAssignments = false;
+    bool                                             mUsesObjectBinding = false;
+};
+
+template <typename T, typename BackendTag>
+class UpsertBuilder {
+public:
+    UpsertBuilder(SqlExecutorRef db, std::string tableName)
+        : mDb(db), mTableName(std::move(tableName)) {}
+
+    template <typename... Assignments>
+        requires(sizeof...(Assignments) > 0 &&
+                 (std::same_as<std::remove_cvref_t<Assignments>, SqlAssignment> && ...))
+    auto values(Assignments &&...assignments) -> UpsertBuilder & {
+        (addValue(std::forward<Assignments>(assignments)), ...);
+        return *this;
+    }
+
+    template <typename... Columns>
+        requires(sizeof...(Columns) > 0 && (HasSqlMethod<Columns> && ...))
+    auto onConflict(const Columns &...columns) -> UpsertBuilder & {
+        (addConflictColumn(columns), ...);
+        return *this;
+    }
+
+    template <typename... Columns>
+        requires(sizeof...(Columns) > 0 && (HasSqlMethod<Columns> && ...))
+    auto updateExcluded(const Columns &...columns) -> UpsertBuilder & {
+        (addExcludedAssignment(columns, MergeMode::Replace), ...);
+        return *this;
+    }
+
+    template <typename... Columns>
+        requires(sizeof...(Columns) > 0 && (HasSqlMethod<Columns> && ...))
+    auto updateCoalesced(const Columns &...columns) -> UpsertBuilder & {
+        (addExcludedAssignment(columns, MergeMode::Coalesce), ...);
+        return *this;
+    }
+
+    template <typename... Columns>
+        requires(sizeof...(Columns) > 0 && (HasSqlMethod<Columns> && ...))
+    auto updateGreatest(const Columns &...columns) -> UpsertBuilder & {
+        (addExcludedAssignment(columns, MergeMode::Greatest), ...);
+        return *this;
+    }
+
+    auto doNothing() -> UpsertBuilder & {
+        mDoNothing = true;
+        return *this;
+    }
+
+    auto statement() const -> IoResult<std::string> {
+        const auto diag = diagnostic();
+        if (!diag.empty()) {
+            return Err(SqlError::Code::InvalidParameter);
+        }
+        try {
+            std::string sql = "INSERT INTO " + mTableName + " (" +
+                              join_strs(mInsertColumns, ", ") + ") VALUES (" +
+                              join_strs(std::vector<std::string>(mInsertColumns.size(), "?"), ", ") + ")";
+            sql += Dialect<BackendTag>::generate_upsert_clause(mConflictColumns, mUpdateAssignments, mDoNothing);
+            return sql;
+        }
+        catch (const std::invalid_argument &) {
+            return Err(SqlError::Code::InvalidParameter);
+        }
+    }
+
+    auto execute() -> IoTask<size_t> {
+        auto sql = statement();
+        if (!sql) {
+            ILIAS_ERROR("ilias-sql", "Invalid ORM upsert: {}", diagnostic());
+            co_return Err(sql.error());
+        }
+        ILIAS_CO_TRY(auto prepared, co_await mDb.prepare(*sql));
+        int bindIndex = 1;
+        for (const auto &binder : mInsertBinders) {
+            binder->bind(bindIndex++, prepared);
+        }
+        co_return co_await prepared.execute();
+    }
+
+private:
+    enum class MergeMode {
+        Replace,
+        Coalesce,
+        Greatest,
+    };
+
+    static auto trimmed(std::string text) -> std::string {
+        const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+        text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), isSpace));
+        text.erase(std::find_if_not(text.rbegin(), text.rend(), isSpace).base(), text.end());
+        return text;
+    }
+
+    void addValue(const SqlAssignment &assignment) {
+        if (!assignment.isValid()) {
+            mDiagnostics.push_back(assignment.diagnosticMessage());
+            return;
+        }
+        const auto separator = assignment.sql.find('=');
+        if (separator == std::string::npos || assignment.binders.size() != 1) {
+            mDiagnostics.emplace_back("Upsert values require one bound value per column");
+            return;
+        }
+        auto column = trimmed(assignment.sql.substr(0, separator));
+        if (std::ranges::find(mInsertColumns, column) != mInsertColumns.end()) {
+            mDiagnostics.push_back("Duplicate upsert value column: " + column);
+            return;
+        }
+        mInsertColumns.push_back(std::move(column));
+        mInsertBinders.push_back(assignment.binders.front());
+    }
+
+    template <typename Column>
+    void addConflictColumn(const Column &column) {
+        if (!sqlNodeIsValid(column)) {
+            mDiagnostics.push_back(sqlNodeDiagnostic(column));
+            return;
+        }
+        const auto sql = column.sql();
+        if (std::ranges::find(mConflictColumns, sql) != mConflictColumns.end()) {
+            mDiagnostics.push_back("Duplicate upsert conflict column: " + sql);
+            return;
+        }
+        mConflictColumns.push_back(sql);
+    }
+
+    template <typename Column>
+    void addExcludedAssignment(const Column &column, MergeMode mode) {
+        if (!sqlNodeIsValid(column)) {
+            mDiagnostics.push_back(sqlNodeDiagnostic(column));
+            return;
+        }
+        const auto target = column.sql();
+        const auto excluded = Dialect<BackendTag>::excluded_value(target);
+        std::string value;
+        switch (mode) {
+            case MergeMode::Replace:
+                value = excluded;
+                break;
+            case MergeMode::Coalesce:
+                value = "COALESCE(" + excluded + ", " + target + ")";
+                break;
+            case MergeMode::Greatest:
+                value = Dialect<BackendTag>::greatest_value(target, excluded);
+                break;
+        }
+        mUpdateAssignments.push_back(target + " = " + value);
+    }
+
+    auto diagnostic() const -> std::string {
+        auto diagnostics = mDiagnostics;
+        if (mInsertColumns.empty()) {
+            diagnostics.emplace_back("Upsert requires values");
+        }
+        if (mConflictColumns.empty()) {
+            diagnostics.emplace_back("Upsert requires conflict columns");
+        }
+        if (!mDoNothing && mUpdateAssignments.empty()) {
+            diagnostics.emplace_back("Upsert requires update assignments or doNothing()");
+        }
+        if (mDoNothing && !mUpdateAssignments.empty()) {
+            diagnostics.emplace_back("doNothing() cannot be combined with update assignments");
+        }
+        return join_strs(diagnostics, "; ");
+    }
+
+    SqlExecutorRef                                   mDb;
+    std::string                                      mTableName;
+    std::vector<std::string>                         mInsertColumns;
+    std::vector<std::shared_ptr<SqlStatementBinder>> mInsertBinders;
+    std::vector<std::string>                         mConflictColumns;
+    std::vector<std::string>                         mUpdateAssignments;
+    std::vector<std::string>                         mDiagnostics;
+    bool                                             mDoNothing = false;
 };
 } // namespace detail
 ILIAS_SQL_NS_END

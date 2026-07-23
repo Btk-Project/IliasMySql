@@ -244,6 +244,12 @@ enum class SqlCustomPosition {
     Tail,
 };
 
+/** @brief Sort direction for one column in a table-level index. */
+enum class SqlIndexOrder {
+    Asc,
+    Desc,
+};
+
 namespace sql_tag_detail {
 
 template <NEKO_NAMESPACE::ConstexprString Expression>
@@ -310,6 +316,63 @@ struct sql_custom_impl {
     }
 };
 
+template <auto... Members>
+struct sql_table_primary_key_impl {
+    static_assert(sizeof...(Members) > 1, "Table primary keys are intended for two or more columns");
+    static_assert((std::is_member_object_pointer_v<decltype(Members)> && ...),
+                  "Table primary key columns must be member pointers");
+
+    constexpr static bool primary_key = true;
+
+    template <typename Visitor>
+    static constexpr void forEachMember(Visitor &&visitor) {
+        (visitor.template operator()<Members>(), ...);
+    }
+};
+
+template <auto... Members>
+struct sql_table_unique_impl {
+    static_assert(sizeof...(Members) > 1, "Table unique constraints are intended for two or more columns");
+    static_assert((std::is_member_object_pointer_v<decltype(Members)> && ...),
+                  "Table unique columns must be member pointers");
+
+    constexpr static bool unique = true;
+
+    template <typename Visitor>
+    static constexpr void forEachMember(Visitor &&visitor) {
+        (visitor.template operator()<Members>(), ...);
+    }
+};
+
+template <NEKO_NAMESPACE::ConstexprString Expression>
+struct sql_table_check_impl {
+    static_assert(Expression.size() > 0, "Table CHECK expression must not be empty");
+    constexpr static auto expression = Expression.view();
+    constexpr static bool check      = true;
+};
+
+template <auto Member, SqlIndexOrder Order>
+struct sql_index_column_impl {
+    static_assert(std::is_member_object_pointer_v<decltype(Member)>, "Index columns must be member pointers");
+    constexpr static auto          member = Member;
+    constexpr static SqlIndexOrder order  = Order;
+};
+
+template <NEKO_NAMESPACE::ConstexprString Name, bool Unique, auto... Columns>
+struct sql_table_index_impl {
+    static_assert(Name.size() > 0, "SQL index name must not be empty");
+    static_assert(sizeof...(Columns) > 0, "SQL indexes require at least one column");
+
+    constexpr static auto name   = Name.view();
+    constexpr static bool unique = Unique;
+    constexpr static bool index  = true;
+
+    template <typename Visitor>
+    static constexpr void forEachColumn(Visitor &&visitor) {
+        (visitor.template operator()<std::remove_cvref_t<decltype(Columns)>>(), ...);
+    }
+};
+
 } // namespace sql_tag_detail
 
 /**
@@ -350,6 +413,51 @@ inline constexpr auto sql_references = sql_tag_detail::sql_references_impl<Table
 template <NEKO_NAMESPACE::ConstexprString Fragment, NEKO_NAMESPACE::ConstexprString Backend = "",
           SqlCustomPosition Position = SqlCustomPosition::Tail>
 inline constexpr auto sql_custom = sql_tag_detail::sql_custom_impl<Fragment, Backend, Position> {};
+
+/**
+ * @brief Add a composite primary key to SqlTableMeta<T>::value.
+ *
+ * Single-column primary keys should continue to use SqlTags::primary_key.
+ */
+template <auto... Members>
+inline constexpr auto sql_primary_key = sql_tag_detail::sql_table_primary_key_impl<Members...> {};
+
+/** @brief Add a composite UNIQUE constraint to SqlTableMeta<T>::value. */
+template <auto... Members>
+inline constexpr auto sql_unique = sql_tag_detail::sql_table_unique_impl<Members...> {};
+
+/** @brief Add a trusted table-level CHECK expression to SqlTableMeta<T>::value. */
+template <NEKO_NAMESPACE::ConstexprString Expression>
+inline constexpr auto sql_table_check = sql_tag_detail::sql_table_check_impl<Expression> {};
+
+/** @brief Describe an ascending or descending column in a table-level index. */
+template <auto Member>
+inline constexpr auto sql_asc = sql_tag_detail::sql_index_column_impl<Member, SqlIndexOrder::Asc> {};
+
+template <auto Member>
+inline constexpr auto sql_desc = sql_tag_detail::sql_index_column_impl<Member, SqlIndexOrder::Desc> {};
+
+/** @brief Add a named, possibly composite index to SqlTableMeta<T>::value. */
+template <NEKO_NAMESPACE::ConstexprString Name, auto... Columns>
+inline constexpr auto sql_index = sql_tag_detail::sql_table_index_impl<Name, false, Columns...> {};
+
+template <NEKO_NAMESPACE::ConstexprString Name, auto... Columns>
+inline constexpr auto sql_unique_index = sql_tag_detail::sql_table_index_impl<Name, true, Columns...> {};
+
+/**
+ * @brief Collect table-level constraints and indexes.
+ *
+ * Specialize SqlTableMeta<T> and assign `sql_table(...)` to its `value`.
+ */
+template <typename... Items>
+consteval auto sql_table(Items... items) {
+    return std::tuple<Items...> {items...};
+}
+
+template <typename T>
+struct SqlTableMeta {
+    constexpr static auto value = std::tuple {};
+};
 
 namespace tag_properties {
 NEKO_DETAIL_DEFINE_TAG_PROPERTY(bool, primary_key, primary_key)

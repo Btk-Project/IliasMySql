@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -19,11 +20,25 @@ struct KeywordRecord {
     std::string from_value = "";
 };
 
+struct MergeRecord {
+    int                        id = 0;
+    std::optional<std::string> details;
+    int                        metadata_level = 0;
+};
+
 template <>
 struct NEKO_NAMESPACE::Meta<KeywordRecord> {
     static constexpr auto value =
         Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&KeywordRecord::id), "from",
                make_tags<rename_tag<"from">, SqlTags {.not_null = true}>(&KeywordRecord::from_value));
+};
+
+template <>
+struct NEKO_NAMESPACE::Meta<MergeRecord> {
+    static constexpr auto value =
+        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&MergeRecord::id), "details",
+               &MergeRecord::details, "metadata_level",
+               make_tags<SqlTags {.not_null = true}>(&MergeRecord::metadata_level));
 };
 
 struct DuplicateColumnRecord {
@@ -460,6 +475,188 @@ static auto test_ignore_tag_roundtrip() -> IoTask<void> {
     co_return {};
 }
 
+static auto test_transaction_bound_builders() -> IoTask<void> {
+    auto db_ret = co_await SqlDatabase::open_in_memory();
+    if (!db_ret) {
+        ADD_FAILURE() << db_ret.error().message();
+        co_return {};
+    }
+    auto db = std::move(db_ret.value());
+
+    auto created = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(
+        db, "transaction_records");
+    if (!created) {
+        ADD_FAILURE() << created.error().message();
+        co_return {};
+    }
+
+    auto tx_ret = co_await db.transaction();
+    if (!tx_ret) {
+        ADD_FAILURE() << tx_ret.error().message();
+        co_return {};
+    }
+    auto tx = std::move(tx_ret.value());
+
+    auto bound =
+        Form<KeywordRecord, SqliteTag>::bind(tx, "transaction_records");
+    if (!bound) {
+        ADD_FAILURE() << bound.error().message();
+        co_return {};
+    }
+
+    auto inserted =
+        co_await bound->insert().set(KeywordRecord {1, "created"}).execute();
+    if (!inserted) {
+        ADD_FAILURE() << inserted.error().message();
+        co_return {};
+    }
+    auto updated =
+        co_await bound->update()
+            .set(bound->sql(&KeywordRecord::from_value) =
+                     std::string("updated"))
+            .where(bound->sql(&KeywordRecord::id) == 1)
+            .execute();
+    if (!updated) {
+        ADD_FAILURE() << updated.error().message();
+        co_return {};
+    }
+    auto upserted =
+        co_await bound->upsert()
+            .values(bound->sql(&KeywordRecord::id) = 1,
+                    bound->sql(&KeywordRecord::from_value) =
+                        std::string("upserted"))
+            .onConflict(bound->sql(&KeywordRecord::id))
+            .updateExcluded(bound->sql(&KeywordRecord::from_value))
+            .execute();
+    if (!upserted) {
+        ADD_FAILURE() << upserted.error().message();
+        co_return {};
+    }
+    auto selected =
+        co_await bound->select()
+            .where(bound->sql(&KeywordRecord::id) == 1)
+            .query();
+    if (!selected) {
+        ADD_FAILURE() << selected.error().message();
+        co_return {};
+    }
+    ilias_for_await(auto row, selected->rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_EQ(row->from_value, "upserted");
+    }
+
+    auto committed = co_await tx.commit();
+    if (!committed) {
+        ADD_FAILURE() << committed.error().message();
+    }
+    co_return {};
+}
+
+static auto test_upsert_merge_policies() -> IoTask<void> {
+    auto db_ret = co_await SqlDatabase::open_in_memory();
+    if (!db_ret) {
+        ADD_FAILURE() << db_ret.error().message();
+        co_return {};
+    }
+    auto db = std::move(db_ret.value());
+
+    auto form_ret =
+        co_await Form<MergeRecord, SqliteTag>::create_if_not_exists(db, "merge_records");
+    if (!form_ret) {
+        ADD_FAILURE() << form_ret.error().message();
+        co_return {};
+    }
+    auto form = std::move(*form_ret);
+
+    auto initial =
+        co_await form.upsert()
+            .values(form.sql(&MergeRecord::id) = 1,
+                    form.sql(&MergeRecord::details) =
+                        std::optional<std::string> {"full"},
+                    form.sql(&MergeRecord::metadata_level) = 1)
+            .onConflict(form.sql(&MergeRecord::id))
+            .updateExcluded(form.sql(&MergeRecord::details),
+                            form.sql(&MergeRecord::metadata_level))
+            .execute();
+    if (!initial) {
+        ADD_FAILURE() << initial.error().message();
+        co_return {};
+    }
+
+    auto summary =
+        co_await form.upsert()
+            .values(form.sql(&MergeRecord::id) = 1,
+                    form.sql(&MergeRecord::details) =
+                        std::optional<std::string> {},
+                    form.sql(&MergeRecord::metadata_level) = 0)
+            .onConflict(form.sql(&MergeRecord::id))
+            .updateCoalesced(form.sql(&MergeRecord::details))
+            .updateGreatest(form.sql(&MergeRecord::metadata_level))
+            .execute();
+    if (!summary) {
+        ADD_FAILURE() << summary.error().message();
+        co_return {};
+    }
+
+    auto mergedUpdate =
+        co_await form.update()
+            .set(form.assignCoalesced(
+                     form.sql(&MergeRecord::details),
+                     std::optional<std::string> {}),
+                 form.assignGreatest(
+                     form.sql(&MergeRecord::metadata_level), 0))
+            .where(form.sql(&MergeRecord::id) == 1)
+            .execute();
+    if (!mergedUpdate) {
+        ADD_FAILURE() << mergedUpdate.error().message();
+        co_return {};
+    }
+
+    auto partialInsert =
+        co_await form.insert()
+            .set(form.sql(&MergeRecord::id) = 2,
+                 form.sql(&MergeRecord::metadata_level) = 7)
+            .execute();
+    if (!partialInsert) {
+        ADD_FAILURE() << partialInsert.error().message();
+        co_return {};
+    }
+
+    auto selected =
+        co_await form.select().where(form.sql(&MergeRecord::id) == 1).query();
+    if (!selected) {
+        ADD_FAILURE() << selected.error().message();
+        co_return {};
+    }
+    ilias_for_await(auto row, selected->rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_EQ(row->details, std::optional<std::string> {"full"});
+        EXPECT_EQ(row->metadata_level, 1);
+    }
+
+    auto partial =
+        co_await form.select().where(form.sql(&MergeRecord::id) == 2).query();
+    if (!partial) {
+        ADD_FAILURE() << partial.error().message();
+        co_return {};
+    }
+    ilias_for_await(auto row, partial->rangeResult()) {
+        if (!row) {
+            ADD_FAILURE() << row.error().message();
+            co_return {};
+        }
+        EXPECT_FALSE(row->details.has_value());
+        EXPECT_EQ(row->metadata_level, 7);
+    }
+    co_return {};
+}
+
 TEST(SqlIdentifierQuoting, ReservedIdentifiersWorkThroughOrmDsl) {
     test_reserved_identifier_roundtrip().wait();
 }
@@ -478,6 +675,14 @@ TEST(SqlIdentifierQuoting, RenameTagAppliesToSqlIdentifiers) {
 
 TEST(SqlIdentifierQuoting, IgnoreTagExcludesNonPersistentFields) {
     test_ignore_tag_roundtrip().wait();
+}
+
+TEST(SqlIdentifierQuoting, BuildersCanBindToExistingTransaction) {
+    test_transaction_bound_builders().wait();
+}
+
+TEST(SqlIdentifierQuoting, OrmSupportsPartialInsertAndMergePolicies) {
+    test_upsert_merge_policies().wait();
 }
 
 int main(int argc, char **argv) {

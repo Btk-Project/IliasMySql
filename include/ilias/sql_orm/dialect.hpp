@@ -169,6 +169,26 @@ struct Dialect<SqliteTag> {
     static constexpr bool support_auto_increment() { return true; }
     static constexpr bool support_timestamp_default() { return true; }
     static constexpr bool support_timestamp_update() { return false; }
+    static auto excluded_value(std::string_view column) -> std::string {
+        return "excluded." + std::string(column);
+    }
+    static auto greatest_value(std::string_view lhs, std::string_view rhs) -> std::string {
+        return "MAX(" + std::string(lhs) + ", " + std::string(rhs) + ")";
+    }
+    static auto generate_upsert_clause(const std::vector<std::string> &conflictColumns,
+                                       const std::vector<std::string> &assignments, bool doNothing) -> std::string {
+        if (conflictColumns.empty()) {
+            throw std::invalid_argument("SQLite upsert requires a conflict target");
+        }
+        std::string clause = " ON CONFLICT (" + detail::join_strs(conflictColumns, ", ") + ") ";
+        if (doNothing) {
+            return clause + "DO NOTHING";
+        }
+        if (assignments.empty()) {
+            throw std::invalid_argument("SQLite upsert requires update assignments");
+        }
+        return clause + "DO UPDATE SET " + detail::join_strs(assignments, ", ");
+    }
 
     template <typename T>
     static std::string generate_column_definition(std::string_view name, const SqlTags &tags) {
@@ -358,6 +378,25 @@ struct Dialect<MysqlTag> {
     static constexpr bool support_auto_increment() { return true; }
     static constexpr bool support_timestamp_default() { return true; }
     static constexpr bool support_timestamp_update() { return true; }
+    static auto excluded_value(std::string_view column) -> std::string {
+        return "VALUES(" + std::string(column) + ")";
+    }
+    static auto greatest_value(std::string_view lhs, std::string_view rhs) -> std::string {
+        return "GREATEST(" + std::string(lhs) + ", " + std::string(rhs) + ")";
+    }
+    static auto generate_upsert_clause(const std::vector<std::string> &conflictColumns,
+                                       const std::vector<std::string> &assignments, bool doNothing) -> std::string {
+        if (doNothing) {
+            if (conflictColumns.empty()) {
+                throw std::invalid_argument("MySQL no-op upsert requires a conflict column");
+            }
+            return " ON DUPLICATE KEY UPDATE " + conflictColumns.front() + " = " + conflictColumns.front();
+        }
+        if (assignments.empty()) {
+            throw std::invalid_argument("MySQL upsert requires update assignments");
+        }
+        return " ON DUPLICATE KEY UPDATE " + detail::join_strs(assignments, ", ");
+    }
     // 2. 关键字差异
 
     template <typename T>
@@ -611,6 +650,26 @@ struct Dialect<PostgresTag> {
     static constexpr bool support_auto_increment() { return true; }
     static constexpr bool support_timestamp_default() { return true; }
     static constexpr bool support_timestamp_update() { return false; }
+    static auto excluded_value(std::string_view column) -> std::string {
+        return "excluded." + std::string(column);
+    }
+    static auto greatest_value(std::string_view lhs, std::string_view rhs) -> std::string {
+        return "GREATEST(" + std::string(lhs) + ", " + std::string(rhs) + ")";
+    }
+    static auto generate_upsert_clause(const std::vector<std::string> &conflictColumns,
+                                       const std::vector<std::string> &assignments, bool doNothing) -> std::string {
+        if (conflictColumns.empty()) {
+            throw std::invalid_argument("PostgreSQL upsert requires a conflict target");
+        }
+        std::string clause = " ON CONFLICT (" + detail::join_strs(conflictColumns, ", ") + ") ";
+        if (doNothing) {
+            return clause + "DO NOTHING";
+        }
+        if (assignments.empty()) {
+            throw std::invalid_argument("PostgreSQL upsert requires update assignments");
+        }
+        return clause + "DO UPDATE SET " + detail::join_strs(assignments, ", ");
+    }
 
     // 生成索引语句
     static std::vector<std::string>

@@ -258,12 +258,20 @@ public:
         co_return co_await insert(std::array {T {std::forward<Args>(args)...}});
     }
     auto insert() {
+        const auto columnNames = derived().getColumnNames();
+        std::vector<std::string> columnRefs;
+        columnRefs.reserve(columnNames.size());
+        for (const auto &column : columnNames) {
+            columnRefs.push_back(Dialect<BackendTag>::quote_identifier(column));
+        }
         if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
-            return detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
+            return detail::InsertBuilder<T>(derived().db(), derived().tableRef(),
+                                            columnNames, std::move(columnRefs));
         }
         else {
-            auto insertBuilder =
-                detail::InsertBuilder<T>(derived().db(), derived().tableRef(), derived().getColumnNames());
+            auto insertBuilder = detail::InsertBuilder<T>(
+                derived().db(), derived().tableRef(), columnNames,
+                std::move(columnRefs));
             T obj;
             NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
                 if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
@@ -278,6 +286,9 @@ public:
             });
             return insertBuilder;
         }
+    }
+    auto upsert() {
+        return detail::UpsertBuilder<T, BackendTag>(derived().db(), derived().tableRef());
     }
     // Update Builder
     auto update() {
@@ -302,6 +313,46 @@ public:
             return updateBuilder;
         }
     }
+
+    template <typename Column, typename Value>
+        requires(detail::HasSqlMethod<Column> && detail::SqlBindable<Value>)
+    auto assignCoalesced(const Column &column, Value &&value) const
+        -> detail::SqlAssignment {
+        if (!detail::sqlNodeIsValid(column)) {
+            return detail::SqlAssignment::invalid(
+                detail::sqlNodeDiagnostic(column));
+        }
+        using Storage = StorageType_t<Value>;
+        std::vector<std::shared_ptr<detail::SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<detail::ValueBinder<Storage>>(
+            std::forward<Value>(value)));
+        return {
+            .sql = column.sql() + " = COALESCE(?, " + column.sql() + ")",
+            .binders = std::move(binders),
+            .diagnostic = {},
+        };
+    }
+
+    template <typename Column, typename Value>
+        requires(detail::HasSqlMethod<Column> && detail::SqlBindable<Value>)
+    auto assignGreatest(const Column &column, Value &&value) const
+        -> detail::SqlAssignment {
+        if (!detail::sqlNodeIsValid(column)) {
+            return detail::SqlAssignment::invalid(
+                detail::sqlNodeDiagnostic(column));
+        }
+        using Storage = StorageType_t<Value>;
+        std::vector<std::shared_ptr<detail::SqlStatementBinder>> binders;
+        binders.push_back(std::make_shared<detail::ValueBinder<Storage>>(
+            std::forward<Value>(value)));
+        return {
+            .sql = column.sql() + " = " +
+                   Dialect<BackendTag>::greatest_value(column.sql(), "?"),
+            .binders = std::move(binders),
+            .diagnostic = {},
+        };
+    }
+
     // Remove Builder
     auto remove() { return detail::DeleteBuilder(derived().db(), derived().tableRef()); }
 

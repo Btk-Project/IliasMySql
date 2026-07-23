@@ -443,6 +443,18 @@ NekoProtoTools 的两个通用字段 tag 也直接作用于 SQL ORM：
 这些 tag 使用属性查询解析。自定义 tag 可以通过提供 `sql_default_expression`、
 `sql_check_expression` 等同名静态属性接入 schema 生成，无需修改 `SqlTags`。
 
+例如可以把领域约束封装成可复用 tag；tag 同时提供的属性会合并进列元数据：
+
+```cpp
+struct PositiveExternalId {
+    constexpr static bool             not_null = true;
+    constexpr static std::string_view sql_check_expression =
+        "external_id > 0";
+};
+
+make_tags<PositiveExternalId>(&Entity::external_id);
+```
+
 对于不通用或不值得抽象的列属性，可以使用可重复的 `sql_custom`：
 
 ```cpp
@@ -464,6 +476,90 @@ make_tags<
 `sql_custom` 是受信任的编译期 SQL 原文，不做转义、语法验证或参数绑定；用户需要
 自行保证片段对目标后端有效，并自行正确引用其中的 SQL 字面量和标识符。它仅扩展
 列定义，表级约束和建表尾部选项仍应使用对应的表级 schema 能力。
+
+### 表级约束与复合索引
+
+复合主键、复合唯一约束、表级 `CHECK` 和有序复合索引通过
+`SqlTableMeta<T>` 描述，不需要退回手写建表 SQL：
+
+```cpp
+struct EpisodeExternalRef {
+    int64_t     episode_id;
+    std::string provider_key;
+    std::string external_id;
+    int64_t     fetched_at;
+};
+
+ILIAS_SQL_NS_BEGIN
+template <>
+struct SqlTableMeta<EpisodeExternalRef> {
+    constexpr static auto value = sql_table(
+        sql_primary_key<
+            &EpisodeExternalRef::episode_id,
+            &EpisodeExternalRef::provider_key>,
+        sql_unique<
+            &EpisodeExternalRef::provider_key,
+            &EpisodeExternalRef::external_id>,
+        sql_table_check<"fetched_at >= 0">,
+        sql_index<
+            "idx_episode_external_ref_fetched",
+            sql_desc<&EpisodeExternalRef::fetched_at>,
+            sql_asc<&EpisodeExternalRef::provider_key>>);
+};
+ILIAS_SQL_NS_END
+```
+
+成员指针必须指向该类型已反射且未忽略的字段，复合主键字段还必须声明
+`not_null`。Schema 生成会拒绝重复列、多个表级主键、列级主键与复合主键冲突、
+复合自增主键等不确定定义。索引名和字段名仍由各后端方言验证并引用。
+
+### 在同一事务中绑定多个 Form
+
+迁移已经保证表存在时，可以把多个 `Form` 绑定到同一个 `SqlTransaction`。
+`bind` 只校验后端和标识符，不执行 schema 查询：
+
+```cpp
+auto tx = (co_await db.transaction()).value();
+
+auto subjects =
+    Form<Subject, SqliteTag>::bind(tx, "subjects").value();
+auto tags =
+    Form<Tag, SqliteTag>::bind(tx, "tags").value();
+
+co_await subjects.insert()
+    .set(subjects.sql(&Subject::title) = std::string("Example"))
+    .execute(); // 只插入指定列，其余列使用数据库默认值或 NULL
+
+co_await tags.emplace(1, "anime");
+co_await tx.commit();
+```
+
+### 可移植 Upsert 与合并策略
+
+`upsert()` 提供后端方言映射，并保持值绑定参数化：
+
+```cpp
+co_await subjects.upsert()
+    .values(
+        subjects.sql(&Subject::id) = subject.id,
+        subjects.sql(&Subject::details) = subject.details,
+        subjects.sql(&Subject::metadata_level) = subject.metadata_level)
+    .onConflict(subjects.sql(&Subject::id))
+    .updateCoalesced(subjects.sql(&Subject::details))
+    .updateGreatest(subjects.sql(&Subject::metadata_level))
+    .execute();
+```
+
+- SQLite/PostgreSQL 生成 `ON CONFLICT (...) DO UPDATE`。
+- MySQL/MariaDB 生成 `ON DUPLICATE KEY UPDATE`；冲突列仍会做 DSL 校验，
+  实际冲突目标由服务端主键/唯一键决定。
+- `updateExcluded` 直接采用新值；`updateCoalesced` 仅在新值非空时覆盖；
+  `updateGreatest` 保留新旧值中的较大值。
+- 普通 `update()` 可用 `assignCoalesced(column, value)` 和
+  `assignGreatest(column, value)` 获得相同合并语义。
+
+全文搜索、排名函数等能力高度依赖具体数据库，不属于这组通用 DML 抽象，应放在
+后端适配层中，并与这些 Form 共享同一个事务。
 
 ## 快速开始
 

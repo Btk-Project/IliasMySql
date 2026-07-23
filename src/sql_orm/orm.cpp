@@ -155,7 +155,7 @@ auto SqlVariable::invalid(std::string diagnostic) -> SqlVariable {
 
 // ================= SelectBuilder =================
 
-SelectBuilder::SelectBuilder(SqlDatabase &db, std::string tableName, const std::vector<std::string> &cols,
+SelectBuilder::SelectBuilder(SqlExecutorRef db, std::string tableName, const std::vector<std::string> &cols,
                              IdentifierQuoter quoteIdentifier, std::vector<std::string> diagnostics)
     : mDb(db), mTableName(std::move(tableName)), mQuoteIdentifier(quoteIdentifier),
       mDiagnostics(std::move(diagnostics)) {

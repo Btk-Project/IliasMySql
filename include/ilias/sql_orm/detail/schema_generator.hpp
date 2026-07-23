@@ -5,10 +5,12 @@
 #include "ilias/sql_orm/dialect.hpp"
 
 #include <nekoproto/serialization/reflection.hpp>
+#include <algorithm>
+#include <set>
 #include <string>
-#include <vector>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 ILIAS_SQL_NS_BEGIN
 
@@ -98,6 +100,7 @@ public:
             }
 
             schema.indexStatements = generateIndexStatements(tableName, schema.columns);
+            appendTableMetadata<EntityType>(schema, tableName);
 
             auto definitions = schema.columnDefinitions;
             definitions.insert(definitions.end(), schema.tableConstraints.begin(), schema.tableConstraints.end());
@@ -161,6 +164,97 @@ public:
     }
 
 private:
+    template <typename EntityType, auto Member>
+    static auto quotedMemberColumn() -> std::string {
+        constexpr auto index = detail::reflectedMemberPointerIndex<EntityType, Member>();
+        static_assert(index >= 0, "Table metadata member must map to a reflected SQL column");
+        constexpr auto names = detail::reflectedFieldNames<EntityType>();
+        return Dialect<BackendTag>::quote_identifier(names[static_cast<std::size_t>(index)]);
+    }
+
+    template <typename EntityType, typename Item>
+    static auto tableMemberColumns() -> std::vector<std::string> {
+        std::vector<std::string> columns;
+        Item::forEachMember([&]<auto Member>() {
+            columns.push_back(quotedMemberColumn<EntityType, Member>());
+        });
+        if (std::set<std::string>(columns.begin(), columns.end()).size() != columns.size()) {
+            throw std::invalid_argument("Duplicate column in table constraint");
+        }
+        return columns;
+    }
+
+    template <typename EntityType, typename Item>
+    static void appendTableItem(TableSchema &schema, std::string_view tableName,
+                                bool &hasTablePrimaryKey) {
+        if constexpr (requires { Item::primary_key; }) {
+            if (hasTablePrimaryKey) {
+                throw std::invalid_argument("Only one table primary key may be declared");
+            }
+            const auto columns = tableMemberColumns<EntityType, Item>();
+            if (std::ranges::any_of(schema.columns, [](const auto &column) {
+                    return column.second.primary_key;
+                })) {
+                throw std::invalid_argument("Column and table primary keys cannot be combined");
+            }
+            for (const auto &column : columns) {
+                const auto unquoted = column.substr(1, column.size() - 2);
+                const auto found =
+                    std::ranges::find_if(schema.columns, [&](const auto &entry) { return entry.first == unquoted; });
+                if (found != schema.columns.end() && found->second.auto_increment) {
+                    throw std::invalid_argument("Composite primary keys cannot contain auto-increment columns");
+                }
+                if (found != schema.columns.end() && !found->second.not_null) {
+                    throw std::invalid_argument("Composite primary key columns must be NOT NULL");
+                }
+            }
+            schema.tableConstraints.push_back("PRIMARY KEY (" + detail::join_strs(columns, ", ") + ")");
+            hasTablePrimaryKey = true;
+        }
+        else if constexpr (requires { Item::check; }) {
+            schema.tableConstraints.push_back("CHECK (" + std::string(Item::expression) + ")");
+        }
+        else if constexpr (requires { Item::index; }) {
+            std::vector<std::string> columns;
+            std::set<std::string>    memberColumns;
+            Item::forEachColumn([&]<typename Column>() {
+                auto column = quotedMemberColumn<EntityType, Column::member>();
+                if (!memberColumns.insert(column).second) {
+                    throw std::invalid_argument("Duplicate column in table index");
+                }
+                column += Column::order == SqlIndexOrder::Desc ? " DESC" : " ASC";
+                columns.push_back(std::move(column));
+            });
+            std::string statement = "CREATE ";
+            if (Item::unique) {
+                statement += "UNIQUE ";
+            }
+            statement += "INDEX " + Dialect<BackendTag>::quote_identifier(Item::name) + " ON " +
+                         Dialect<BackendTag>::quote_identifier(tableName) + " (" +
+                         detail::join_strs(columns, ", ") + ")";
+            schema.indexStatements.push_back(std::move(statement));
+        }
+        else if constexpr (requires { Item::unique; }) {
+            const auto columns = tableMemberColumns<EntityType, Item>();
+            schema.tableConstraints.push_back("UNIQUE (" + detail::join_strs(columns, ", ") + ")");
+        }
+        else {
+            static_assert(std::is_void_v<Item>, "Unsupported SqlTableMeta item");
+        }
+    }
+
+    template <typename EntityType>
+    static void appendTableMetadata(TableSchema &schema, std::string_view tableName) {
+        bool hasTablePrimaryKey = false;
+        std::apply(
+            [&](const auto &...item) {
+                (appendTableItem<EntityType, std::remove_cvref_t<decltype(item)>>(
+                     schema, tableName, hasTablePrimaryKey),
+                 ...);
+            },
+            SqlTableMeta<EntityType>::value);
+    }
+
     static std::string generateReferenceConstraint(std::string_view columnName, const SqlColumnMetadata &metadata) {
         std::string reference = "FOREIGN KEY (" + Dialect<BackendTag>::quote_identifier(columnName) + ") REFERENCES " +
                                 Dialect<BackendTag>::quote_identifier_path(metadata.reference_table) + " (" +

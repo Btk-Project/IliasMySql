@@ -135,6 +135,26 @@ public:
         co_return Form<T, BackendTag, DatabaseT>(db, tableName);
     }
 
+    /**
+     * @brief Bind a Form to an existing SQL API without schema I/O.
+     *
+     * This is intended for binding several Forms to one already-open
+     * SqlTransaction. Identifiers and the backend are validated, while schema
+     * existence remains the caller's migration invariant.
+     */
+    template <typename DatabaseT>
+    static auto bind(DatabaseT &db, const std::string &tableName)
+        -> IoResult<Form<T, BackendTag, DatabaseT>> {
+        if (!BackendDialect::check(db.sqlname())) {
+            return Err(SqlError::DialectNotSupported);
+        }
+        auto identifier_validation = _validate_identifier_metadata(tableName);
+        if (!identifier_validation.is_ok()) {
+            return Err(SqlError::Code::InvalidParameter);
+        }
+        return Form<T, BackendTag, DatabaseT>(db, tableName);
+    }
+
     template <typename DatabaseT>
     static auto transaction(DatabaseT &db, const std::string &tableName)
         -> IoTask<std::pair<std::unique_ptr<SqlTransaction>, Form<T, BackendTag, SqlTransaction>>> {
@@ -295,6 +315,11 @@ public:
     template <typename DatabaseTT>
     static auto attach(DatabaseT &db, const std::string &tableName) {
         return Form<T, BackendTag, void>::attach(db, tableName);
+    }
+
+    template <typename DatabaseTT>
+    static auto bind(DatabaseTT &db, const std::string &tableName) {
+        return Form<T, BackendTag, void>::bind(db, tableName);
     }
 
     static auto getColumnNames() noexcept -> const std::vector<std::string> & { return mTableHeaderNames; }

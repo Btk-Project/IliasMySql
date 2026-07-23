@@ -32,6 +32,18 @@ struct CustomClauseRecord {
     int value = 0;
 };
 
+struct CompositeSchemaRecord {
+    int         owner_id  = 0;
+    int         sequence  = 0;
+    std::string stable_key;
+    int64_t     updated_at = 0;
+};
+
+struct NullableCompositeKeyRecord {
+    int owner_id = 0;
+    int sequence = 0;
+};
+
 } // namespace
 
 NEKO_BEGIN_NAMESPACE
@@ -76,7 +88,48 @@ struct Meta<CustomClauseRecord, void> {
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"SQLITE_TAIL", "sqlite">,
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"MYSQL_TAIL", "mysql">>(&CustomClauseRecord::value));
 };
+
+template <>
+struct Meta<CompositeSchemaRecord, void> {
+    constexpr static auto value = Object(
+        "owner_id", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+                        &CompositeSchemaRecord::owner_id),
+        "sequence", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+                        &CompositeSchemaRecord::sequence),
+        "stable_key", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+                          &CompositeSchemaRecord::stable_key),
+        "updated_at", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+                         &CompositeSchemaRecord::updated_at));
+};
+
+template <>
+struct Meta<NullableCompositeKeyRecord, void> {
+    constexpr static auto value =
+        Object("owner_id",
+               make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+                   &NullableCompositeKeyRecord::owner_id),
+               "sequence", &NullableCompositeKeyRecord::sequence);
+};
 NEKO_END_NAMESPACE
+
+ILIAS_SQL_NS_BEGIN
+template <>
+struct SqlTableMeta<CompositeSchemaRecord> {
+    constexpr static auto value =
+        sql_table(sql_primary_key<&CompositeSchemaRecord::owner_id, &CompositeSchemaRecord::sequence>,
+                  sql_unique<&CompositeSchemaRecord::owner_id, &CompositeSchemaRecord::stable_key>,
+                  sql_table_check<"sequence >= 0">,
+                  sql_index<"idx_composite_updated", sql_desc<&CompositeSchemaRecord::updated_at>,
+                            sql_asc<&CompositeSchemaRecord::owner_id>>);
+};
+
+template <>
+struct SqlTableMeta<NullableCompositeKeyRecord> {
+    constexpr static auto value =
+        sql_table(sql_primary_key<&NullableCompositeKeyRecord::owner_id,
+                                  &NullableCompositeKeyRecord::sequence>);
+};
+ILIAS_SQL_NS_END
 
 TEST(SqlSchemaTags, PropertyExtractionSupportsCustomTags) {
     constexpr auto tags =
@@ -140,7 +193,62 @@ TEST(SqlSchemaTags, FiltersAndOrdersRepeatableCustomClausesByBackend) {
     EXPECT_EQ(postgres->columnDefinitions.front(), "\"value\" INTEGER GLOBAL_AFTER GLOBAL_TAIL");
 }
 
+TEST(SqlSchemaTags, GeneratesCompositeTableConstraintsAndIndexesForAllDialects) {
+    using ILIAS_SQL_COMPLETE_NAMESPACE::detail::SchemaGenerator;
+
+    auto sqlite = SchemaGenerator<SqliteTag>::generateTableSchema<CompositeSchemaRecord>("composite_records");
+    auto mysql = SchemaGenerator<MysqlTag>::generateTableSchema<CompositeSchemaRecord>("composite_records");
+    auto postgres = SchemaGenerator<PostgresTag>::generateTableSchema<CompositeSchemaRecord>("composite_records");
+
+    ASSERT_TRUE(sqlite);
+    ASSERT_TRUE(mysql);
+    ASSERT_TRUE(postgres);
+
+    EXPECT_NE(sqlite->createTableSql.find("PRIMARY KEY (\"owner_id\", \"sequence\")"), std::string::npos);
+    EXPECT_NE(sqlite->createTableSql.find("UNIQUE (\"owner_id\", \"stable_key\")"), std::string::npos);
+    EXPECT_NE(sqlite->createTableSql.find("CHECK (sequence >= 0)"), std::string::npos);
+    ASSERT_EQ(sqlite->indexStatements.size(), 1);
+    EXPECT_EQ(sqlite->indexStatements.front(),
+              "CREATE INDEX \"idx_composite_updated\" ON \"composite_records\" "
+              "(\"updated_at\" DESC, \"owner_id\" ASC)");
+
+    EXPECT_NE(mysql->createTableSql.find("PRIMARY KEY (`owner_id`, `sequence`)"), std::string::npos);
+    ASSERT_EQ(mysql->indexStatements.size(), 1);
+    EXPECT_EQ(mysql->indexStatements.front(),
+              "CREATE INDEX `idx_composite_updated` ON `composite_records` "
+              "(`updated_at` DESC, `owner_id` ASC)");
+
+    EXPECT_NE(postgres->createTableSql.find("PRIMARY KEY (\"owner_id\", \"sequence\")"), std::string::npos);
+    ASSERT_EQ(postgres->indexStatements.size(), 1);
+    EXPECT_EQ(postgres->indexStatements.front(),
+              "CREATE INDEX \"idx_composite_updated\" ON \"composite_records\" "
+              "(\"updated_at\" DESC, \"owner_id\" ASC)");
+}
+
+TEST(SqlSchemaTags, GeneratesPortableUpsertDialectFragments) {
+    const std::vector<std::string> conflicts {"\"provider_key\"", "\"external_id\""};
+    const std::vector<std::string> assignments {"\"fetched_at\" = excluded.\"fetched_at\""};
+    EXPECT_EQ(Dialect<SqliteTag>::generate_upsert_clause(conflicts, assignments, false),
+              " ON CONFLICT (\"provider_key\", \"external_id\") DO UPDATE SET "
+              "\"fetched_at\" = excluded.\"fetched_at\"");
+    EXPECT_EQ(Dialect<PostgresTag>::generate_upsert_clause(conflicts, assignments, false),
+              " ON CONFLICT (\"provider_key\", \"external_id\") DO UPDATE SET "
+              "\"fetched_at\" = excluded.\"fetched_at\"");
+
+    const std::vector<std::string> mysqlConflicts {"`provider_key`", "`external_id`"};
+    const std::vector<std::string> mysqlAssignments {"`fetched_at` = VALUES(`fetched_at`)"};
+    EXPECT_EQ(Dialect<MysqlTag>::generate_upsert_clause(mysqlConflicts, mysqlAssignments, false),
+              " ON DUPLICATE KEY UPDATE `fetched_at` = VALUES(`fetched_at`)");
+
+    EXPECT_EQ(Dialect<SqliteTag>::greatest_value("\"metadata_level\"", "excluded.\"metadata_level\""),
+              "MAX(\"metadata_level\", excluded.\"metadata_level\")");
+    EXPECT_EQ(Dialect<PostgresTag>::greatest_value("\"metadata_level\"", "excluded.\"metadata_level\""),
+              "GREATEST(\"metadata_level\", excluded.\"metadata_level\")");
+}
+
 TEST(SqlSchemaTags, RejectsConflictingOrTypeIncompatibleMetadata) {
+    using ILIAS_SQL_COMPLETE_NAMESPACE::detail::SchemaGenerator;
+
     SqlColumnMetadata explicitTimestampDefault {
         .tags               = SqlTags {.created_at = true},
         .default_expression = "CURRENT_DATE",
@@ -171,6 +279,10 @@ TEST(SqlSchemaTags, RejectsConflictingOrTypeIncompatibleMetadata) {
         .custom_clauses = {SqlCustomClause {}},
     };
     EXPECT_FALSE(emptyCustomClause.getValidationErrors<int>().empty());
+
+    EXPECT_FALSE(
+        SchemaGenerator<SqliteTag>::generateTableSchema<NullableCompositeKeyRecord>(
+            "nullable_composite_key"));
 }
 
 TEST(SqlSchemaTags, GeneratedSqlWorksWithSQLite) {
