@@ -58,8 +58,7 @@ public:
      */
     template <typename DatabaseT>
         requires(!std::is_const_v<DatabaseT>)
-    static auto create_or_replace(DatabaseT &db, const std::string &tableName)
-        -> IoTask<Form<T, BackendTag, DatabaseT>> {
+    static auto create_or_replace(DatabaseT &db, std::string_view tableName) -> IoTask<Form<T, BackendTag, DatabaseT>> {
         auto identifier_validation = _validate_identifier_metadata(tableName);
         if (!identifier_validation.is_ok()) {
             ILIAS_ERROR("ilias-sql", "Invalid ORM identifiers: {}",
@@ -79,7 +78,7 @@ public:
      */
     template <typename DatabaseT>
         requires(!std::is_const_v<DatabaseT>)
-    static auto create_if_not_exists(DatabaseT &db, const std::string &tableName)
+    static auto create_if_not_exists(DatabaseT &db, std::string_view tableName)
         -> IoTask<Form<T, BackendTag, DatabaseT>> {
         co_return co_await _create_table_impl(db, tableName, true);
     }
@@ -146,8 +145,7 @@ public:
      * existence remains the caller's migration invariant.
      */
     template <typename DatabaseT>
-    static auto bind(DatabaseT &db, const std::string &tableName)
-        -> IoResult<Form<T, BackendTag, DatabaseT>> {
+    static auto bind(DatabaseT &db, const std::string &tableName) -> IoResult<Form<T, BackendTag, DatabaseT>> {
         if (!BackendDialect::check(db.sqlname())) {
             return Err(SqlError::DialectNotSupported);
         }
@@ -178,7 +176,7 @@ private:
     // --- 私有辅助函数 ---
 
     template <typename DatabaseT>
-    static auto _create_table_impl(DatabaseT &db, const std::string &tableName, bool if_not_exists)
+    static auto _create_table_impl(DatabaseT &db, std::string_view tableName, bool if_not_exists)
         -> IoTask<Form<T, BackendTag, DatabaseT>> {
         if (!BackendDialect::check(db.sqlname())) {
             ILIAS_ERROR("ilias-sql", "Dialect {} is not supported", db.sqlname());
@@ -221,8 +219,8 @@ private:
     }
 
     static auto _validate_schema(const std::map<std::string, ColumnSchema> &actual_schema) -> ValidationResult {
-        ValidationResult      result;
-        T                     obj;
+        ValidationResult result;
+        T                obj;
         // A Form only depends on the mapped columns existing with readable
         // types. Nullability, keys, uniqueness, defaults, checks, indexes and
         // additional columns belong to the physical database schema and need
@@ -285,22 +283,22 @@ public:
     using RawDatabaseType = std::decay_t<DatabaseT>;
 
     template <typename DatabaseTT>
-    static auto create_or_replace(DatabaseT &db, const std::string &tableName) {
+    static auto create_or_replace(DatabaseTT &db, std::string_view tableName) {
         return Form<T, BackendTag, void>::create_or_replace(db, tableName);
     }
 
     template <typename DatabaseTT>
-    static auto create_if_not_exists(DatabaseT &db, const std::string &tableName) {
+    static auto create_if_not_exists(DatabaseTT &db, std::string_view tableName) {
         return Form<T, BackendTag, void>::create_if_not_exists(db, tableName);
     }
 
     template <typename DatabaseTT>
-    static auto attach(DatabaseT &db, const std::string &tableName) {
+    static auto attach(DatabaseTT &db, std::string_view tableName) {
         return Form<T, BackendTag, void>::attach(db, tableName);
     }
 
     template <typename DatabaseTT>
-    static auto bind(DatabaseTT &db, const std::string &tableName) {
+    static auto bind(DatabaseTT &db, std::string_view tableName) {
         return Form<T, BackendTag, void>::bind(db, tableName);
     }
 
@@ -323,7 +321,7 @@ public:
     }
 
 private:
-    Form(RawDatabaseType &db, const std::string &tableName)
+    Form(RawDatabaseType &db, std::string_view tableName)
         : mDb(db), mTableName(tableName), mQuotedTableName(BackendDialect::quote_identifier(tableName)) {
         ILIAS_TRACE("ilias-sql", "Form<{}> with database<{}> name {}", (void *)this, (void *)&mDb, tableName);
     }

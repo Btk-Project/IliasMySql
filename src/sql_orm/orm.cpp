@@ -13,10 +13,8 @@ namespace detail {
  * @brief Enhance SqlError with SqlTags constraint context for better error reporting
  */
 ILIAS_SQL_API
-EnhancedSqlError enhanceErrorWithConstraintContext(const SqlError& error,
-                                                  const std::string& tableName,
-                                                  const std::string& columnName,
-                                                  const SqlTags& tags) {
+EnhancedSqlError enhanceErrorWithConstraintContext(const SqlError &error, std::string_view tableName,
+                                                   std::string_view columnName, const SqlTags &tags) {
     return SqlTagsErrorHandler::enhanceError(error, tableName, columnName, tags);
 }
 
@@ -24,9 +22,8 @@ EnhancedSqlError enhanceErrorWithConstraintContext(const SqlError& error,
  * @brief Enhance SqlError with multiple constraint contexts
  */
 ILIAS_SQL_API
-EnhancedSqlError enhanceErrorWithMultipleConstraints(const SqlError& error,
-                                                    const std::string& tableName,
-                                                    const std::vector<std::pair<std::string, SqlTags>>& contexts) {
+EnhancedSqlError enhanceErrorWithMultipleConstraints(const SqlError &error, std::string_view tableName,
+                                                     const std::vector<std::pair<std::string, SqlTags>> &contexts) {
     return SqlTagsErrorHandler::enhanceError(error, tableName, contexts);
 }
 
@@ -34,19 +31,18 @@ EnhancedSqlError enhanceErrorWithMultipleConstraints(const SqlError& error,
  * @brief Try to enhance a generic SqlError by analyzing its message and mapping to constraint types
  */
 ILIAS_SQL_API
-EnhancedSqlError tryEnhanceGenericError(const SqlError& error,
-                                       const std::string& tableName) {
+EnhancedSqlError tryEnhanceGenericError(const SqlError &error, std::string_view tableName) {
     // Try to map the error message to a more specific constraint type
     auto mappedCode = SqlTagsErrorHandler::mapDatabaseErrorToConstraintType(error.message());
-    
+
     if (mappedCode.has_value()) {
         // Create a new SqlError with the mapped code but keep the original message
         SqlError enhancedBaseError(mappedCode.value(), error.message());
-        return EnhancedSqlError(enhancedBaseError, tableName, "", SqlTags{});
+        return EnhancedSqlError(enhancedBaseError, tableName, "", SqlTags {});
     }
-    
+
     // If we can't map it, just wrap the original error
-    return EnhancedSqlError(error, tableName, "", SqlTags{});
+    return EnhancedSqlError(error, tableName, "", SqlTags {});
 }
 
 } // namespace detail
