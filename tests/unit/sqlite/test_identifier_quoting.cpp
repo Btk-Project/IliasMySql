@@ -197,6 +197,52 @@ static auto test_reserved_identifier_roundtrip() -> IoTask<void> {
     co_return {};
 }
 
+static auto test_compatible_form_attachment() -> IoTask<void> {
+    auto dbRet = co_await SqlDatabase::open_in_memory();
+    if (!dbRet) {
+        ADD_FAILURE() << dbRet.error().message();
+        co_return {};
+    }
+    auto db = std::move(*dbRet);
+
+    auto created = co_await db.execute(
+        "CREATE TABLE compatible_records("
+        "id INTEGER, \"from\" TEXT, extra BLOB, UNIQUE(\"from\"))");
+    if (!created) {
+        ADD_FAILURE() << created.error().message();
+        co_return {};
+    }
+
+    auto attached = co_await Form<KeywordRecord, SqliteTag>::attach(
+        db, "compatible_records");
+    EXPECT_TRUE(attached) << attached.error().message();
+
+    auto opened = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(
+        db, "compatible_records");
+    EXPECT_TRUE(opened) << opened.error().message();
+
+    created = co_await db.execute(
+        "CREATE TABLE incomplete_records(id INTEGER, extra TEXT)");
+    if (!created) {
+        ADD_FAILURE() << created.error().message();
+        co_return {};
+    }
+    auto incomplete = co_await Form<KeywordRecord, SqliteTag>::attach(
+        db, "incomplete_records");
+    EXPECT_FALSE(incomplete);
+
+    created = co_await db.execute(
+        "CREATE TABLE incompatible_records(id INTEGER, \"from\" BLOB)");
+    if (!created) {
+        ADD_FAILURE() << created.error().message();
+        co_return {};
+    }
+    auto incompatible = co_await Form<KeywordRecord, SqliteTag>::attach(
+        db, "incompatible_records");
+    EXPECT_FALSE(incompatible);
+    co_return {};
+}
+
 static auto test_member_pointer_column_errors() -> IoTask<void> {
     auto db_ret = co_await SqlDatabase::open_in_memory();
     if (!db_ret) {
@@ -683,6 +729,10 @@ TEST(SqlIdentifierQuoting, BuildersCanBindToExistingTransaction) {
 
 TEST(SqlIdentifierQuoting, OrmSupportsPartialInsertAndMergePolicies) {
     test_upsert_merge_policies().wait();
+}
+
+TEST(SqlIdentifierQuoting, AttachRequiresOnlyUsableMappedColumns) {
+    test_compatible_form_attachment().wait();
 }
 
 int main(int argc, char **argv) {

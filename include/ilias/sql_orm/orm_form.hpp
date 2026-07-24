@@ -85,7 +85,10 @@ public:
     }
 
     /**
-     * @brief 附加并校验模式：附加到已存在的表，并严格校验其结构。
+     * @brief Attach to an existing table when every mapped column is usable.
+     *
+     * Extra database columns and storage constraints are deliberately ignored.
+     * They do not prevent this Form from reading or writing its own columns.
      */
     template <typename DatabaseT>
         requires(!std::is_const_v<DatabaseT>)
@@ -110,7 +113,7 @@ public:
         // 2. 执行查询
         ILIAS_CO_TRY(auto prepare_ret, co_await db.prepare(schema_query_sql));
         if constexpr (!std::is_same_v<BackendTag, SqliteTag>) {
-            prepare_ret.bind(tableName);
+            ILIAS_CO_TRYV(prepare_ret.bind(tableName));
         }
         ILIAS_CO_TRY(auto result, co_await prepare_ret.query());
 
@@ -121,7 +124,7 @@ public:
             co_return Err(SqlError::Code::TableNotFound);
         }
 
-        // 4. 校验Schema
+        // 4. Check only the columns that this Form actually uses.
         auto validation = _validate_schema(actual_schema);
         if (!validation.is_ok()) {
             std::string error_msg =
@@ -220,14 +223,14 @@ private:
     static auto _validate_schema(const std::map<std::string, ColumnSchema> &actual_schema) -> ValidationResult {
         ValidationResult      result;
         T                     obj;
-        std::set<std::string> struct_columns;
-
-        // 1. 检查C++结构体中的每个字段是否与数据库匹配
+        // A Form only depends on the mapped columns existing with readable
+        // types. Nullability, keys, uniqueness, defaults, checks, indexes and
+        // additional columns belong to the physical database schema and need
+        // not mirror the C++ declaration.
         NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 std::string name(detail::reflectedFieldName(name_sv, tags));
                 const auto  sqlTags = detail::extractSqlTags(tags);
-                struct_columns.insert(name);
 
                 auto it = actual_schema.find(name);
                 if (it == actual_schema.end()) {
@@ -240,29 +243,8 @@ private:
                 if (!BackendDialect::template are_types_compatible<decltype(field)>(col_info.db_type, sqlTags)) {
                     result.add_error("Column '" + name + "': Type mismatch. DB has '" + col_info.db_type + "'.");
                 }
-
-                // 校验 NOT NULL
-                // 简单假设：非optional类型需要NOT NULL
-                bool expected_not_null = sqlTags.not_null;
-                if (expected_not_null != col_info.tags.not_null) {
-                    result.add_error("Column '" + name +
-                                     "': NOT NULL constraint mismatch. Expected: " + std::to_string(expected_not_null) +
-                                     ", Actual: " + std::to_string(col_info.tags.not_null));
-                }
-
-                // 校验主键
-                if (sqlTags.primary_key != col_info.tags.primary_key) {
-                    result.add_error("Column '" + name + "': PRIMARY KEY constraint mismatch.");
-                }
             }
         });
-
-        // 2. 检查数据库中是否有多余的字段
-        for (const auto &[db_col_name, _] : actual_schema) {
-            if (struct_columns.find(db_col_name) == struct_columns.end()) {
-                result.add_error("Column '" + db_col_name + "' (in database) not found in C++ struct.");
-            }
-        }
 
         return result;
     }
