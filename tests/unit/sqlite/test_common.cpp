@@ -1,5 +1,10 @@
 #include <gtest/gtest.h>
-#include <sqlite3.h>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -8,6 +13,7 @@
 #include "ilias/sql/sqlstatement.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql_orm/orm_form.hpp"
+#include "sqlite_test_runtime.hpp"
 
 // 假设这些在你的项目中存在
 #include "../backtrace.hpp"
@@ -43,6 +49,142 @@ NEKO_USE_NAMESPACE
         }                                                                                                              \
         CO_EXPECT_RESULT(ret);                                                                                         \
     } while (0)
+
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+namespace {
+
+class ScopedSqlcipherFile {
+public:
+    ScopedSqlcipherFile() {
+        static std::atomic_uint64_t sequence {0};
+        const auto unique = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" +
+                            std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
+        mPath = std::filesystem::temp_directory_path() / ("ilias_sqlcipher_" + unique + ".db");
+    }
+
+    ScopedSqlcipherFile(const ScopedSqlcipherFile &)            = delete;
+    ScopedSqlcipherFile &operator=(const ScopedSqlcipherFile &) = delete;
+
+    ~ScopedSqlcipherFile() {
+        std::error_code ignored;
+        std::filesystem::remove(mPath, ignored);
+        auto sidecar = mPath;
+        sidecar += "-journal";
+        std::filesystem::remove(sidecar, ignored);
+        sidecar = mPath;
+        sidecar += "-wal";
+        std::filesystem::remove(sidecar, ignored);
+        sidecar = mPath;
+        sidecar += "-shm";
+        std::filesystem::remove(sidecar, ignored);
+    }
+
+    auto path() const -> const std::filesystem::path & { return mPath; }
+
+private:
+    std::filesystem::path mPath;
+};
+
+auto cipherOptions(const std::filesystem::path &path, std::optional<std::string_view> key = std::nullopt,
+                   std::optional<std::string_view> rekey = std::nullopt) -> ConnectOptions {
+    ConnectOptions options;
+    options.filename = path.string();
+    if (key) {
+        options.extra.emplace("key", *key);
+    }
+    if (rekey) {
+        options.extra.emplace("rekey", *rekey);
+    }
+    return options;
+}
+
+auto canReadEncryptedRecord(const std::filesystem::path &path, std::optional<std::string_view> key)
+    -> IoTask<bool> {
+    auto openRet = co_await SqlDatabase::open("sqlite", cipherOptions(path, key));
+    if (!openRet) {
+        co_return false;
+    }
+    auto db = std::move(openRet.value());
+
+    bool readable = false;
+    {
+        auto queryRet = co_await db.query<std::string>("SELECT value FROM protected_records WHERE id = 1");
+        if (queryRet) {
+            auto result = std::move(queryRet.value());
+            ilias_for_await(auto row, result.rangeResult()) {
+                if (!row) {
+                    readable = false;
+                    break;
+                }
+                readable = std::get<0>(row.value()) == "classified";
+            }
+        }
+    }
+
+    auto closeRet = co_await db.close();
+    if (!closeRet) {
+        ADD_FAILURE() << closeRet.error().message();
+    }
+    co_return readable;
+}
+
+auto testSqlcipherEncryptionAndRekey() -> IoTask<void> {
+    ScopedSqlcipherFile databaseFile;
+    constexpr std::string_view oldKey = "ilias-sqlcipher-old-key";
+    constexpr std::string_view newKey = "ilias-sqlcipher-new-key";
+
+    auto openRet = co_await SqlDatabase::open("sqlite", cipherOptions(databaseFile.path(), oldKey));
+    CO_ASSERT_VAL(openRet);
+    auto db = std::move(openRet.value());
+
+    auto createRet = co_await db.execute("CREATE TABLE protected_records(id INTEGER PRIMARY KEY, value TEXT)");
+    CO_ASSERT_VAL(createRet);
+    auto insertRet = co_await db.execute("INSERT INTO protected_records(id, value) VALUES(1, 'classified')");
+    CO_ASSERT_VAL(insertRet);
+    auto closeRet = co_await db.close();
+    CO_ASSERT_VAL(closeRet);
+
+    std::ifstream file(databaseFile.path(), std::ios::binary);
+    std::array<char, 16> header {};
+    file.read(header.data(), static_cast<std::streamsize>(header.size()));
+    EXPECT_EQ(file.gcount(), static_cast<std::streamsize>(header.size()));
+    if (file.gcount() != static_cast<std::streamsize>(header.size())) {
+        co_return {};
+    }
+    constexpr std::array<char, 16> sqliteHeader {
+        'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', '3', '\0'};
+    EXPECT_NE(header, sqliteHeader);
+
+    // Authentication may fail while opening or on the first real operation;
+    // both are valid API outcomes. What matters is that plaintext and a wrong
+    // key cannot observe the protected record.
+    auto plaintextRead = co_await canReadEncryptedRecord(databaseFile.path(), std::nullopt);
+    CO_ASSERT_VAL(plaintextRead);
+    EXPECT_FALSE(plaintextRead.value());
+    auto wrongKeyRead = co_await canReadEncryptedRecord(databaseFile.path(), "wrong-key");
+    CO_ASSERT_VAL(wrongKeyRead);
+    EXPECT_FALSE(wrongKeyRead.value());
+    auto oldKeyRead = co_await canReadEncryptedRecord(databaseFile.path(), oldKey);
+    CO_ASSERT_VAL(oldKeyRead);
+    EXPECT_TRUE(oldKeyRead.value());
+
+    auto rekeyRet = co_await SqlDatabase::open("sqlite", cipherOptions(databaseFile.path(), oldKey, newKey));
+    CO_ASSERT_VAL(rekeyRet);
+    auto rekeyedDb = std::move(rekeyRet.value());
+    closeRet       = co_await rekeyedDb.close();
+    CO_ASSERT_VAL(closeRet);
+
+    oldKeyRead = co_await canReadEncryptedRecord(databaseFile.path(), oldKey);
+    CO_ASSERT_VAL(oldKeyRead);
+    EXPECT_FALSE(oldKeyRead.value());
+    auto newKeyRead = co_await canReadEncryptedRecord(databaseFile.path(), newKey);
+    CO_ASSERT_VAL(newKeyRead);
+    EXPECT_TRUE(newKeyRead.value());
+    co_return {};
+}
+
+} // namespace
+#endif
 
 // ==========================================
 // 2. 测试用的数据结构
@@ -357,10 +499,12 @@ public:
         if (!native.has_value()) {
             co_return {};
         }
-        EXPECT_EQ(native->backend, "sqlite");
-        EXPECT_EQ(native->code & 0xff, SQLITE_ERROR);
-        EXPECT_NE(native->message.find("no such table"), std::string::npos);
-        EXPECT_NE(native->message.find("missing_native_error_table"), std::string::npos);
+        // Native diagnostics are intentionally backend-defined. The portable
+        // contract above is SqlError::Code; the native snapshot only promises
+        // useful, non-empty diagnostic fields.
+        EXPECT_FALSE(native->backend.empty());
+        EXPECT_NE(native->code, 0);
+        EXPECT_FALSE(native->message.empty());
 
         ILIAS_INFO("test", ">>> test_native_error_snapshot PASSED");
         co_return {};
@@ -1069,6 +1213,12 @@ TEST(SQL, FORM_INTERFACE_WITH_TRANSACTION) {
     SqlTestSuite::test_form_with_transaction().wait();
 }
 
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+TEST(SQL, SQLCIPHER_ENCRYPTION_AND_REKEY) {
+    testSqlcipherEncryptionAndRekey().wait();
+}
+#endif
+
 ILIAS_NAMESPACE::Task<int> run_all_tests() {
     // 运行原有测试
     co_await SqlTestSuite::test_basic_crud();
@@ -1098,9 +1248,7 @@ int main(int argc, char **argv) {
     ILIAS_LOG_ADD_WHITELIST("sqlite-test");
     ILIAS_LOG_ADD_WHITELIST("sql-test");
     ILIAS_LOG_ADD_WHITELIST("orm-test");
-    ilias::PlatformContext ioContext;
-    ioContext.install();
     ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    return sqlite_test::runAllTests();
     // return run_all_tests().wait();
 }

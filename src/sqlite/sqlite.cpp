@@ -1,11 +1,53 @@
 #include "ilias/sqlite/sqlite.hpp"
 
+#include <mutex>
+
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+#include <openssl/crypto.h>
+#endif
+
 #include "ilias/sql/sqlerror.hpp"
 #include "ilias/sqlite/sqliteopt.hpp"
 #include "ilias/sql/sql_plugin.hpp"
 #include "ilias/sqlite/sqlite_parsers.hpp"
 
 ILIAS_SQLITE_NS_BEGIN
+
+namespace {
+
+class SqliteRuntimeState {
+public:
+    ~SqliteRuntimeState() { (void)shutdown(); }
+
+    auto shutdown() noexcept -> int {
+        std::call_once(mShutdownFlag, [this] { mShutdownResult = sqlite3_shutdown(); });
+        return mShutdownResult;
+    }
+
+private:
+    std::once_flag mShutdownFlag;
+    int            mShutdownResult = SQLITE_OK;
+};
+
+auto sqliteRuntimeState() -> SqliteRuntimeState & {
+    static SqliteRuntimeState state;
+    return state;
+}
+
+class SqlcipherThreadCleanup {
+public:
+    ~SqlcipherThreadCleanup() {
+#if defined(ENABLE_SQLCIPHER_PLUGINS)
+        OPENSSL_thread_stop();
+#endif
+    }
+};
+
+} // namespace
+
+auto shutdownRuntime() noexcept -> int {
+    return sqliteRuntimeState().shutdown();
+}
 
 static auto makeSqliteNativeError(sqlite3 *db, int code, const char *message = nullptr) -> NativeSqlError {
     NativeSqlError error;
@@ -90,7 +132,10 @@ auto SqliteStmtResultSet::next() -> IoTask<bool> {
         co_return Err(SqlError::Code::NotConnected);
     }
     ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing next/step", (void *)mSqlite.get());
-    auto ret = co_await blocking([this]() -> int { return sqlite3_step(mSqliteStmt.get()); });
+    auto ret = co_await blocking([this]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
+        return sqlite3_step(mSqliteStmt.get());
+    });
     if (ret == SQLITE_DONE) {
         co_return false;
     }
@@ -249,6 +294,7 @@ auto SqliteStatement::prepare(std::string_view sql) -> IoTask<void> {
         co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = co_await blocking([this, sql = sql]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         sqlite3_stmt *stmt;
         auto          ret = sqlite3_prepare_v2(mSqlite.get(), sql.data(), static_cast<int>(sql.size()), &stmt, nullptr);
         ILIAS_TRACE("ilias-sqlite", "sqlite({}) Executing prepare: {}", (void *)mSqlite.get(), sql);
@@ -281,6 +327,7 @@ auto SqliteStatement::close() -> IoTask<void> {
         co_return Err(SqlError::Code::NotConnected);
     }
     auto ret    = co_await blocking([this]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         sqlite3_reset(mSqliteStmt.get());
         sqlite3_clear_bindings(mSqliteStmt.get());
         mSqliteStmt.reset();
@@ -333,6 +380,7 @@ auto Sqlite::connect() -> IoTask<void> {
         co_return Err(SqlError::Code::AlreadyConnected);
     }
     auto ret = co_await blocking([this]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         auto filename = mOptions.filename;
         if (filename.empty()) {
             filename = ":memory:";
@@ -356,6 +404,9 @@ auto Sqlite::connect() -> IoTask<void> {
             }
             return ret;
         }
+        // Register a process/DLL lifetime guard only after SQLite has
+        // initialized, so it is destroyed before SQLite/SQLCipher dependencies.
+        (void)sqliteRuntimeState();
 #if defined(ENABLE_SQLCIPHER_PLUGINS)
         if (auto it = mOptions.extra.find("key"); it != mOptions.extra.end()) {
             auto cipher = it->second;
@@ -414,6 +465,7 @@ auto Sqlite::disconnect() -> IoTask<void> {
         co_return Err(SqlError::Code::NotConnected);
     }
     auto ret = co_await blocking([this]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         mSqlite.reset();
         return SQLITE_OK;
     });
@@ -484,6 +536,7 @@ auto Sqlite::beginTransaction() -> IoTask<bool> {
     }
     char *err = nullptr;
     auto  ret = co_await blocking([this, &err]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         auto ret = sqlite3_exec(mSqlite.get(), "BEGIN", nullptr, nullptr, &err);
         ILIAS_TRACE("ilias-sqlite", "sqlite({}) begin transaction ret={}", (void *)mSqlite.get(), ret);
         return ret;
@@ -502,6 +555,7 @@ auto Sqlite::commit() -> IoTask<bool> {
     }
     char *err = nullptr;
     auto  ret = co_await blocking([this, &err]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         ILIAS_TRACE("ilias-sqlite", "commit transaction");
         return sqlite3_exec(mSqlite.get(), "COMMIT", nullptr, nullptr, &err);
     });
@@ -519,6 +573,7 @@ auto Sqlite::rollback() -> IoTask<bool> {
     }
     char *err = nullptr;
     auto  ret = co_await blocking([this, &err]() -> int {
+        [[maybe_unused]] SqlcipherThreadCleanup cleanup;
         auto ret = sqlite3_exec(mSqlite.get(), "ROLLBACK", nullptr, nullptr, &err);
         ILIAS_TRACE("ilias-sqlite", "sqlite({}) rollback transaction ret={}", (void *)mSqlite.get(), ret);
         return ret;

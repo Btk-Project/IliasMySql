@@ -9,7 +9,7 @@
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
 [![Build System](https://img.shields.io/badge/build-xmake-green)](https://xmake.io)
 [![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey)](https://github.com/Btk-Project/IliasMySql)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Btk-Project/IliasMySql)
+[![Version](https://img.shields.io/badge/version-0.0.1-blue)](https://github.com/Btk-Project/IliasMySql)
 
 **IliasSql** 是一个基于 c++23 协程的现代异步 SQL 客户端库，作为 `Ilias` 框架的数据访问层。它采用统一的抽象接口设计，支持多种数据库后端（SQLite、MySQL/MariaDB、PostgreSQL），提供类型安全的参数绑定、零拷贝的结果集处理，以及基于反射的对象关系映射。
 

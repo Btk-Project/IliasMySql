@@ -5,6 +5,7 @@
 #include <vector>
 #include <chrono>
 #include "ilias/sql_orm/orm_form.hpp"
+#include "sqlite_test_runtime.hpp"
 #include "ilias/sql/sqldatabase.hpp"
 #include "ilias/sql/sqlresult.hpp"
 #include "../backtrace.hpp"
@@ -1679,10 +1680,6 @@ int main(int argc, char **argv) {
     ILIAS_LOG_ADD_WHITELIST("ilias-sql");
     ILIAS_LOG_ADD_WHITELIST("sqlite-test");
     ILIAS_LOG_ADD_WHITELIST("orm-test");
-    // 初始化平台上下文
-    ilias::PlatformContext ioContext;
-    ioContext.install();
-
     // 初始化Google Test
     ::testing::InitGoogleTest(&argc, argv);
 
@@ -1694,7 +1691,7 @@ int main(int argc, char **argv) {
     ILIAS_INFO("orm-test", "========================================");
 
     // 运行所有测试
-    int result = RUN_ALL_TESTS();
+    int result = sqlite_test::runAllTests();
 
     // 输出测试结果摘要
     if (result == 0) {

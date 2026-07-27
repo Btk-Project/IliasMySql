@@ -61,6 +61,7 @@ option("enable_sqlite")
         if option:value() == "sqlcipher" then
             option:set("configvar", "ENABLE_SQLITE_PLUGINS", true)
             option:set("configvar", "ENABLE_SQLCIPHER_PLUGINS", true)
+            option:add("defines", "SQLITE_HAS_CODEC")
         end
     end)
 option_end()

@@ -69,7 +69,7 @@ jobs:
         psql -h 127.0.0.1 -p 5432 -U test -d testdb -v ON_ERROR_STOP=1 -f tests/postgres/init.sql
 
     - name: Configure XMake
-      run: xmake f -m asan -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --enable_postgres=y -vy
+      run: xmake f -m asan -k shared --enable_test=y --enable_sqlite=sqlite --enable_mysql=y --3rd_custom=y --enable_postgres=y -vy
 
     - name: Build
       run: xmake -y

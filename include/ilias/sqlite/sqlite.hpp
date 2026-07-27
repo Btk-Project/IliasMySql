@@ -30,6 +30,22 @@ ILIAS_SQLITE_NS_BEGIN
 ILIAS_SQL_USE_NAMESPACE
 
 /**
+ * @brief Finalize process-wide SQLite backend state.
+ *
+ * The backend invokes this automatically during process/DLL teardown. An
+ * application normally does not need to call it. Tests and embedding hosts may
+ * call it for deterministic teardown after every SQLite connection, statement,
+ * and result has been destroyed. This is a terminal operation: the underlying
+ * sqlite3_shutdown() call is performed at most once, its result is cached, and
+ * no new SQLite connections may be opened afterwards.
+ *
+ * @return The cached SQLite result code (SQLITE_OK on success).
+ * @note This does not call OPENSSL_cleanup(), because OpenSSL may be shared by
+ * other components in the host process.
+ */
+ILIAS_SQL_API auto shutdownRuntime() noexcept -> int;
+
+/**
  * @brief SQLite prepared statement implementation
  *
  * Provides async prepared statement operations for SQLite,
