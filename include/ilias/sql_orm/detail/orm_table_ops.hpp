@@ -531,15 +531,13 @@ public:
     auto sql() const {
         using Member = std::remove_cvref_t<decltype(std::declval<T &>().*MemberPtr)>;
         constexpr auto index = detail::reflectedMemberPointerIndex<T, MemberPtr>();
-        if constexpr (index < 0) {
-            static_assert(index >= 0,
+        if constexpr (detail::reflectedMemberPointerIndex<T, MemberPtr>() < 0) {
+            static_assert(detail::reflectedMemberPointerIndex<T, MemberPtr>() >= 0,
                           "Member pointer does not map to ORM reflection metadata. "
                           "Use sql(&T::field) for the runtime-checked path.");
         }
         else {
-            constexpr auto names = detail::reflectedFieldNames<T>();
-            constexpr auto nameView = names[static_cast<std::size_t>(index)];
-            std::string    name(nameView);
+            std::string    name(detail::reflectedFieldNames<T>()[static_cast<std::size_t>(index)]);
             return detail::TypedColumn<std::decay_t<Member>>(Dialect<BackendTag>::quote_identifier(name), name);
         }
     }
