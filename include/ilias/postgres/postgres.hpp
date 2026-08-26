@@ -17,7 +17,6 @@
 
 #include <ilias/io/context.hpp>
 #include <ilias/io/fd_utils.hpp>
-#include <ilias/io/method.hpp>
 #include <ilias/io/system_error.hpp>
 #include <ilias/net/poller.hpp>
 #include <ilias/net/sockfd.hpp>

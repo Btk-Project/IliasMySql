@@ -11,11 +11,11 @@
 #define ILIAS_SQL_NAMESPACE sql
 #endif
 
-#define ILIAS_SQL_COMPLETE_NAMESPACE ILIAS_NAMESPACE::ILIAS_SQL_NAMESPACE
+#define ILIAS_SQL_COMPLETE_NAMESPACE ilias::ILIAS_SQL_NAMESPACE
 #define ILIAS_SQL_USE_NAMESPACE using namespace ILIAS_SQL_COMPLETE_NAMESPACE;
 
 #define ILIAS_SQL_NS_BEGIN                                                                                             \
-    namespace ILIAS_NAMESPACE {                                                                                        \
+    namespace ilias {                                                                                                  \
     namespace ILIAS_SQL_NAMESPACE {
 
 #define ILIAS_SQL_NS_END                                                                                               \
@@ -29,7 +29,7 @@
 #elif defined(__GNUC__) && (__GNUC__ >= 4)
 #define ILIAS_SQL_DECL_EXPORT __attribute__((visibility("default")))
 #define ILIAS_SQL_DECL_IMPORT __attribute__((visibility("default")))
-#define ILIAS_SQL_DECL_LOCAL  __attribute__((visibility("hidden")))
+#define ILIAS_SQL_DECL_LOCAL __attribute__((visibility("hidden")))
 #else
 #define ILIAS_SQL_DECL_EXPORT
 #define ILIAS_SQL_DECL_IMPORT

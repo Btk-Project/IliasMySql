@@ -564,7 +564,7 @@ auto MysqlStatement::query() -> IoTask<std::unique_ptr<IResultSet>> {
     auto status = mysql_stmt_execute_start(&ret, mMysqlStmt.get());
     while (status) {
         ILIAS_TRACE("ilias-mysql", "stmt execute waiting for status {}", status);
-        auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
+        auto pret = co_await (mMysql->pollStatus(status) | unstoppable);
         if (!pret) {
             ILIAS_ERROR("ilias-mysql", "stmt execute failed. (error: {})", pret.error().message());
             co_return Err(pret.error());
@@ -604,7 +604,7 @@ auto MysqlStatement::prepare(std::string_view sql) -> IoTask<void> {
     auto status = mysql_stmt_prepare_start(&ret, mMysqlStmt.get(), queryp.data(), (unsigned long)queryp.size());
     while (status) {
         ILIAS_TRACE("ilias-mysql", "stmt prepare waiting for status {}", status);
-        auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
+        auto pret = co_await (mMysql->pollStatus(status) | unstoppable);
         if (!pret) {
             co_return Err(pret.error());
         }
@@ -625,7 +625,7 @@ auto MysqlStatement::close() -> IoTask<void> {
         auto    status = mysql_stmt_close_start(&ret, mMysqlStmt.get());
         while (status) {
             ILIAS_TRACE("ilias-mysql", "stmt close waiting for status {}", status);
-            auto pret = co_await (mMysql->pollStatus(status) | unstoppable());
+            auto pret = co_await (mMysql->pollStatus(status) | unstoppable);
             if (!pret) {
                 co_return Err(pret.error());
             }
@@ -756,7 +756,7 @@ auto MysqlConnection::execute(std::string_view sql) -> IoTask<size_t> {
 auto MysqlConnection::query(std::string_view sql) -> IoTask<std::unique_ptr<IResultSet>> {
     ILIAS_ASSERT(mMysql != nullptr);
     // ILIAS_TRACE("ilias-mysql", "exec query {}", sql);
-    ILIAS_CO_TRYV(co_await (mMysql->query(sql) | unstoppable()));
+    ILIAS_CO_TRYV(co_await (mMysql->query(sql) | unstoppable));
     auto sqlResult = std::make_unique<SqlQueryResult>(mMysql);
     co_return std::make_unique<MysqlResultSet>(std::move(sqlResult));
 }

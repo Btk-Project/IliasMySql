@@ -19,7 +19,7 @@
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 using namespace nekoproto;
 // ==========================================
 // 1. 协程测试辅助宏 (保持不变)
@@ -1221,7 +1221,7 @@ TEST(SQL, SQLCIPHER_ENCRYPTION_AND_REKEY) {
 }
 #endif
 
-ILIAS_NAMESPACE::Task<int> run_all_tests() {
+ilias::Task<int> run_all_tests() {
     // 运行原有测试
     co_await SqlTestSuite::test_basic_crud();
     co_await SqlTestSuite::test_result_capabilities();

@@ -372,7 +372,7 @@ using std::type_index;
 ILIAS_SQL_NS_END
 
 // clang-format off
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlDate) {
+ILIAS_FORMATTER(ILIAS_SQL_COMPLETE_NAMESPACE::SqlDate) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
@@ -382,7 +382,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlDate) {
     }
 };
 
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlob) {
+ILIAS_FORMATTER(ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlob) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
@@ -399,7 +399,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlob) {
     }
 };
 
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlobView) {
+ILIAS_FORMATTER(ILIAS_SQL_COMPLETE_NAMESPACE::SqlBlobView) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
@@ -415,7 +415,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::SqlBlobView) {
         return format_to(ctx.out(), "bytes({}):[{}]", blob.size_bytes(), hex);
     }
 };
-ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::type_index) {
+ILIAS_FORMATTER(ILIAS_SQL_COMPLETE_NAMESPACE::type_index) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
@@ -434,10 +434,7 @@ ILIAS_FORMATTER(ILIAS_SQL_NAMESPACE::type_index) {
 };
 
 #if NEKO_CPP_PLUS < 23
-namespace ilias {
-    using std::span;
-}
-ILIAS_FORMATTER(span<const char>) {
+ILIAS_FORMATTER(std::span<const char>) {
     constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }

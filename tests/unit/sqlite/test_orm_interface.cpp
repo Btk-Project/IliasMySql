@@ -11,7 +11,7 @@
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 
 // ==========================================
 // 1. 测试辅助宏和工具

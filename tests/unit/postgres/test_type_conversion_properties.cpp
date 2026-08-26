@@ -18,7 +18,7 @@
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 
 // Helper macro for coroutine assertions
 #define CO_ASSERT_VAL(ret)                                                                                             \

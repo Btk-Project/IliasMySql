@@ -27,7 +27,7 @@ const int    OPERATIONS_PER_WRITER = 10;  // 每个写协程的转账次数 (原
 const int    OPERATIONS_PER_READER = 20;  // 每个读协程的查询次数 (原: 100)
 
 ILIAS_SQL_USE_NAMESPACE;
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 using namespace std::literals;
 #define CO_EXPECT_RESULT(result)                                                                                       \
     do {                                                                                                               \

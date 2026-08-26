@@ -11,7 +11,7 @@
 #include "../backtrace.hpp"
 
 ILIAS_SQL_USE_NAMESPACE;
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 
 // ==========================================
 // 1. 辅助宏 (与 SQLite 测试保持一致)
@@ -940,7 +940,7 @@ TEST(MySQL, JOIN_FEATURES) {
 // ==========================================
 // 4. 执行入口
 // ==========================================
-ILIAS_NAMESPACE::Task<void> run_all_tests() {
+ilias::Task<void> run_all_tests() {
     try {
         co_await MySqlTestSuite::test_complex_types();
         co_await MySqlTestSuite::test_batch_insert_transaction();

@@ -128,7 +128,7 @@ auto SqlQueryResult::lastNativeError() const -> std::optional<NativeSqlError> {
 }
 
 auto SqlQueryResult::getResult() -> IoTask<void> {
-    ILIAS_CO_TRY(auto ret, co_await (mMysql->storeResult() | unstoppable()));
+    ILIAS_CO_TRY(auto ret, co_await (mMysql->storeResult() | unstoppable));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
         ret, [](MYSQL_RES *res) { mysql_free_result(res); });
     ILIAS_TRACE("ilias-mysql", "Get {} rows", exactRowCount().value_or(0));
@@ -259,7 +259,7 @@ auto SqlQueryResult::storeCurrentResultIfNeeded() -> IoTask<bool> {
         co_return true;
     }
 
-    ILIAS_CO_TRY(auto rawResult, co_await (mMysql->storeResult() | unstoppable()));
+    ILIAS_CO_TRY(auto rawResult, co_await (mMysql->storeResult() | unstoppable));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
         rawResult, [](MYSQL_RES *ptr) { mysql_free_result(ptr); });
     co_return mResult != nullptr;
@@ -267,7 +267,7 @@ auto SqlQueryResult::storeCurrentResultIfNeeded() -> IoTask<bool> {
 
 auto SqlQueryResult::advanceToNextResult() -> IoTask<bool> {
     freeResult();
-    ILIAS_CO_TRY(auto status, co_await (mMysql->nextResult() | unstoppable()));
+    ILIAS_CO_TRY(auto status, co_await (mMysql->nextResult() | unstoppable));
     if (status == 0) {
         co_return true;
     }
@@ -326,7 +326,7 @@ auto SqlStmtResult::lastNativeError() const -> std::optional<NativeSqlError> {
 }
 
 auto SqlStmtResult::getResult() -> IoTask<void> {
-    ILIAS_CO_TRY(auto ret, co_await (storeResult() | unstoppable()));
+    ILIAS_CO_TRY(auto ret, co_await (storeResult() | unstoppable));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
         ret, [](MYSQL_RES *res) { mysql_free_result(res); });
     co_return {};
@@ -424,7 +424,7 @@ auto SqlStmtResult::storeCurrentResultIfNeeded() -> IoTask<bool> {
         co_return true;
     }
 
-    ILIAS_CO_TRY(auto rawResult, co_await (storeResult() | unstoppable()));
+    ILIAS_CO_TRY(auto rawResult, co_await (storeResult() | unstoppable));
     mResult = std::unique_ptr<MYSQL_RES, std::function<void(MYSQL_RES *)>>(
         rawResult, [](MYSQL_RES *res) { mysql_free_result(res); });
     co_return mResult != nullptr;
@@ -432,7 +432,7 @@ auto SqlStmtResult::storeCurrentResultIfNeeded() -> IoTask<bool> {
 
 auto SqlStmtResult::advanceToNextResult() -> IoTask<bool> {
     freeResult();
-    ILIAS_CO_TRY(auto status, co_await (nextResult() | unstoppable()));
+    ILIAS_CO_TRY(auto status, co_await (nextResult() | unstoppable));
     if (status == 0) {
         co_return true;
     }

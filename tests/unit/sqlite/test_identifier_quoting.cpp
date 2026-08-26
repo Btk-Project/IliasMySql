@@ -13,7 +13,7 @@
 #include "sqlite_test_runtime.hpp"
 
 ILIAS_SQL_USE_NAMESPACE
-using namespace ILIAS_NAMESPACE;
+using namespace ilias;
 using namespace nekoproto;
 
 struct KeywordRecord {
