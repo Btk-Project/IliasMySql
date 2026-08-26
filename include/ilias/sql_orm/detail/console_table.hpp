@@ -166,7 +166,7 @@ std::string to_string_view(const T &t) {
     }
     else {
         // 对于其他类型，尝试使用 neko 的序列化或返回占位符
-        return NEKO_NAMESPACE::serializable_to_string(t);
+        return nekoproto::serializableToString(t);
     }
 }
 

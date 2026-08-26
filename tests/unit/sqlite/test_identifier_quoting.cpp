@@ -14,7 +14,7 @@
 
 ILIAS_SQL_USE_NAMESPACE
 using namespace ILIAS_NAMESPACE;
-NEKO_USE_NAMESPACE
+using namespace nekoproto;
 
 struct KeywordRecord {
     int         id         = 0;
@@ -28,32 +28,41 @@ struct MergeRecord {
 };
 
 template <>
-struct NEKO_NAMESPACE::Meta<KeywordRecord> {
+struct nekoproto::Meta<KeywordRecord> {
     static constexpr auto value =
-        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&KeywordRecord::id), "from",
-               make_tags<rename_tag<"from">, SqlTags {.not_null = true}>(&KeywordRecord::from_value));
+        Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&KeywordRecord::id), "from",
+               makeTags<rename_tag<"from">, SqlTags {.not_null = true}>(&KeywordRecord::from_value));
 };
 
 template <>
-struct NEKO_NAMESPACE::Meta<MergeRecord> {
+struct nekoproto::Meta<MergeRecord> {
     static constexpr auto value =
-        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&MergeRecord::id), "details",
-               &MergeRecord::details, "metadata_level",
-               make_tags<SqlTags {.not_null = true}>(&MergeRecord::metadata_level));
+        Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&MergeRecord::id), "details", &MergeRecord::details,
+               "metadata_level", makeTags<SqlTags {.not_null = true}>(&MergeRecord::metadata_level));
 };
 
 struct DuplicateColumnRecord {
     int id    = 0;
     int other = 0;
-
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id), (make_tags<rename_tag<"id">>(other)))
 };
 
 struct RenamedKeywordRecord {
     int         id         = 0;
     std::string from_value = "";
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
-                    (make_tags<rename_tag<"from">, SqlTags {.not_null = true, .index = true}>(from_value)))
+};
+
+template <>
+struct nekoproto::Meta<DuplicateColumnRecord> {
+    static constexpr auto value =
+        Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&DuplicateColumnRecord::id), "from",
+               makeTags<rename_tag<"id">>(&DuplicateColumnRecord::other));
+};
+
+template <>
+struct nekoproto::Meta<RenamedKeywordRecord> {
+    static constexpr auto value = Object(
+        "id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&RenamedKeywordRecord::id), "from_value",
+        makeTags<rename_tag<"from">, SqlTags {.not_null = true, .index = true}>(&RenamedKeywordRecord::from_value));
 };
 
 struct UnsupportedTransientState {
@@ -64,9 +73,14 @@ struct IgnoredFieldRecord {
     int                       id = 0;
     UnsupportedTransientState transient;
     std::string               name;
+};
 
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id),
-                    (make_tags<serialization_ignore_tag>(transient)), (make_tags<rename_tag<"display_name">>(name)))
+template <>
+struct nekoproto::Meta<IgnoredFieldRecord> {
+    static constexpr auto value =
+        Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&IgnoredFieldRecord::id), "transient",
+               makeTags<serialization_ignore_tag>(&IgnoredFieldRecord::transient), "name",
+               makeTags<rename_tag<"display_name">>(&IgnoredFieldRecord::name));
 };
 
 static_assert(ILIAS_SQL_COMPLETE_NAMESPACE::detail::reflectedSqlFieldCount<IgnoredFieldRecord>() == 2);
@@ -80,14 +94,14 @@ struct PartialReflectionRecord {
     std::string name   = "";
 };
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 template <>
 struct Meta<PartialReflectionRecord, void> {
     constexpr static auto value =
-        Object("id", make_tags<SqlTags::createPrimaryKeyTags(false)>(&PartialReflectionRecord::id), "name",
-               make_tags<SqlTags {.not_null = true}>(&PartialReflectionRecord::name));
+        Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&PartialReflectionRecord::id), "name",
+               makeTags<SqlTags {.not_null = true}>(&PartialReflectionRecord::name));
 };
-NEKO_END_NAMESPACE
+} // namespace nekoproto
 
 TEST(SqlIdentifierQuoting, DialectQuotesAndValidatesIdentifiers) {
     EXPECT_TRUE(Dialect<SqliteTag>::validate_identifier("select"));
@@ -214,40 +228,33 @@ static auto test_compatible_form_attachment() -> IoTask<void> {
     }
     auto db = std::move(*dbRet);
 
-    auto created = co_await db.execute(
-        "CREATE TABLE compatible_records("
-        "id INTEGER, \"from\" TEXT, extra BLOB, UNIQUE(\"from\"))");
+    auto created = co_await db.execute("CREATE TABLE compatible_records("
+                                       "id INTEGER, \"from\" TEXT, extra BLOB, UNIQUE(\"from\"))");
     if (!created) {
         ADD_FAILURE() << created.error().message();
         co_return {};
     }
 
-    auto attached = co_await Form<KeywordRecord, SqliteTag>::attach(
-        db, "compatible_records");
+    auto attached = co_await Form<KeywordRecord, SqliteTag>::attach(db, "compatible_records");
     EXPECT_TRUE(attached) << attached.error().message();
 
-    auto opened = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(
-        db, "compatible_records");
+    auto opened = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(db, "compatible_records");
     EXPECT_TRUE(opened) << opened.error().message();
 
-    created = co_await db.execute(
-        "CREATE TABLE incomplete_records(id INTEGER, extra TEXT)");
+    created = co_await db.execute("CREATE TABLE incomplete_records(id INTEGER, extra TEXT)");
     if (!created) {
         ADD_FAILURE() << created.error().message();
         co_return {};
     }
-    auto incomplete = co_await Form<KeywordRecord, SqliteTag>::attach(
-        db, "incomplete_records");
+    auto incomplete = co_await Form<KeywordRecord, SqliteTag>::attach(db, "incomplete_records");
     EXPECT_FALSE(incomplete);
 
-    created = co_await db.execute(
-        "CREATE TABLE incompatible_records(id INTEGER, \"from\" BLOB)");
+    created = co_await db.execute("CREATE TABLE incompatible_records(id INTEGER, \"from\" BLOB)");
     if (!created) {
         ADD_FAILURE() << created.error().message();
         co_return {};
     }
-    auto incompatible = co_await Form<KeywordRecord, SqliteTag>::attach(
-        db, "incompatible_records");
+    auto incompatible = co_await Form<KeywordRecord, SqliteTag>::attach(db, "incompatible_records");
     EXPECT_FALSE(incompatible);
     co_return {};
 }
@@ -539,8 +546,7 @@ static auto test_transaction_bound_builders() -> IoTask<void> {
     }
     auto db = std::move(db_ret.value());
 
-    auto created = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(
-        db, "transaction_records");
+    auto created = co_await Form<KeywordRecord, SqliteTag>::create_if_not_exists(db, "transaction_records");
     if (!created) {
         ADD_FAILURE() << created.error().message();
         co_return {};
@@ -553,45 +559,36 @@ static auto test_transaction_bound_builders() -> IoTask<void> {
     }
     auto tx = std::move(tx_ret.value());
 
-    auto bound =
-        Form<KeywordRecord, SqliteTag>::bind(tx, "transaction_records");
+    auto bound = Form<KeywordRecord, SqliteTag>::bind(tx, "transaction_records");
     if (!bound) {
         ADD_FAILURE() << bound.error().message();
         co_return {};
     }
 
-    auto inserted =
-        co_await bound->insert().set(KeywordRecord {1, "created"}).execute();
+    auto inserted = co_await bound->insert().set(KeywordRecord {1, "created"}).execute();
     if (!inserted) {
         ADD_FAILURE() << inserted.error().message();
         co_return {};
     }
-    auto updated =
-        co_await bound->update()
-            .set(bound->sql(&KeywordRecord::from_value) =
-                     std::string("updated"))
-            .where(bound->sql(&KeywordRecord::id) == 1)
-            .execute();
+    auto updated = co_await bound->update()
+                       .set(bound->sql(&KeywordRecord::from_value) = std::string("updated"))
+                       .where(bound->sql(&KeywordRecord::id) == 1)
+                       .execute();
     if (!updated) {
         ADD_FAILURE() << updated.error().message();
         co_return {};
     }
-    auto upserted =
-        co_await bound->upsert()
-            .values(bound->sql(&KeywordRecord::id) = 1,
-                    bound->sql(&KeywordRecord::from_value) =
-                        std::string("upserted"))
-            .onConflict(bound->sql(&KeywordRecord::id))
-            .updateExcluded(bound->sql(&KeywordRecord::from_value))
-            .execute();
+    auto upserted = co_await bound->upsert()
+                        .values(bound->sql(&KeywordRecord::id)         = 1,
+                                bound->sql(&KeywordRecord::from_value) = std::string("upserted"))
+                        .onConflict(bound->sql(&KeywordRecord::id))
+                        .updateExcluded(bound->sql(&KeywordRecord::from_value))
+                        .execute();
     if (!upserted) {
         ADD_FAILURE() << upserted.error().message();
         co_return {};
     }
-    auto selected =
-        co_await bound->select()
-            .where(bound->sql(&KeywordRecord::id) == 1)
-            .query();
+    auto selected = co_await bound->select().where(bound->sql(&KeywordRecord::id) == 1).query();
     if (!selected) {
         ADD_FAILURE() << selected.error().message();
         co_return {};
@@ -619,24 +616,20 @@ static auto test_upsert_merge_policies() -> IoTask<void> {
     }
     auto db = std::move(db_ret.value());
 
-    auto form_ret =
-        co_await Form<MergeRecord, SqliteTag>::create_if_not_exists(db, "merge_records");
+    auto form_ret = co_await Form<MergeRecord, SqliteTag>::create_if_not_exists(db, "merge_records");
     if (!form_ret) {
         ADD_FAILURE() << form_ret.error().message();
         co_return {};
     }
     auto form = std::move(*form_ret);
 
-    auto initial =
-        co_await form.upsert()
-            .values(form.sql(&MergeRecord::id) = 1,
-                    form.sql(&MergeRecord::details) =
-                        std::optional<std::string> {"full"},
-                    form.sql(&MergeRecord::metadata_level) = 1)
-            .onConflict(form.sql(&MergeRecord::id))
-            .updateExcluded(form.sql(&MergeRecord::details),
-                            form.sql(&MergeRecord::metadata_level))
-            .execute();
+    auto initial = co_await form.upsert()
+                       .values(form.sql(&MergeRecord::id)             = 1,
+                               form.sql(&MergeRecord::details)        = std::optional<std::string> {"full"},
+                               form.sql(&MergeRecord::metadata_level) = 1)
+                       .onConflict(form.sql(&MergeRecord::id))
+                       .updateExcluded(form.sql(&MergeRecord::details), form.sql(&MergeRecord::metadata_level))
+                       .execute();
     if (!initial) {
         ADD_FAILURE() << initial.error().message();
         co_return {};
@@ -644,9 +637,7 @@ static auto test_upsert_merge_policies() -> IoTask<void> {
 
     auto summary =
         co_await form.upsert()
-            .values(form.sql(&MergeRecord::id) = 1,
-                    form.sql(&MergeRecord::details) =
-                        std::optional<std::string> {},
+            .values(form.sql(&MergeRecord::id) = 1, form.sql(&MergeRecord::details) = std::optional<std::string> {},
                     form.sql(&MergeRecord::metadata_level) = 0)
             .onConflict(form.sql(&MergeRecord::id))
             .updateCoalesced(form.sql(&MergeRecord::details))
@@ -657,32 +648,25 @@ static auto test_upsert_merge_policies() -> IoTask<void> {
         co_return {};
     }
 
-    auto mergedUpdate =
-        co_await form.update()
-            .set(form.assignCoalesced(
-                     form.sql(&MergeRecord::details),
-                     std::optional<std::string> {}),
-                 form.assignGreatest(
-                     form.sql(&MergeRecord::metadata_level), 0))
-            .where(form.sql(&MergeRecord::id) == 1)
-            .execute();
+    auto mergedUpdate = co_await form.update()
+                            .set(form.assignCoalesced(form.sql(&MergeRecord::details), std::optional<std::string> {}),
+                                 form.assignGreatest(form.sql(&MergeRecord::metadata_level), 0))
+                            .where(form.sql(&MergeRecord::id) == 1)
+                            .execute();
     if (!mergedUpdate) {
         ADD_FAILURE() << mergedUpdate.error().message();
         co_return {};
     }
 
-    auto partialInsert =
-        co_await form.insert()
-            .set(form.sql(&MergeRecord::id) = 2,
-                 form.sql(&MergeRecord::metadata_level) = 7)
-            .execute();
+    auto partialInsert = co_await form.insert()
+                             .set(form.sql(&MergeRecord::id) = 2, form.sql(&MergeRecord::metadata_level) = 7)
+                             .execute();
     if (!partialInsert) {
         ADD_FAILURE() << partialInsert.error().message();
         co_return {};
     }
 
-    auto selected =
-        co_await form.select().where(form.sql(&MergeRecord::id) == 1).query();
+    auto selected = co_await form.select().where(form.sql(&MergeRecord::id) == 1).query();
     if (!selected) {
         ADD_FAILURE() << selected.error().message();
         co_return {};
@@ -696,8 +680,7 @@ static auto test_upsert_merge_policies() -> IoTask<void> {
         EXPECT_EQ(row->metadata_level, 1);
     }
 
-    auto partial =
-        co_await form.select().where(form.sql(&MergeRecord::id) == 2).query();
+    auto partial = co_await form.select().where(form.sql(&MergeRecord::id) == 2).query();
     if (!partial) {
         ADD_FAILURE() << partial.error().message();
         co_return {};

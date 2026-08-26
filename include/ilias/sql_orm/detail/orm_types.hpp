@@ -252,7 +252,7 @@ enum class SqlIndexOrder {
 
 namespace sql_tag_detail {
 
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 struct sql_default_impl {
     static_assert(Expression.size() > 0, "SQL default expression must not be empty");
     constexpr static auto sql_default_expression = Expression.view();
@@ -263,7 +263,7 @@ struct sql_default_impl {
     }
 };
 
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 struct sql_check_impl {
     static_assert(Expression.size() > 0, "SQL check expression must not be empty");
     constexpr static auto sql_check_expression = Expression.view();
@@ -274,7 +274,7 @@ struct sql_check_impl {
     }
 };
 
-template <NEKO_NAMESPACE::ConstexprString Collation>
+template <nekoproto::ConstexprString Collation>
 struct sql_collate_impl {
     static_assert(Collation.size() > 0, "SQL collation name must not be empty");
     constexpr static auto sql_collation = Collation.view();
@@ -285,7 +285,7 @@ struct sql_collate_impl {
     }
 };
 
-template <NEKO_NAMESPACE::ConstexprString Table, NEKO_NAMESPACE::ConstexprString Column, SqlReferenceAction OnDelete,
+template <nekoproto::ConstexprString Table, nekoproto::ConstexprString Column, SqlReferenceAction OnDelete,
           SqlReferenceAction OnUpdate>
 struct sql_references_impl {
     static_assert(Table.size() > 0, "SQL referenced table must not be empty");
@@ -302,7 +302,7 @@ struct sql_references_impl {
     }
 };
 
-template <NEKO_NAMESPACE::ConstexprString Fragment, NEKO_NAMESPACE::ConstexprString Backend, SqlCustomPosition Position>
+template <nekoproto::ConstexprString Fragment, nekoproto::ConstexprString Backend, SqlCustomPosition Position>
 struct sql_custom_impl {
     static_assert(Fragment.size() > 0, "Custom SQL fragment must not be empty");
 
@@ -344,7 +344,7 @@ struct sql_table_unique_impl {
     }
 };
 
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 struct sql_table_check_impl {
     static_assert(Expression.size() > 0, "Table CHECK expression must not be empty");
     constexpr static auto expression = Expression.view();
@@ -358,7 +358,7 @@ struct sql_index_column_impl {
     constexpr static SqlIndexOrder order  = Order;
 };
 
-template <NEKO_NAMESPACE::ConstexprString Name, bool Unique, auto... Columns>
+template <nekoproto::ConstexprString Name, bool Unique, auto... Columns>
 struct sql_table_index_impl {
     static_assert(Name.size() > 0, "SQL index name must not be empty");
     static_assert(sizeof...(Columns) > 0, "SQL indexes require at least one column");
@@ -381,15 +381,15 @@ struct sql_table_index_impl {
  * The expression is emitted verbatim after DEFAULT. String literals therefore
  * need SQL quoting, for example sql_default<"'pending'">.
  */
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 inline constexpr auto sql_default = sql_tag_detail::sql_default_impl<Expression> {};
 
 /** @brief Add a column CHECK constraint. The generator supplies CHECK (...). */
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 inline constexpr auto sql_check = sql_tag_detail::sql_check_impl<Expression> {};
 
 /** @brief Set the column collation using a validated SQL identifier path. */
-template <NEKO_NAMESPACE::ConstexprString Collation>
+template <nekoproto::ConstexprString Collation>
 inline constexpr auto sql_collate = sql_tag_detail::sql_collate_impl<Collation> {};
 
 /**
@@ -398,7 +398,7 @@ inline constexpr auto sql_collate = sql_tag_detail::sql_collate_impl<Collation> 
  * It is emitted as a table constraint so MySQL enforces it as well. Composite
  * foreign keys still belong to explicit table-level schema metadata.
  */
-template <NEKO_NAMESPACE::ConstexprString Table, NEKO_NAMESPACE::ConstexprString Column,
+template <nekoproto::ConstexprString Table, nekoproto::ConstexprString Column,
           SqlReferenceAction OnDelete = SqlReferenceAction::NoAction,
           SqlReferenceAction OnUpdate = SqlReferenceAction::NoAction>
 inline constexpr auto sql_references = sql_tag_detail::sql_references_impl<Table, Column, OnDelete, OnUpdate> {};
@@ -410,7 +410,7 @@ inline constexpr auto sql_references = sql_tag_detail::sql_references_impl<Table
  * sqlite, mysql/mariadb and postgres/postgresql/pg. Matching fragments remain
  * repeatable and are emitted in declaration order.
  */
-template <NEKO_NAMESPACE::ConstexprString Fragment, NEKO_NAMESPACE::ConstexprString Backend = "",
+template <nekoproto::ConstexprString Fragment, nekoproto::ConstexprString Backend = "",
           SqlCustomPosition Position = SqlCustomPosition::Tail>
 inline constexpr auto sql_custom = sql_tag_detail::sql_custom_impl<Fragment, Backend, Position> {};
 
@@ -427,7 +427,7 @@ template <auto... Members>
 inline constexpr auto sql_unique = sql_tag_detail::sql_table_unique_impl<Members...> {};
 
 /** @brief Add a trusted table-level CHECK expression to SqlTableMeta<T>::value. */
-template <NEKO_NAMESPACE::ConstexprString Expression>
+template <nekoproto::ConstexprString Expression>
 inline constexpr auto sql_table_check = sql_tag_detail::sql_table_check_impl<Expression> {};
 
 /** @brief Describe an ascending or descending column in a table-level index. */
@@ -438,10 +438,10 @@ template <auto Member>
 inline constexpr auto sql_desc = sql_tag_detail::sql_index_column_impl<Member, SqlIndexOrder::Desc> {};
 
 /** @brief Add a named, possibly composite index to SqlTableMeta<T>::value. */
-template <NEKO_NAMESPACE::ConstexprString Name, auto... Columns>
+template <nekoproto::ConstexprString Name, auto... Columns>
 inline constexpr auto sql_index = sql_tag_detail::sql_table_index_impl<Name, false, Columns...> {};
 
-template <NEKO_NAMESPACE::ConstexprString Name, auto... Columns>
+template <nekoproto::ConstexprString Name, auto... Columns>
 inline constexpr auto sql_unique_index = sql_tag_detail::sql_table_index_impl<Name, true, Columns...> {};
 
 /**
@@ -573,8 +573,8 @@ template <typename Tags>
 constexpr auto extractSqlTags(const Tags &tags) -> SqlTags {
     SqlTags ret;
 #define ILIAS_SQL_EXTRACT_TAG_PROPERTY(Property, Member)                                                               \
-    if constexpr (NEKO_NAMESPACE::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
-        ret.Member = NEKO_NAMESPACE::tag_query::get<tag_properties::Property>(tags);                                   \
+    if constexpr (nekoproto::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
+        ret.Member = nekoproto::tag_query::get<tag_properties::Property>(tags);                                   \
     }
     ILIAS_SQL_EXTRACT_TAG_PROPERTY(primary_key, primary_key)
     ILIAS_SQL_EXTRACT_TAG_PROPERTY(not_null, not_null)
@@ -591,7 +591,7 @@ constexpr auto extractSqlTags(const Tags &tags) -> SqlTags {
 
 template <typename Tags, typename Visitor>
 constexpr void forEachSqlTag(const Tags &tags, Visitor &&visitor) {
-    if constexpr (NEKO_NAMESPACE::is_tag_list_v<std::remove_cvref_t<Tags>>) {
+    if constexpr (nekoproto::is_tag_list_v<std::remove_cvref_t<Tags>>) {
         std::apply([&visitor](const auto &...tag) { (visitor(tag), ...); }, tags.tuple());
     }
     else {
@@ -603,8 +603,8 @@ template <typename Tags>
 constexpr auto extractSqlColumnMetadata(const Tags &tags) -> SqlColumnMetadata {
     SqlColumnMetadata ret {.tags = extractSqlTags(tags)};
 #define ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(Property, Member)                                                            \
-    if constexpr (NEKO_NAMESPACE::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
-        ret.Member = NEKO_NAMESPACE::tag_query::get<tag_properties::Property>(tags);                                   \
+    if constexpr (nekoproto::tag_query::has<tag_properties::Property>(Tags {})) {                                 \
+        ret.Member = nekoproto::tag_query::get<tag_properties::Property>(tags);                                   \
     }
     ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_default_expression, default_expression)
     ILIAS_SQL_EXTRACT_COLUMN_PROPERTY(sql_check_expression, check_expression)

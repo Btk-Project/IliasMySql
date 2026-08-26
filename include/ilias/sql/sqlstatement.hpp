@@ -59,14 +59,14 @@ public:
      * 可在执行完成且不再复用这些参数后调用 clearKeepAlives() 释放保存的副本。
      */
     template <typename U>
-        requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
+        requires nekoproto::detail::has_names_meta<std::decay_t<U>>
     auto bind(U &&arg) -> IoResult<void>;
     /**
      * @brief 绑定位置参数，wrapper 会按值保存参数副本以保证绑定生命周期。
      */
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... &&
-                                          !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
+        requires(sizeof...(Args) > 1) || (!nekoproto::detail::has_names_meta<Args> && ... &&
+                                          !nekoproto::detail::is_std_tuple_v<Args...>)
     auto bind(Args &&...args) -> IoResult<void>;
     template <typename U = void>
     auto query() -> IoTask<SqlResult<U>>;
@@ -131,13 +131,13 @@ public:
 };
 
 template <typename U>
-    requires NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<U>>
+    requires nekoproto::detail::has_names_meta<std::decay_t<U>>
 auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     IoResult<void> ret = {};
     using KeepAliveT   = std::tuple<StorageType_t<U>>;
     auto keepAlive     = new KeepAliveT(std::forward<U>(arg));
     // clang-format off
-    NEKO_NAMESPACE::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
+    nekoproto::Reflect<std::decay_t<U>>::forEach(std::get<0>(*keepAlive), 
         [&ret, this](auto &field, std::string_view name, const auto &tags) {
             // ILIAS_INFO("ilias-sql", "Binding field {} with {}", name, field);
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
@@ -155,7 +155,7 @@ auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
 
 template <typename... Args>
     requires(sizeof...(Args) > 1) ||
-            (!NEKO_NAMESPACE::detail::has_names_meta<Args> && ... && !NEKO_NAMESPACE::detail::is_std_tuple_v<Args...>)
+            (!nekoproto::detail::has_names_meta<Args> && ... && !nekoproto::detail::is_std_tuple_v<Args...>)
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
     using KeepAliveTuple     = std::tuple<StorageType_t<Args>...>;
     auto           keepAlive = new KeepAliveTuple(std::forward<Args>(args)...);
@@ -200,7 +200,7 @@ inline auto SqlStatement<void>::lastNativeError() const -> std::optional<NativeS
 
 template <typename T>
 auto SqlStatement<T>::bind(T &&arg) -> IoResult<void> {
-    if constexpr (NEKO_NAMESPACE::detail::is_std_tuple_v<std::decay_t<T>>) {
+    if constexpr (nekoproto::detail::is_std_tuple_v<std::decay_t<T>>) {
         return std::apply(
             [this](auto &&...args) { return SqlStatement<void>::bind(std::forward<decltype(args)>(args)...); }, arg);
     }

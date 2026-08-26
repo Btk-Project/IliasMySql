@@ -27,14 +27,14 @@ ILIAS_SQL_NS_BEGIN
  * @brief Forward declaration of Form template
  */
 template <typename T, typename Tag, typename DatabaseT = void>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 class Form;
 
 /**
  * @brief Forward declaration of TableAlias template
  */
 template <typename T, typename Tag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 class TableAlias;
 
 /**
@@ -48,7 +48,7 @@ class TableAlias;
  * @tparam DatabaseT The database type (void for static operations)
  */
 template <typename T, typename BackendTag>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 class Form<T, BackendTag, void> final {
 public:
     using BackendDialect = Dialect<BackendTag>;
@@ -225,7 +225,7 @@ private:
         // types. Nullability, keys, uniqueness, defaults, checks, indexes and
         // additional columns belong to the physical database schema and need
         // not mirror the C++ declaration.
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name_sv, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 std::string name(detail::reflectedFieldName(name_sv, tags));
                 const auto  sqlTags = detail::extractSqlTags(tags);
@@ -255,7 +255,7 @@ private:
 
         T                     obj;
         std::set<std::string> column_names;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 const auto columnName = detail::reflectedFieldName(name, tags);
                 if (!BackendDialect::validate_identifier(columnName)) {
@@ -272,7 +272,7 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT> // 默认可以是 SQLite
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 class Form final : public detail::TableOperations<Form<T, BackendTag, DatabaseT>, T, BackendTag> {
     friend class detail::TableOperations<Form<T, BackendTag, DatabaseT>, T, BackendTag>;
     friend class Form<T, BackendTag, void>;
@@ -337,12 +337,12 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = []() {
     T                        obj;
     std::vector<std::string> names;
-    names.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+    names.reserve(nekoproto::Reflect<T>::value_count);
+    nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
         if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
             names.emplace_back(detail::reflectedFieldName(name, tags));
         }
@@ -351,7 +351,7 @@ std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = [](
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mQuotedTableHeaderNames = []() {
     std::vector<std::string> quoted;
     quoted.reserve(mTableHeaderNames.size());
@@ -362,12 +362,12 @@ std::vector<std::string> Form<T, BackendTag, DatabaseT>::mQuotedTableHeaderNames
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
     std::vector<SqlTags> tags_array;
-    tags_array.reserve(NEKO_NAMESPACE::Reflect<T>::value_count);
+    tags_array.reserve(nekoproto::Reflect<T>::value_count);
     T obj;
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view /*name*/, const auto &tags) {
+    nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view /*name*/, const auto &tags) {
         if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
             tags_array.emplace_back(detail::extractSqlTags(tags));
         }
@@ -376,14 +376,14 @@ std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex = []() {
     T                             obj;
     std::map<std::ptrdiff_t, int> indexMap;
     int                           index    = 0;
     const auto                    objBegin = reinterpret_cast<std::uintptr_t>(std::addressof(obj));
     const auto                    objEnd   = objBegin + sizeof(T);
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/, const auto &tags) {
+    nekoproto::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/, const auto &tags) {
         if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
             const auto fieldAddr = reinterpret_cast<std::uintptr_t>(std::addressof(field));
             if (fieldAddr >= objBegin && fieldAddr < objEnd) {
@@ -396,11 +396,11 @@ std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex 
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
     T           obj;
     std::string ret;
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+    nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
         if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
             auto sqlTags = detail::extractSqlTags(tags);
             if (sqlTags.primary_key) {
@@ -412,7 +412,7 @@ std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 class TableAlias final : public detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag> {
     friend class detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag>;
 
@@ -457,7 +457,7 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(NEKO_NAMESPACE::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
 auto Form<T, BackendTag, DatabaseT>::as(const std::string &alias) {
     TableAlias<T, BackendTag, DatabaseT> wrapper(alias, *this);
     return wrapper;

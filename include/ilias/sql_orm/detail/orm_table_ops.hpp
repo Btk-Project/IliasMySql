@@ -35,7 +35,7 @@ public:
     auto columnDefinitionSchema(std::string name) const -> std::string {
         std::string result;
         T           obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view fname, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view fname, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 const auto columnName = detail::reflectedFieldName(fname, tags);
                 if (name == columnName) {
@@ -80,7 +80,7 @@ public:
         std::vector<std::string> errors;
 
         T obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view name, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 using rawType    = detail::strip_wrapper_t<decltype(field)>;
                 auto metadata    = detail::extractSqlColumnMetadata(tags);
@@ -97,7 +97,7 @@ public:
     static decltype(auto) getTimestampFields() {
         std::vector<std::string_view> timestampFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 auto sqlTags = detail::extractSqlTags(tags);
                 if (sqlTags.hasTimestampBehavior()) {
@@ -111,7 +111,7 @@ public:
     static decltype(auto) getCreatedAtFields() {
         std::vector<std::string_view> createdAtFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 auto sqlTags = detail::extractSqlTags(tags);
                 if (sqlTags.created_at) {
@@ -125,7 +125,7 @@ public:
     static decltype(auto) getUpdatedAtFields() {
         std::vector<std::string_view> updatedAtFields;
         T                             obj;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](const auto & /*field*/, std::string_view name, const auto &tags) {
             if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                 auto sqlTags = detail::extractSqlTags(tags);
                 if (sqlTags.updated_at) {
@@ -185,7 +185,7 @@ public:
         const auto              &first_item = *std::ranges::begin(items);
         std::vector<std::string> columnsToInsert;
         std::vector<std::string> quotedColumnsToInsert;
-        NEKO_NAMESPACE::Reflect<T>::forEach(
+        nekoproto::Reflect<T>::forEach(
             first_item, [&](const auto &field, std::string_view name, const auto &tags) {
                 if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                     const auto sqlTags    = detail::extractSqlTags(tags);
@@ -218,7 +218,7 @@ public:
         for (const auto &item : items) {
             if constexpr (Dialect<BackendTag>::support_timestamp_default()) {
                 // if sql dialect support default timestamp, then we don't need to generate timestamp by ourselves
-                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
+                nekoproto::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
                     if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                         using FieldType    = std::decay_t<decltype(field)>;
                         const auto sqlTags = detail::extractSqlTags(tags);
@@ -231,7 +231,7 @@ public:
             }
             else {
                 // if sql dialect doesn't support default timestamp, then we need to generate timestamp by ourselves
-                NEKO_NAMESPACE::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
+                nekoproto::Reflect<T>::forEach(item, [&](const auto &field, const auto &tags) {
                     if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                         using FieldType    = std::decay_t<decltype(field)>;
                         const auto sqlTags = detail::extractSqlTags(tags);
@@ -273,7 +273,7 @@ public:
                 derived().db(), derived().tableRef(), columnNames,
                 std::move(columnRefs));
             T obj;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
+            nekoproto::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
                 if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                     const auto sqlTags    = detail::extractSqlTags(tags);
                     const auto columnName = detail::reflectedFieldName(name, tags);
@@ -298,7 +298,7 @@ public:
         else {
             auto updateBuilder = detail::UpdateBuilder(derived().db(), derived().tableRef());
             T    obj;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
+            nekoproto::Reflect<T>::forEach(obj, [&](auto &field, std::string_view name, const auto &tags) {
                 if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                     const auto sqlTags    = detail::extractSqlTags(tags);
                     const auto columnName = detail::reflectedFieldName(name, tags);
@@ -442,7 +442,7 @@ public:
         auto target = std::addressof(obj.*memberPtr);
         int  index  = 0;
         int  result = -1;
-        NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](auto &field, std::string_view /*name*/, const auto &tags) {
+        nekoproto::Reflect<T>::forEach(obj, [&](auto &field, std::string_view /*name*/, const auto &tags) {
             if (result != -1) {
                 return;
             }
@@ -530,14 +530,14 @@ public:
         requires std::is_member_object_pointer_v<decltype(MemberPtr)>
     auto sql() const {
         using Member = std::remove_cvref_t<decltype(std::declval<T &>().*MemberPtr)>;
-        constexpr auto index = detail::reflectedMemberPointerIndex<T, MemberPtr>();
-        if constexpr (detail::reflectedMemberPointerIndex<T, MemberPtr>() < 0) {
-            static_assert(detail::reflectedMemberPointerIndex<T, MemberPtr>() >= 0,
+        static constexpr auto index = detail::reflectedMemberPointerIndex<T, MemberPtr>();
+        if constexpr (index < 0) {
+            static_assert(index >= 0,
                           "Member pointer does not map to ORM reflection metadata. "
                           "Use sql(&T::field) for the runtime-checked path.");
         }
         else {
-            std::string    name(detail::reflectedFieldNames<T>()[static_cast<std::size_t>(index)]);
+            std::string name(detail::reflectedFieldNames<T>()[static_cast<std::size_t>(index)]);
             return detail::TypedColumn<std::decay_t<Member>>(Dialect<BackendTag>::quote_identifier(name), name);
         }
     }
@@ -561,7 +561,7 @@ public:
             }
             auto obj = std::move(row.value());
             std::vector<std::string> rowStrings;
-            NEKO_NAMESPACE::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/,
+            nekoproto::Reflect<T>::forEach(obj, [&](const auto &field, std::string_view /*name*/,
                                                          const auto &tags) {
                 if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                     using FieldType = std::decay_t<decltype(field)>;

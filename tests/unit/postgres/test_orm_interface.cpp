@@ -107,42 +107,42 @@ struct ExtendedUser {
 };
 
 // 反射元数据定义
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 // clang-format off
 template <>
 struct Meta<ExtendedUser, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags::createPrimaryKeyTags()>(&ExtendedUser::id), 
-        "name",         make_tags<SqlTags {.not_null = true}>(&ExtendedUser::name), 
-        "age",          make_tags<SqlTags {}>(&ExtendedUser::age), 
-        "email",        make_tags<SqlTags {.unique = true, .index = true}>(&ExtendedUser::email), 
-        "salary",       make_tags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
-        "department",   make_tags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
-        "created_at",   make_tags<SqlTags {.not_null = true, .created_at = true}>(&ExtendedUser::created_at));
+        "id",           makeTags<SqlTags::createPrimaryKeyTags()>(&ExtendedUser::id), 
+        "name",         makeTags<SqlTags {.not_null = true}>(&ExtendedUser::name), 
+        "age",          makeTags<SqlTags {}>(&ExtendedUser::age), 
+        "email",        makeTags<SqlTags {.unique = true, .index = true}>(&ExtendedUser::email), 
+        "salary",       makeTags<SqlTags {.not_null = true}>(&ExtendedUser::salary), 
+        "department",   makeTags<SqlTags {.not_null = true}>(&ExtendedUser::department), 
+        "created_at",   makeTags<SqlTags {.not_null = true, .created_at = true}>(&ExtendedUser::created_at));
 };
 template <>
 struct Meta<SimpleUser, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags::createPrimaryKeyTags()>(&SimpleUser::id), 
-        "name",         make_tags<SqlTags {.not_null = true}>(&SimpleUser::name),
-        "age",          make_tags<SqlTags {}>(&SimpleUser::age),
-        "email",        make_tags<SqlTags {.not_null = false, .unique = true}>(&SimpleUser::email), 
-        "created_at",   make_tags<SqlTags {.not_null = true}>(&SimpleUser::created_at),
-        "is_active",    make_tags<SqlTags {.not_null = true}>(&SimpleUser::is_active),
-        "balance",      make_tags<SqlTags {.not_null = true}>(&SimpleUser::balance));
+        "id",           makeTags<SqlTags::createPrimaryKeyTags()>(&SimpleUser::id), 
+        "name",         makeTags<SqlTags {.not_null = true}>(&SimpleUser::name),
+        "age",          makeTags<SqlTags {}>(&SimpleUser::age),
+        "email",        makeTags<SqlTags {.not_null = false, .unique = true}>(&SimpleUser::email), 
+        "created_at",   makeTags<SqlTags {.not_null = true}>(&SimpleUser::created_at),
+        "is_active",    makeTags<SqlTags {.not_null = true}>(&SimpleUser::is_active),
+        "balance",      makeTags<SqlTags {.not_null = true}>(&SimpleUser::balance));
 };
 
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-        "id",           make_tags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
-        "user_id",      make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id),
-        "amount",       make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
-        "status",       make_tags<SqlTags {.not_null = true}>(&SimpleOrder::status),
-        "order_date",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::order_date));
+        "id",           makeTags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
+        "user_id",      makeTags<SqlTags {.not_null = true}>(&SimpleOrder::user_id),
+        "amount",       makeTags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
+        "status",       makeTags<SqlTags {.not_null = true}>(&SimpleOrder::status),
+        "order_date",   makeTags<SqlTags {.not_null = true}>(&SimpleOrder::order_date));
 };
 // clang-format on
-NEKO_END_NAMESPACE
+}
 
 // ==========================================
 // 3. ORM 接口测试套件

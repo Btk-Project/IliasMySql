@@ -452,7 +452,7 @@ ILIAS_FORMATTER(span<const char>) {
 ILIAS_SQL_NS_BEGIN
 template <typename T>
 auto SqlCellView::as() const -> IoResult<T> {
-    constexpr bool is_optional = NEKO_NAMESPACE::detail::is_optional<T>::value;
+    constexpr bool is_optional = nekoproto::detail::IsOptional<T>::value;
     constexpr bool is_pointer  = std::is_pointer_v<T>;
     constexpr bool is_nullable = is_optional || is_pointer || std::is_same_v<T, SqlDate>;
     auto           type_index  = std::type_index(typeid(std::remove_cvref_t<T>));

@@ -81,7 +81,7 @@ public:
         try {
             TableSchema schema;
             EntityType  obj;
-            NEKO_NAMESPACE::Reflect<EntityType>::forEach(
+            nekoproto::Reflect<EntityType>::forEach(
                 obj, [&](const auto &field, std::string_view name, const auto &tags) {
                     if constexpr (!detail::reflectedFieldTypeIgnored<decltype(tags)>()) {
                         const auto columnName = detail::reflectedFieldName(name, tags);

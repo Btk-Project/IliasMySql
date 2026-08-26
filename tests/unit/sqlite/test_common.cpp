@@ -20,7 +20,7 @@
 
 ILIAS_SQL_USE_NAMESPACE;
 using namespace ILIAS_NAMESPACE;
-NEKO_USE_NAMESPACE
+using namespace nekoproto;
 // ==========================================
 // 1. 协程测试辅助宏 (保持不变)
 // ==========================================
@@ -59,7 +59,7 @@ public:
         static std::atomic_uint64_t sequence {0};
         const auto unique = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" +
                             std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
-        mPath = std::filesystem::temp_directory_path() / ("ilias_sqlcipher_" + unique + ".db");
+        mPath             = std::filesystem::temp_directory_path() / ("ilias_sqlcipher_" + unique + ".db");
     }
 
     ScopedSqlcipherFile(const ScopedSqlcipherFile &)            = delete;
@@ -98,8 +98,7 @@ auto cipherOptions(const std::filesystem::path &path, std::optional<std::string_
     return options;
 }
 
-auto canReadEncryptedRecord(const std::filesystem::path &path, std::optional<std::string_view> key)
-    -> IoTask<bool> {
+auto canReadEncryptedRecord(const std::filesystem::path &path, std::optional<std::string_view> key) -> IoTask<bool> {
     auto openRet = co_await SqlDatabase::open("sqlite", cipherOptions(path, key));
     if (!openRet) {
         co_return false;
@@ -129,7 +128,7 @@ auto canReadEncryptedRecord(const std::filesystem::path &path, std::optional<std
 }
 
 auto testSqlcipherEncryptionAndRekey() -> IoTask<void> {
-    ScopedSqlcipherFile databaseFile;
+    ScopedSqlcipherFile        databaseFile;
     constexpr std::string_view oldKey = "ilias-sqlcipher-old-key";
     constexpr std::string_view newKey = "ilias-sqlcipher-new-key";
 
@@ -144,15 +143,15 @@ auto testSqlcipherEncryptionAndRekey() -> IoTask<void> {
     auto closeRet = co_await db.close();
     CO_ASSERT_VAL(closeRet);
 
-    std::ifstream file(databaseFile.path(), std::ios::binary);
+    std::ifstream        file(databaseFile.path(), std::ios::binary);
     std::array<char, 16> header {};
     file.read(header.data(), static_cast<std::streamsize>(header.size()));
     EXPECT_EQ(file.gcount(), static_cast<std::streamsize>(header.size()));
     if (file.gcount() != static_cast<std::streamsize>(header.size())) {
         co_return {};
     }
-    constexpr std::array<char, 16> sqliteHeader {
-        'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', '3', '\0'};
+    constexpr std::array<char, 16> sqliteHeader {'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f',
+                                                 'o', 'r', 'm', 'a', 't', ' ', '3', '\0'};
     EXPECT_NE(header, sqliteHeader);
 
     // Authentication may fail while opening or on the first real operation;
@@ -195,8 +194,11 @@ struct SimpleUser {
     std::optional<int> score = 0;
 
     // 为自定义结构体添加元数据（侵入式）
-    NEKO_SERIALIZER(make_tags<SqlTags::createPrimaryKeyTags(false)>(id), make_tags<SqlTags {.not_null = true}>(name),
-                    make_tags<SqlTags {}>(score))
+    struct Neko {
+        static constexpr auto value = Object("id", makeTags<SqlTags::createPrimaryKeyTags(false)>(&SimpleUser::id),
+                                             "name", makeTags<SqlTags {.not_null = true}>(&SimpleUser::name), "score",
+                                             makeTags<SqlTags {}>(&SimpleUser::score));
+    };
 };
 
 struct SimpleOrder {
@@ -206,19 +208,19 @@ struct SimpleOrder {
     std::string product = "";
 };
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 // clang-format off
 // 为外部结构体添加元数据（非侵入式）
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-            "id",       make_tags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
-            "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
-            "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
-            "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
+            "id",       makeTags<SqlTags::createPrimaryKeyTags(true)>(&SimpleOrder::id), 
+            "user_id",  makeTags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
+            "amount",   makeTags<SqlTags {.not_null = true}>(&SimpleOrder::amount),
+            "product",  makeTags<SqlTags {.not_null = true}>(&SimpleOrder::product));
 };
 // clang-format on
-NEKO_END_NAMESPACE
+} // namespace nekoproto
 
 // ==========================================
 // 3. 测试套件
@@ -875,11 +877,12 @@ public:
             // 2. 构建查询
             // 注意：select() 中的参数决定了 execute() 返回的 tuple 类型
             // 返回类型推导为: std::vector<std::tuple<std::string, std::string, int>>
-            auto ret = co_await u.join(o)
-                           .on(u.col<&SimpleUser::id>() == o.col<&SimpleOrder::user_id>()) // ON u.id = o.user_id
-                           .select(u.col<&SimpleUser::name>(), o.col<&SimpleOrder::product>(), o.col<&SimpleOrder::amount>())
-                           .where(o.col<&SimpleOrder::amount>() > 100) // WHERE o.amount > 100
-                           .query();
+            auto ret =
+                co_await u.join(o)
+                    .on(u.col<&SimpleUser::id>() == o.col<&SimpleOrder::user_id>()) // ON u.id = o.user_id
+                    .select(u.col<&SimpleUser::name>(), o.col<&SimpleOrder::product>(), o.col<&SimpleOrder::amount>())
+                    .where(o.col<&SimpleOrder::amount>() > 100) // WHERE o.amount > 100
+                    .query();
 
             CO_ASSERT_VAL(ret);
             auto result = std::move(ret.value());
@@ -1064,7 +1067,6 @@ public:
             co_await orders.emplace(101, 1, 500, "Apple"); // Alice
             co_await orders.emplace(102, 1, 50, "Banana"); // Alice
             co_await orders.emplace(103, 2, 900, "TV");    // Bob
-            printf("%s\n", NekoProto::detail::mangled_name<decltype(orders_ret.value())>());
             // 提交这个初始设置
             auto commit_setup_ret = co_await users.db().commit();
             CO_ASSERT_VAL(commit_setup_ret);

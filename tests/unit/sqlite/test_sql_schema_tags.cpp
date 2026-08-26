@@ -46,11 +46,11 @@ struct NullableCompositeKeyRecord {
 
 } // namespace
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 template <>
 struct Meta<TagParent, void> {
     constexpr static auto value =
-        Object("id", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags::createPrimaryKeyTags()>(&TagParent::id));
+        Object("id", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags::createPrimaryKeyTags()>(&TagParent::id));
 };
 
 template <>
@@ -59,20 +59,20 @@ struct Meta<TagChild, void> {
 
     constexpr static auto value = Object(
         "id",
-        make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags::createPrimaryKeyTags(),
+        makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags::createPrimaryKeyTags(),
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"CHECK (id > 0)">>(&TagChild::id),
         "parent_id",
-        make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
+        makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_references<"tag_parents", "id", SqlReferenceAction::Cascade,
                                                                SqlReferenceAction::Restrict>>(&TagChild::parent_id),
         "singleton_id",
-        make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
+        makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_default<"1">,
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_check<"singleton_id = 1">>(&TagChild::singleton_id),
         "status",
-        make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
+        makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true},
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_default<"'pending'">>(&TagChild::status),
-        "code", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::sql_collate<"NOCASE">>(&TagChild::code));
+        "code", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::sql_collate<"NOCASE">>(&TagChild::code));
 };
 
 template <>
@@ -81,7 +81,7 @@ struct Meta<CustomClauseRecord, void> {
 
     constexpr static auto value = Object(
         "value",
-        make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"GLOBAL_AFTER", "", SqlCustomPosition::AfterType>,
+        makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"GLOBAL_AFTER", "", SqlCustomPosition::AfterType>,
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"SQLITE_AFTER", "sqlite", SqlCustomPosition::AfterType>,
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"MYSQL_AFTER", "mysql", SqlCustomPosition::AfterType>,
                   ILIAS_SQL_COMPLETE_NAMESPACE::sql_custom<"GLOBAL_TAIL">,
@@ -92,13 +92,13 @@ struct Meta<CustomClauseRecord, void> {
 template <>
 struct Meta<CompositeSchemaRecord, void> {
     constexpr static auto value = Object(
-        "owner_id", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+        "owner_id", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
                         &CompositeSchemaRecord::owner_id),
-        "sequence", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+        "sequence", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
                         &CompositeSchemaRecord::sequence),
-        "stable_key", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+        "stable_key", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
                           &CompositeSchemaRecord::stable_key),
-        "updated_at", make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+        "updated_at", makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
                          &CompositeSchemaRecord::updated_at));
 };
 
@@ -106,11 +106,11 @@ template <>
 struct Meta<NullableCompositeKeyRecord, void> {
     constexpr static auto value =
         Object("owner_id",
-               make_tags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
+               makeTags<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.not_null = true}>(
                    &NullableCompositeKeyRecord::owner_id),
                "sequence", &NullableCompositeKeyRecord::sequence);
 };
-NEKO_END_NAMESPACE
+}
 
 ILIAS_SQL_NS_BEGIN
 template <>
@@ -133,7 +133,7 @@ ILIAS_SQL_NS_END
 
 TEST(SqlSchemaTags, PropertyExtractionSupportsCustomTags) {
     constexpr auto tags =
-        NEKO_NAMESPACE::TagList<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.unique = true}, CustomPositiveTag {}> {};
+        nekoproto::TagList<ILIAS_SQL_COMPLETE_NAMESPACE::SqlTags {.unique = true}, CustomPositiveTag {}> {};
     const auto metadata = ILIAS_SQL_COMPLETE_NAMESPACE::detail::extractSqlColumnMetadata(tags);
 
     EXPECT_TRUE(metadata.tags.not_null);

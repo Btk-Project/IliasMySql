@@ -301,38 +301,38 @@ struct User {
     SqlDate updated_at;
 };
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 template<> struct Meta<User, void> {
     constexpr static auto value = Object(
-        "id", make_tags<SqlTags{
+        "id", makeTags<SqlTags{
             .primary_key = true,
             .auto_increment = true
         }>(&User::id),
         
-        "username", make_tags<SqlTags{
+        "username", makeTags<SqlTags{
             .not_null = true,
             .unique = true,
             .length = 50
         }>(&User::username),
         
-        "email", make_tags<SqlTags{
+        "email", makeTags<SqlTags{
             .not_null = true,
             .unique = true,
             .length = 255
         }>(&User::email),
         
-        "created_at", make_tags<SqlTags{
+        "created_at", makeTags<SqlTags{
             .not_null = true,
             .created_at = true
         }>(&User::created_at),
         
-        "updated_at", make_tags<SqlTags{
+        "updated_at", makeTags<SqlTags{
             .not_null = true,
             .updated_at = true
         }>(&User::updated_at)
     );
 };
-NEKO_END_NAMESPACE
+}
 ```
 
 ### 文档资源
@@ -396,30 +396,30 @@ struct AppConfig {
     std::string code;
 };
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 template <>
 struct Meta<AppConfig, void> {
     constexpr static auto value = Object(
         "singleton_id",
-        make_tags<
+        makeTags<
             SqlTags::createPrimaryKeyTags(),
             sql_default<"1">,
             sql_check<"singleton_id = 1">
         >(&AppConfig::singleton_id),
         "owner_id",
-        make_tags<
+        makeTags<
             SqlTags{.not_null = true},
             sql_references<"users", "id", SqlReferenceAction::Cascade>
         >(&AppConfig::owner_id),
         "status",
-        make_tags<
+        makeTags<
             SqlTags{.not_null = true},
             sql_default<"'pending'">
         >(&AppConfig::status),
         "code",
-        make_tags<sql_collate<"NOCASE">>(&AppConfig::code));
+        makeTags<sql_collate<"NOCASE">>(&AppConfig::code));
 };
-NEKO_END_NAMESPACE
+}
 ```
 
 NekoProtoTools 的两个通用字段 tag 也直接作用于 SQL ORM：
@@ -452,18 +452,18 @@ struct PositiveExternalId {
         "external_id > 0";
 };
 
-make_tags<PositiveExternalId>(&Entity::external_id);
+makeTags<PositiveExternalId>(&Entity::external_id);
 ```
 
 对于不通用或不值得抽象的列属性，可以使用可重复的 `sql_custom`：
 
 ```cpp
-make_tags<
+makeTags<
     sql_custom<"CHECK (external_id > 0)">,                 // 所有后端
     sql_custom<"COMMENT 'external id'", "mysql">          // 仅 MySQL
 >(&Entity::external_id);
 
-make_tags<
+makeTags<
     sql_custom<"COMPRESSION lz4", "postgres",
                SqlCustomPosition::AfterType>               // 紧跟类型
 >(&Entity::payload);
@@ -608,16 +608,16 @@ struct User {
 };
 
 // 反射元数据定义（一次性配置）
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 template<> struct Meta<User, void> {
     constexpr static auto value = Object(
-        "id", make_tags<SqlTags{.primary_key = true}>(&User::id),
-        "name", make_tags<SqlTags{.not_null = true}>(&User::name),
+        "id", makeTags<SqlTags{.primary_key = true}>(&User::id),
+        "name", makeTags<SqlTags{.not_null = true}>(&User::name),
         "age", &User::age,
         "created_at", &User::created_at
     );
 };
-NEKO_END_NAMESPACE
+}
 ```
 
 #### 3. 建立数据库连接（工厂模式）

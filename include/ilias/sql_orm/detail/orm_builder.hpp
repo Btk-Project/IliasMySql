@@ -137,12 +137,12 @@ struct TimestampUpdater {
 
 template <typename T>
 void applyUpdatedAtTimestamps(T &obj) {
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, TimestampUpdater {.updated_at = true});
+    nekoproto::Reflect<T>::forEach(obj, TimestampUpdater {.updated_at = true});
 }
 
 template <typename T>
 void applyCreatedAtTimestamps(T &obj) {
-    NEKO_NAMESPACE::Reflect<T>::forEach(obj, TimestampUpdater {.created_at = true});
+    nekoproto::Reflect<T>::forEach(obj, TimestampUpdater {.created_at = true});
 }
 
 // ================== SelectBuilder (基类) ==================
@@ -199,7 +199,7 @@ template <typename... ResultTypes>
 class ProjectedSelectBuilder : public SelectBuilder {
     using ResultType = std::conditional_t<
         sizeof...(ResultTypes) == 0, void,
-        std::conditional_t<sizeof...(ResultTypes) == 1 && (NekoProto::detail::has_names_meta<ResultTypes> && ...),
+        std::conditional_t<sizeof...(ResultTypes) == 1 && (nekoproto::detail::has_names_meta<ResultTypes> && ...),
                            select_type_t<0, ResultTypes...>, std::tuple<ResultTypes...>>>;
     template <typename T, typename ResultType>
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;

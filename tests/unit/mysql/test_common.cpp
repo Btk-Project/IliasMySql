@@ -59,26 +59,26 @@ struct SimpleOrder {
     std::string product = "";
 };
 
-NEKO_BEGIN_NAMESPACE
+namespace nekoproto {
 // clang-format off
 template <>
 struct Meta<SimpleUser, void> {
     constexpr static auto value = Object(
-        "id",   make_tags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id),
-        "name", make_tags<SqlTags {.not_null = true}>(&SimpleUser::name), 
-        "score",make_tags<SqlTags {.not_null = true}>(&SimpleUser::score));
+        "id",   makeTags<SqlTags {.primary_key = true, .not_null = true, .unique = true}>(&SimpleUser::id),
+        "name", makeTags<SqlTags {.not_null = true}>(&SimpleUser::name), 
+        "score",makeTags<SqlTags {.not_null = true}>(&SimpleUser::score));
 };
 
 template <>
 struct Meta<SimpleOrder, void> {
     constexpr static auto value = Object(
-        "id",       make_tags<SqlTags {.primary_key = true, .not_null=true, .unique=true, .auto_increment = true}>(&SimpleOrder::id), 
-        "user_id",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
-        "amount",   make_tags<SqlTags {.not_null = true}>(&SimpleOrder::amount), 
-        "product",  make_tags<SqlTags {.not_null = true}>(&SimpleOrder::product));
+        "id",       makeTags<SqlTags {.primary_key = true, .not_null=true, .unique=true, .auto_increment = true}>(&SimpleOrder::id), 
+        "user_id",  makeTags<SqlTags {.not_null = true}>(&SimpleOrder::user_id), 
+        "amount",   makeTags<SqlTags {.not_null = true}>(&SimpleOrder::amount), 
+        "product",  makeTags<SqlTags {.not_null = true}>(&SimpleOrder::product));
 };
 // clang-format on
-NEKO_END_NAMESPACE
+}
 
 // 用于复杂类型测试 (Date, Blob, etc.)
 struct Person {
