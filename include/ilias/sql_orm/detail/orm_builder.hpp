@@ -199,7 +199,7 @@ template <typename... ResultTypes>
 class ProjectedSelectBuilder : public SelectBuilder {
     using ResultType = std::conditional_t<
         sizeof...(ResultTypes) == 0, void,
-        std::conditional_t<sizeof...(ResultTypes) == 1 && (nekoproto::detail::has_names_meta<ResultTypes> && ...),
+        std::conditional_t<sizeof...(ResultTypes) == 1 && (nekoproto::NamedReflectable<ResultTypes> && ...),
                            select_type_t<0, ResultTypes...>, std::tuple<ResultTypes...>>>;
     template <typename T, typename ResultType>
     friend auto queryLoopWrap(T self, int count) -> IoGenerator<SqlResult<ResultType>>;

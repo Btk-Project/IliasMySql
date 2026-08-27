@@ -75,117 +75,15 @@ consteval auto reflectedSqlFieldNames() {
     return reflectedSqlFieldNames<T>(std::make_index_sequence<nekoproto::Reflect<T>::value_count> {});
 }
 
-template <auto MemberPtr>
-consteval auto memberPointerFieldName() -> std::string_view {
-#if defined(_MSC_VER)
-    constexpr std::string_view signature = __FUNCSIG__;
-    constexpr std::string_view prefix    = "memberPointerFieldName<";
-    auto                       start     = signature.find(prefix);
-    if (start == std::string_view::npos) {
-        return {};
-    }
-    start += prefix.size();
-    auto end = signature.find(">(void)", start);
-    if (end == std::string_view::npos) {
-        end = signature.find('>', start);
-    }
-#else
-    constexpr std::string_view signature = __PRETTY_FUNCTION__;
-    constexpr std::string_view prefix    = "MemberPtr = ";
-    auto                       start     = signature.find(prefix);
-    if (start == std::string_view::npos) {
-        return {};
-    }
-    start += prefix.size();
-    auto end = signature.find(';', start);
-    if (end == std::string_view::npos) {
-        end = signature.find(']', start);
-    }
-#endif
-    if (end == std::string_view::npos || end <= start) {
-        return {};
-    }
-    auto value = signature.substr(start, end - start);
-    auto scope = value.rfind("::");
-    return scope == std::string_view::npos ? std::string_view {} : value.substr(scope + 2);
-}
-
-template <typename T, auto MemberPtr, std::size_t I, typename Accessor>
-consteval auto reflectedMemberPointerMatchesAccessor(const Accessor &accessor) -> bool {
-
-    using AccessorT = std::remove_cvref_t<Accessor>;
-
-    // 普通成员对象指针：直接比较。
-    if constexpr (std::is_member_object_pointer_v<AccessorT> && std::is_same_v<AccessorT, decltype(MemberPtr)>) {
-        return accessor == MemberPtr;
-    }
-    // Neko serializer accessor：通过字段名称匹配。
-    else if constexpr (requires { typename T::Neko::_neko_serializer_args_tuple; }) {
-        // 必须分层判断，不能直接在同一个 && 表达式中使用
-        // std::invoke_result_t，因为 AccessorT 可能不可调用。
-        if constexpr (std::is_invocable_v<AccessorT, T &>) {
-            using Result     = std::invoke_result_t<AccessorT, T &>;
-            using MemberType = std::remove_pointer_t<decltype(MemberPtr)>;
-            if constexpr (std::is_lvalue_reference_v<Result> &&
-                          std::is_same_v<std::remove_cvref_t<Result>, MemberType>) {
-                constexpr auto rawNames   = nekoproto::Reflect<T>::names();
-                constexpr auto memberName = memberPointerFieldName<MemberPtr>();
-                return memberName == rawNames[I];
-            }
-        }
-    }
-
-    return false;
-}
-
-template <typename T, auto MemberPtr, std::size_t I>
-consteval auto reflectedMemberPointerMatchesAt() -> bool {
-    constexpr auto tags = nekoproto::Reflect<T>::field_tags;
-
-    if constexpr (reflectedFieldIgnored(std::get<I>(tags))) {
-        return false;
-    }
-    else {
-        constexpr auto accessors = nekoproto::detail::ReflectProvider<T>::accessors();
-        using Accessors          = decltype(accessors);
-
-        if constexpr (requires { std::tuple_size<std::remove_cvref_t<Accessors>>::value; }) {
-            return reflectedMemberPointerMatchesAccessor<T, MemberPtr, I>(std::get<I>(accessors));
-        }
-        else if constexpr (I == 0) {
-            return reflectedMemberPointerMatchesAccessor<T, MemberPtr, I>(accessors);
-        }
-        else {
-            return false;
-        }
-    }
-}
-
-template <typename T, auto MemberPtr, std::size_t... Is>
-consteval auto reflectedMemberPointerIndex(std::index_sequence<Is...>) -> int {
-
-    static_assert(std::is_member_object_pointer_v<decltype(MemberPtr)>, "ORM column selector must be a member pointer");
-
-    static_assert(
-        requires(T &obj) { obj.*MemberPtr; }, "ORM column member pointer must belong to the mapped entity type");
-
-    constexpr std::array<bool, sizeof...(Is)> matches {reflectedMemberPointerMatchesAt<T, MemberPtr, Is>()...};
-
-    constexpr std::array<int, sizeof...(Is)> indices {static_cast<int>(Is)...};
-
-    for (std::size_t i = 0; i < matches.size(); ++i) {
-        if (matches[i]) {
-            return indices[i];
-        }
-    }
-
-    return -1;
-}
-
 template <typename T, auto MemberPtr>
 consteval auto reflectedMemberPointerIndex() -> int {
-    return reflectedMemberPointerIndex<T, MemberPtr>(
-        std::make_index_sequence<nekoproto::Reflect<T>::value_count> {});
+    if constexpr (nekoproto::Reflect<T>::template hasMember<MemberPtr>()) {
+        if constexpr (reflectedFieldIgnored(nekoproto::Reflect<T>::template tagOf<MemberPtr>())) {
+            return -1;
+        }
+        return nekoproto::Reflect<T>::template indexOf<MemberPtr>();
+    }
+    return -1;
 }
 
 } // namespace detail

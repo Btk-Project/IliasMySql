@@ -25,7 +25,7 @@ template <typename Derived>
 class SqlApiMixin {
 public:
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...)
+        requires(sizeof...(Args) > 1) || (!nekoproto::NamedReflectable<std::decay_t<Args>> && ...)
     auto prepare_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
         -> IoTask<SqlStatement<std::tuple<Args...>>> {
         Derived *self = static_cast<Derived *>(this);
@@ -37,7 +37,7 @@ public:
     }
 
     template <typename U>
-        requires nekoproto::detail::has_names_meta<std::decay_t<U>>
+        requires nekoproto::NamedReflectable<std::decay_t<U>>
     auto prepare_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlStatement<std::decay_t<U>>> {
         Derived *self = static_cast<Derived *>(this);
         ILIAS_CO_TRY(auto ret, co_await self->template prepare<U>(query.sql)); // 调用派生类的prepare
@@ -46,7 +46,7 @@ public:
     }
 
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...)
+        requires(sizeof...(Args) > 1) || (!nekoproto::NamedReflectable<std::decay_t<Args>> && ...)
     auto query_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args)
         -> IoTask<SqlResult<void>> {
         ILIAS_TRACE("ilias-sql", "Executing query {} with args", query.sql);
@@ -57,7 +57,7 @@ public:
     }
 
     template <typename U>
-        requires nekoproto::detail::has_names_meta<std::decay_t<U>>
+        requires nekoproto::NamedReflectable<std::decay_t<U>>
     auto query_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<SqlResult<void>> {
         ILIAS_CO_TRY(auto ret, co_await this->prepare_with(query, std::forward<U>(arg))); // 调用本Mixin的prepare_with
         ILIAS_CO_TRY(auto ret1, co_await ret.query());
@@ -65,7 +65,7 @@ public:
     }
 
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...)
+        requires(sizeof...(Args) > 1) || (!nekoproto::NamedReflectable<std::decay_t<Args>> && ...)
     auto execute_with(SqlCheck<std::tuple<std::type_identity_t<Args>...>> query, Args &&...args) -> IoTask<size_t> {
         ILIAS_CO_TRY(auto ret,
                      co_await this->prepare_with(query, std::forward<Args>(args)...)); // 调用本Mixin的prepare_with
@@ -74,7 +74,7 @@ public:
     }
 
     template <typename U>
-        requires nekoproto::detail::has_names_meta<std::decay_t<U>>
+        requires nekoproto::NamedReflectable<std::decay_t<U>>
     auto execute_with(SqlStructCheck<std::decay_t<U>> query, U &&arg) -> IoTask<size_t> {
         ILIAS_CO_TRY(auto ret, co_await this->prepare_with(query, std::forward<U>(arg))); // 调用本Mixin的prepare_with
         ILIAS_CO_TRY(auto ret1, co_await ret.execute());
@@ -84,8 +84,8 @@ public:
     template <typename... Args>
         requires(sizeof...(Args) > 0) &&
                 ((sizeof...(Args) > 1) ||
-                 ((!nekoproto::detail::has_names_meta<std::decay_t<Args>> && !std::is_void_v<Args>) && ... &&
-                  !nekoproto::detail::is_std_tuple_v<Args...>))
+                 (((!nekoproto::NamedReflectable<std::decay_t<Args>> && !std::is_void_v<Args>) && ...) &&
+                  (!nekoproto::TupleLike<Args> && ...)))
     auto query(std::string_view query) -> IoTask<SqlResult<std::tuple<Args...>>> {
         Derived *self = static_cast<Derived *>(this);
         ILIAS_CO_TRY(auto conn_ret, self->connection());
@@ -94,8 +94,8 @@ public:
     }
 
     template <typename T = void>
-        requires(nekoproto::detail::has_names_meta<std::decay_t<T>> ||
-                 nekoproto::detail::is_std_tuple_v<std::decay_t<T>> || std::is_void_v<T>)
+        requires(nekoproto::NamedReflectable<std::decay_t<T>> || nekoproto::TupleLike<std::decay_t<T>> ||
+                 std::is_void_v<T>)
     auto query(std::string_view query) -> IoTask<SqlResult<T>> {
         Derived *self = static_cast<Derived *>(this);
         ILIAS_CO_TRY(auto conn_ret, self->connection());
@@ -106,8 +106,8 @@ public:
     template <typename... Args>
         requires(sizeof...(Args) > 0) &&
                 ((sizeof...(Args) > 1) ||
-                 ((!nekoproto::detail::has_names_meta<std::decay_t<Args>> && !std::is_void_v<Args>) && ... &&
-                  !nekoproto::detail::is_std_tuple_v<Args...>))
+                 (((!nekoproto::NamedReflectable<std::decay_t<Args>> && !std::is_void_v<Args>) && ...) &&
+                  (!nekoproto::TupleLike<Args> && ...)))
     auto prepare(std::string_view query) -> IoTask<SqlStatement<std::tuple<Args...>>> {
         Derived *self = static_cast<Derived *>(this);
         ILIAS_CO_TRY(auto conn_ret, self->connection());
@@ -116,8 +116,8 @@ public:
     }
 
     template <typename T = void>
-        requires(nekoproto::detail::has_names_meta<std::decay_t<T>> ||
-                 nekoproto::detail::is_std_tuple_v<std::decay_t<T>> || std::is_void_v<T>)
+        requires(nekoproto::NamedReflectable<std::decay_t<T>> || nekoproto::TupleLike<std::decay_t<T>> ||
+                 std::is_void_v<T>)
     auto prepare(std::string_view query) -> IoTask<SqlStatement<T>> {
         Derived *self = static_cast<Derived *>(this);
         ILIAS_CO_TRY(auto conn_ret, self->connection());

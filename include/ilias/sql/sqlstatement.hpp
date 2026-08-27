@@ -59,14 +59,14 @@ public:
      * 可在执行完成且不再复用这些参数后调用 clearKeepAlives() 释放保存的副本。
      */
     template <typename U>
-        requires nekoproto::detail::has_names_meta<std::decay_t<U>>
+        requires nekoproto::NamedReflectable<std::decay_t<U>>
     auto bind(U &&arg) -> IoResult<void>;
     /**
      * @brief 绑定位置参数，wrapper 会按值保存参数副本以保证绑定生命周期。
      */
     template <typename... Args>
-        requires(sizeof...(Args) > 1) || (!nekoproto::detail::has_names_meta<Args> && ... &&
-                                          !nekoproto::detail::is_std_tuple_v<Args...>)
+        requires(sizeof...(Args) > 1) ||
+                ((!nekoproto::NamedReflectable<Args> && ...) && (!nekoproto::TupleLike<Args> && ...))
     auto bind(Args &&...args) -> IoResult<void>;
     template <typename U = void>
     auto query() -> IoTask<SqlResult<U>>;
@@ -131,7 +131,7 @@ public:
 };
 
 template <typename U>
-    requires nekoproto::detail::has_names_meta<std::decay_t<U>>
+    requires nekoproto::NamedReflectable<std::decay_t<U>>
 auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
     IoResult<void> ret = {};
     using KeepAliveT   = std::tuple<StorageType_t<U>>;
@@ -155,16 +155,17 @@ auto SqlStatement<void>::bind(U &&arg) -> IoResult<void> {
 
 template <typename... Args>
     requires(sizeof...(Args) > 1) ||
-            (!nekoproto::detail::has_names_meta<Args> && ... && !nekoproto::detail::is_std_tuple_v<Args...>)
+            ((!nekoproto::NamedReflectable<Args> && ...) && (!nekoproto::TupleLike<Args> && ...))
 auto SqlStatement<void>::bind(Args &&...args) -> IoResult<void> {
     using KeepAliveTuple     = std::tuple<StorageType_t<Args>...>;
     auto           keepAlive = new KeepAliveTuple(std::forward<Args>(args)...);
     IoResult<void> ret       = {};
     [this, &ret, keepAlive]<size_t... I>(std::index_sequence<I...>) {
         int idx = 0;
-        ((ret = ret ? SqlBinder<std::decay_t<decltype(std::get<I>(*keepAlive))>>::bind(
-                          *mStmt, ++idx, std::get<I>(*keepAlive))
-                    : ret), ...);
+        ((ret = ret ? SqlBinder<std::decay_t<decltype(std::get<I>(*keepAlive))>>::bind(*mStmt, ++idx,
+                                                                                       std::get<I>(*keepAlive))
+                    : ret),
+         ...);
     }(std::make_index_sequence<sizeof...(Args)>());
     mKeepAlive.emplace_back(
         std::unique_ptr<void, DeleterFunc>(keepAlive, [](void *ptr) { delete static_cast<KeepAliveTuple *>(ptr); }));
@@ -200,7 +201,7 @@ inline auto SqlStatement<void>::lastNativeError() const -> std::optional<NativeS
 
 template <typename T>
 auto SqlStatement<T>::bind(T &&arg) -> IoResult<void> {
-    if constexpr (nekoproto::detail::is_std_tuple_v<std::decay_t<T>>) {
+    if constexpr (nekoproto::TupleLike<std::decay_t<T>>) {
         return std::apply(
             [this](auto &&...args) { return SqlStatement<void>::bind(std::forward<decltype(args)>(args)...); }, arg);
     }

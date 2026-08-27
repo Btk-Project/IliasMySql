@@ -27,14 +27,14 @@ ILIAS_SQL_NS_BEGIN
  * @brief Forward declaration of Form template
  */
 template <typename T, typename Tag, typename DatabaseT = void>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 class Form;
 
 /**
  * @brief Forward declaration of TableAlias template
  */
 template <typename T, typename Tag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 class TableAlias;
 
 /**
@@ -48,7 +48,7 @@ class TableAlias;
  * @tparam DatabaseT The database type (void for static operations)
  */
 template <typename T, typename BackendTag>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 class Form<T, BackendTag, void> final {
 public:
     using BackendDialect = Dialect<BackendTag>;
@@ -272,7 +272,7 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT> // 默认可以是 SQLite
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 class Form final : public detail::TableOperations<Form<T, BackendTag, DatabaseT>, T, BackendTag> {
     friend class detail::TableOperations<Form<T, BackendTag, DatabaseT>, T, BackendTag>;
     friend class Form<T, BackendTag, void>;
@@ -337,7 +337,7 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = []() {
     T                        obj;
     std::vector<std::string> names;
@@ -351,7 +351,7 @@ std::vector<std::string> Form<T, BackendTag, DatabaseT>::mTableHeaderNames = [](
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 std::vector<std::string> Form<T, BackendTag, DatabaseT>::mQuotedTableHeaderNames = []() {
     std::vector<std::string> quoted;
     quoted.reserve(mTableHeaderNames.size());
@@ -362,7 +362,7 @@ std::vector<std::string> Form<T, BackendTag, DatabaseT>::mQuotedTableHeaderNames
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
     std::vector<SqlTags> tags_array;
     tags_array.reserve(nekoproto::Reflect<T>::value_count);
@@ -376,7 +376,7 @@ std::vector<SqlTags> Form<T, BackendTag, DatabaseT>::mTableHeaderTags = []() {
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex = []() {
     T                             obj;
     std::map<std::ptrdiff_t, int> indexMap;
@@ -396,7 +396,7 @@ std::map<std::ptrdiff_t, int> Form<T, BackendTag, DatabaseT>::mTableHeaderIndex 
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
     T           obj;
     std::string ret;
@@ -412,7 +412,7 @@ std::string Form<T, BackendTag, DatabaseT>::mPrimaryKey = []() {
 }();
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 class TableAlias final : public detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag> {
     friend class detail::TableOperations<TableAlias<T, BackendTag, DatabaseT>, T, BackendTag>;
 
@@ -457,7 +457,7 @@ private:
 };
 
 template <typename T, typename BackendTag, typename DatabaseT>
-    requires(nekoproto::detail::has_names_meta<std::decay_t<T>>)
+    requires(nekoproto::NamedReflectable<std::decay_t<T>>)
 auto Form<T, BackendTag, DatabaseT>::as(const std::string &alias) {
     TableAlias<T, BackendTag, DatabaseT> wrapper(alias, *this);
     return wrapper;

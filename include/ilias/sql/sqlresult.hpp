@@ -61,10 +61,10 @@ public:
     template <typename U>
     auto load(std::string_view name, U &value) -> IoResult<void>;
     template <typename... Args>
-        requires(!nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...)
+        requires(!nekoproto::NamedReflectable<std::decay_t<Args>> && ...)
     auto range(Args &...args) -> Generator<IoResult<void>>;
     template <typename... Args>
-        requires(sizeof...(Args) > 0 && (nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...))
+        requires(sizeof...(Args) > 0 && (nekoproto::NamedReflectable<std::decay_t<Args>> && ...))
     auto range(Args &...value) -> Generator<IoResult<void>>;
     auto operator->() -> IResultSet * { return mImp.get(); }
     auto operator->() const -> const IResultSet * { return mImp.get(); }
@@ -176,7 +176,7 @@ auto SqlResult<void>::load(std::string_view name, U &arg) -> IoResult<void> {
 }
 
 template <typename... Args>
-    requires(!nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...)
+    requires(!nekoproto::NamedReflectable<std::decay_t<Args>> && ...)
 auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
@@ -197,7 +197,7 @@ auto SqlResult<void>::range(Args &...args) -> Generator<IoResult<void>> {
 }
 
 template <typename... Args>
-    requires(sizeof...(Args) > 0 && (nekoproto::detail::has_names_meta<std::decay_t<Args>> && ...))
+    requires(sizeof...(Args) > 0 && (nekoproto::NamedReflectable<std::decay_t<Args>> && ...))
 auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
     while (1) {
         auto rc = co_await mImp->next();
@@ -252,7 +252,7 @@ auto SqlResult<void>::range(Args &...value) -> Generator<IoResult<void>> {
 template <typename T>
 auto SqlResult<T>::rangeResult() -> Generator<IoResult<T>> {
     T value;
-    if constexpr (nekoproto::detail::is_std_tuple_v<T>) {
+    if constexpr (nekoproto::TupleLike<T>) {
         ilias_for_await(auto rc,
                         std::apply([this](auto &...args) { return (SqlResult<void>::range(args...)); }, value)) {
             if (rc) {

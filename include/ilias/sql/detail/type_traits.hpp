@@ -75,7 +75,7 @@ struct SqlStructCheck {
  *        适用于非结构体绑定的场景。
  */
 template <typename T>
-    requires nekoproto::detail::is_std_tuple_v<T>
+    requires nekoproto::TupleLike<T>
 struct SqlCheck {
     template <typename U>
     SqlCheck(SqlStructCheck<U> sqls) : sql(sqls.sql) {
